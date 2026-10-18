@@ -232,8 +232,19 @@ async fn screen_control(
 }
 
 async fn screenshot(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Response> {
-    let png = app.adb.shot(&id).await?;
-    Ok(([(header::CONTENT_TYPE, "image/png")], png).into_response())
+    let shot = app.adb.capture(&id).await?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "image/png".to_owned()),
+            (
+                header::HeaderName::from_static("server-timing"),
+                shot.timing.header(),
+            ),
+            (header::CACHE_CONTROL, "no-store".to_owned()),
+        ],
+        shot.png,
+    )
+        .into_response())
 }
 async fn workflows(State(app): State<Arc<App>>) -> Result<Json<Vec<Workflow>>> {
     let mut rows = app.db.list::<Workflow>("workflows").await?;

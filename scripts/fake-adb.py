@@ -8,20 +8,32 @@ import sys
 
 root = Path(os.environ["FAKE_ADB_DIR"])
 args = sys.argv[1:]
+with (root / "commands").open("a") as log:
+    log.write(json.dumps(args) + "\n")
 online = (root / "online").exists()
 if args == ["devices", "-l"]:
     print("List of devices attached")
     if online:
-        print("mock-usb device model:Test\n127.0.0.1:5555 device model:Test")
+        if (root / "legacy-transport").exists():
+            print("mock-usb device usb:1-1 model:Test\n127.0.0.1:5555 device model:Test")
+        elif (root / "wireless-only").exists():
+            print("127.0.0.1:5555 device model:Test transport_id:2")
+        else:
+            print("mock-usb device usb:1-1 model:Test transport_id:1\n127.0.0.1:5555 device model:Test transport_id:2")
 elif args == ["mdns", "services"]:
     print("List of discovered mdns services")
-elif args[:1] == ["-s"]:
-    if not online:
+elif args[:1] in (["-s"], ["-t"]):
+    if not online or (args[:2] == ["-t", "1"] and (root / "transport-gone").exists()):
         print("device offline", file=sys.stderr)
         sys.exit(1)
     command = args[2:]
     if command[:2] == ["shell", "getprop"]:
-        print("mock-phone" if command[-1] == "ro.serialno" else "模拟手机")
+        identity = (root / "identity").read_text() if (root / "identity").exists() else "mock-phone"
+        print(identity if command[-1] == "ro.serialno" else "模拟手机")
+    elif command == ["shell", "dumpsys", "display"]:
+        print((root / "displays").read_text() if (root / "displays").exists() else "")
+        if (root / "disconnect-after-display").exists():
+            (root / "transport-gone").touch()
     elif command[:3] == ["shell", "input", "keyevent"]:
         if command[-1] == "KEYCODE_SLEEP":
             (root / "asleep").touch()
@@ -45,10 +57,18 @@ elif args[:1] == ["-s"]:
     elif command[:3] == ["shell", "input", "swipe"]:
         with (root / "swipes").open("a") as f:
             f.write(json.dumps(command) + "\n")
-    elif command == ["exec-out", "screencap", "-p"]:
+    elif command[:2] == ["exec-out", "screencap"]:
+        if (root / "expected-display").exists():
+            expected = (root / "expected-display").read_text()
+            if command[-2:] != ["-d", expected]:
+                print("wrong display", file=sys.stderr)
+                sys.exit(1)
         with (root / "captures").open("a") as f:
             f.write("capture\n")
-        sys.stdout.buffer.write((root / "screen.png").read_bytes())
+        if "-p" in command:
+            sys.stdout.buffer.write((root / "screen.png").read_bytes())
+        else:
+            sys.stdout.buffer.write((root / "screen.raw").read_bytes() if (root / "screen.raw").exists() else b"unsupported raw format")
     elif command[:3] == ["shell", "dumpsys", "activity"]:
         print("mResumedActivity: com.luna.music/MainActivity")
     elif command[:3] == ["shell", "dumpsys", "package"]:

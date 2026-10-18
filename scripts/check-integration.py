@@ -183,6 +183,80 @@ def main():
                 fake / "screen_off_timeout"
             ).read_text() == "600000"
             print("通过：访问限制、设备合并、重命名、常亮恢复", flush=True)
+
+            def screenshot():
+                req = urllib.request.Request(
+                    BASE + "/api/devices/mock-phone/screenshot",
+                    headers={"Authorization": "Bearer " + (data / "access-token").read_text()},
+                )
+                with urllib.request.urlopen(req, timeout=20) as response:
+                    assert response.headers["Content-Type"] == "image/png"
+                    assert response.headers["Cache-Control"] == "no-store"
+                    timing = response.headers["Server-Timing"]
+                    assert all(name + ";dur=" in timing for name in ("device", "display", "capture", "decode", "encode", "total"))
+                    return response.read(), timing
+
+            def commands_since(index):
+                return [json.loads(line) for line in (fake / "commands").read_text().splitlines()[index:]]
+
+            raw = struct.pack("<IIII", 400, 800, 1, 1) + bytes([255, 255, 255, 255]) * 400 * 800
+            (fake / "screen.raw").write_bytes(raw)
+            index = len((fake / "commands").read_text().splitlines())
+            first, timing = screenshot()
+            assert struct.unpack(">II", first[16:24]) == (400, 800) and 'source;desc="raw"' in timing
+            assert commands_since(index).count(["-t", "1", "shell", "getprop", "ro.serialno"]) == 1
+            (fake / "screen.raw").write_bytes(struct.pack("<IIII", 2, 1, 1, 1) + bytes([255, 0, 0, 255]) * 2)
+            second, _ = screenshot()
+            assert second != first and struct.unpack(">II", second[16:24]) == (2, 1)
+
+            for active in ("200", "100"):
+                (fake / "displays").write_text("\n".join(
+                    f'DisplayDeviceInfo{{uniqueId="local:{display}", type INTERNAL, state {"ON" if display == active else "OFF"},}}'
+                    for display in ("100", "200")
+                ))
+                (fake / "expected-display").write_text(active)
+                screenshot()
+            (fake / "displays").write_text((fake / "displays").read_text().replace("state ON", "state OFF"))
+            captures = (fake / "captures").read_text()
+            call("/devices/mock-phone/screenshot", expected=400)
+            assert (fake / "captures").read_text() == captures
+            (fake / "displays").unlink()
+            (fake / "expected-display").unlink()
+
+            for invalid in (raw[:-4], raw[:12] + struct.pack("<I", 2) + raw[16:]):
+                (fake / "screen.raw").write_bytes(invalid)
+                result, timing = screenshot()
+                assert result == png() and 'source;desc="png"' in timing
+            (fake / "screen.png").write_bytes(b"broken PNG")
+            call("/devices/mock-phone/screenshot", expected=400)
+            (fake / "screen.png").write_bytes(png())
+            (fake / "screen.raw").write_bytes(raw)
+
+            captures = (fake / "captures").read_text()
+            (fake / "identity").write_text("another-phone")
+            call("/devices/mock-phone/screenshot", expected=400)
+            assert (fake / "captures").read_text() == captures
+            (fake / "identity").unlink()
+            (fake / "disconnect-after-display").touch()
+            call("/devices/mock-phone/screenshot", expected=400)
+            assert (fake / "captures").read_text() == captures
+            (fake / "disconnect-after-display").unlink()
+            (fake / "transport-gone").unlink()
+
+            (fake / "legacy-transport").touch()
+            index = len((fake / "commands").read_text().splitlines())
+            screenshot()
+            assert commands_since(index).count(["-s", "mock-usb", "shell", "getprop", "ro.serialno"]) >= 2
+            (fake / "legacy-transport").unlink()
+            (fake / "wireless-only").touch()
+            index = len((fake / "commands").read_text().splitlines())
+            result, timing = screenshot()
+            assert result == png() and 'source;desc="png"' in timing
+            assert all("-p" in command for command in commands_since(index) if "screencap" in command)
+            (fake / "wireless-only").unlink()
+            (fake / "screen.raw").unlink()
+            print("通过：截图分段计时、原始画面、新图与旋转尺寸、内外屏选择、损坏回退、身份核验、断线不换机、旧版 ADB 与无线截图", flush=True)
+
             for _ in range(2):
                 assert call("/devices/mock-phone/screen", "POST", {"action": "lock"})["message"] == "屏幕已关闭"
                 assert (fake / "asleep").exists()

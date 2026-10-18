@@ -122,6 +122,18 @@ python3 scripts/studio.py request POST /workflows/编号@版本/publish
 
 折叠屏截图每次重新检查内外屏状态，指定当前亮着的物理屏幕；无法确定目标时提示重新点亮屏幕，避免误截黑着的内屏。
 
+## 截图分段计时
+
+截图接口仍返回 PNG。USB 优先取带 sRGB 色彩空间信息的 RGBA 或 RGBX 原始画面，由电脑无损生成 PNG；格式不支持或数据损坏时回退手机 PNG。无线连接直接使用手机 PNG。识别流程复用已解析图片，每次请求重新取图。
+
+响应增加 `Cache-Control: no-store` 与 `Server-Timing`。计时单位为毫秒：`device` 为设备核验，`display` 为亮屏检查，`capture` 为手机取图与传输，`decode` 为画面解析，`encode` 为电脑生成 PNG，`total` 为服务端总耗时。`source` 的 `raw` 表示电脑生成 PNG，`png` 表示手机生成 PNG；发生回退时，计时包含失败尝试。
+
+```sh
+python3 scripts/studio.py request GET /devices/手机自身编号/screenshot --output /绝对路径/当前画面.png --timings
+```
+
+同次截图使用已核验的 ADB 连接编号，断线后报错；旧版 ADB 无连接编号时保留逐步核验。该优化不改变运行互斥、动作恢复或截图标注规则。真机结果见 [截图提速与验收](screenshot-performance.md)。
+
 ## 招财鸭点击喂鸭
 
 `feed-duck` 第 2 版在折叠屏外屏固定点击 `(528,1866)`。不识别、不截图、不校验页面。请先打开招财鸭并保持外屏，执行期间不要换页面。

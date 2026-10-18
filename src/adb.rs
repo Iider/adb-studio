@@ -1,7 +1,64 @@
 use crate::{App, types::*};
 use anyhow::{Context, Result, bail};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use image::{
+    ImageEncoder,
+    codecs::png::{CompressionType, FilterType, PngEncoder},
+};
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::process::Command;
+
+pub struct Screenshot {
+    pub png: Vec<u8>,
+    pub image: image::DynamicImage,
+    pub timing: ScreenshotTiming,
+}
+
+#[derive(Default)]
+pub struct ScreenshotTiming {
+    device_ms: f64,
+    display_ms: f64,
+    capture_ms: f64,
+    decode_ms: f64,
+    encode_ms: f64,
+    total_ms: f64,
+    source: &'static str,
+}
+impl ScreenshotTiming {
+    pub fn header(&self) -> String {
+        format!(
+            "device;dur={:.1}, display;dur={:.1}, capture;dur={:.1}, decode;dur={:.1}, encode;dur={:.1}, total;dur={:.1}, source;desc=\"{}\"",
+            self.device_ms,
+            self.display_ms,
+            self.capture_ms,
+            self.decode_ms,
+            self.encode_ms,
+            self.total_ms,
+            self.source
+        )
+    }
+}
+
+fn elapsed_ms(start: Instant) -> f64 {
+    start.elapsed().as_secs_f64() * 1000.0
+}
+
+struct Target {
+    endpoint: String,
+    transport: Option<String>,
+    usb: bool,
+}
+impl Target {
+    fn selector(&self) -> [&str; 2] {
+        match self.transport.as_deref() {
+            Some(transport) => ["-t", transport],
+            None => ["-s", &self.endpoint],
+        }
+    }
+}
 
 pub struct Adb {
     path: PathBuf,
@@ -29,6 +86,9 @@ impl Adb {
         Ok(String::from_utf8(self.raw(args).await?)?.trim().to_owned())
     }
     pub async fn endpoint(&self, id: &str) -> Result<String> {
+        Ok(self.target(id).await?.endpoint)
+    }
+    async fn target(&self, id: &str) -> Result<Target> {
         let listing = self.text(&["devices", "-l"]).await?;
         let hints = self
             .targets
@@ -42,28 +102,39 @@ impl Adb {
             .skip(1)
             .filter_map(|line| {
                 let p: Vec<_> = line.split_whitespace().collect();
-                (p.len() > 1 && p[1] == "device").then(|| p[0].to_owned())
+                (p.len() > 1 && p[1] == "device").then(|| Target {
+                    endpoint: p[0].to_owned(),
+                    usb: p.iter().any(|part| part.starts_with("usb:")),
+                    transport: p.iter().find_map(|part| {
+                        part.strip_prefix("transport_id:")
+                            .filter(|value| {
+                                !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit())
+                            })
+                            .map(str::to_owned)
+                    }),
+                })
             })
             .collect::<Vec<_>>();
-        endpoints.sort_by_key(|endpoint| {
-            if endpoint == id {
+        endpoints.sort_by_key(|target| {
+            if target.endpoint == id {
                 0
-            } else if hints.contains(endpoint) {
+            } else if hints.contains(&target.endpoint) {
                 1
             } else {
                 2
             }
         });
-        for endpoint in endpoints {
+        for target in endpoints {
+            let selector = target.selector();
             let Ok(actual) = self
-                .text(&["-s", &endpoint, "shell", "getprop", "ro.serialno"])
+                .text(&[selector[0], selector[1], "shell", "getprop", "ro.serialno"])
                 .await
             else {
                 continue;
             };
             if actual == id {
-                self.remember(id, &endpoint).await;
-                return Ok(endpoint);
+                self.remember(id, &target.endpoint).await;
+                return Ok(target);
             }
         }
         bail!("手机未连接或未授权")
@@ -84,21 +155,93 @@ impl Adb {
         all.extend_from_slice(args);
         self.raw(&all).await
     }
+    async fn at_target(&self, target: &Target, args: &[&str]) -> Result<Vec<u8>> {
+        let mut all = target.selector().to_vec();
+        all.extend_from_slice(args);
+        self.raw(&all).await
+    }
     pub async fn phone_text(&self, id: &str, args: &[&str]) -> Result<String> {
         Ok(String::from_utf8(self.phone(id, args).await?)?
             .trim()
             .into())
     }
     pub async fn shot(&self, id: &str) -> Result<Vec<u8>> {
-        let displays = self
-            .phone_text(id, &["shell", "dumpsys", "display"])
-            .await?;
+        Ok(self.capture(id).await?.png)
+    }
+    pub async fn capture(&self, id: &str) -> Result<Screenshot> {
+        let started = Instant::now();
+        let mut timing = ScreenshotTiming::default();
+        let phase = Instant::now();
+        let mut target = self.target(id).await?;
+        timing.device_ms += elapsed_ms(phase);
+        let phase = Instant::now();
+        let displays = String::from_utf8(
+            self.at_target(&target, &["shell", "dumpsys", "display"])
+                .await?,
+        )?;
         let display = active_capture_display(&displays)?;
-        let mut args = vec!["exec-out", "screencap", "-p"];
+        timing.display_ms = elapsed_ms(phase);
+        let mut args = vec!["exec-out", "screencap"];
         if let Some(display) = display.as_deref() {
             args.extend(["-d", display]);
         }
-        clean_screenshot(self.phone(id, &args).await?)
+        // transport_id 固定本次已核验连接；旧版 ADB 没有该编号时，保留逐步核验。
+        if target.transport.is_none() {
+            let phase = Instant::now();
+            target = self.target(id).await?;
+            timing.device_ms += elapsed_ms(phase);
+        }
+        let raw_image = if target.usb {
+            let phase = Instant::now();
+            let output = self.at_target(&target, &args).await;
+            timing.capture_ms = elapsed_ms(phase);
+            let phase = Instant::now();
+            let result = output.and_then(raw_screenshot);
+            timing.decode_ms = elapsed_ms(phase);
+            match result {
+                Ok(image) => Some(image),
+                Err(error) => {
+                    tracing::debug!(%id, %error, "原始画面不可用，回退手机 PNG");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let (png, image) = match raw_image {
+            Some(image) => {
+                let phase = Instant::now();
+                let mut png = Vec::new();
+                PngEncoder::new_with_quality(&mut png, CompressionType::Fast, FilterType::Sub)
+                    .write_image(
+                        image.as_bytes(),
+                        image.width(),
+                        image.height(),
+                        image.color().into(),
+                    )?;
+                timing.encode_ms = elapsed_ms(phase);
+                timing.source = "raw";
+                (png, image)
+            }
+            None => {
+                if target.usb && target.transport.is_none() {
+                    let phase = Instant::now();
+                    target = self.target(id).await?;
+                    timing.device_ms += elapsed_ms(phase);
+                }
+                args.insert(2, "-p");
+                let phase = Instant::now();
+                let output = self.at_target(&target, &args).await?;
+                timing.capture_ms += elapsed_ms(phase);
+                let phase = Instant::now();
+                let result = clean_screenshot(output)?;
+                timing.decode_ms += elapsed_ms(phase);
+                timing.source = "png";
+                result
+            }
+        };
+        timing.total_ms = elapsed_ms(started);
+        Ok(Screenshot { png, image, timing })
     }
     pub async fn screen_control(&self, id: &str, wake: bool) -> Result<String> {
         self.phone(
@@ -183,6 +326,44 @@ impl Adb {
     }
 }
 
+fn raw_screenshot(mut output: Vec<u8>) -> Result<image::DynamicImage> {
+    while output.starts_with(b"[Warning]") {
+        let end = output
+            .iter()
+            .position(|&b| b == b'\n')
+            .context("截图提示不完整")?;
+        output.drain(..=end);
+    }
+    if output.len() < 16 {
+        bail!("原始截图头不完整")
+    }
+    let word = |offset| u32::from_le_bytes(output[offset..offset + 4].try_into().unwrap());
+    let (width, height, format) = (word(0), word(4), word(8));
+    if width == 0 || height == 0 || !matches!(format, 1 | 2) {
+        bail!("原始截图尺寸或像素格式不支持")
+    }
+    let bytes = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .context("原始截图尺寸过大")?;
+    if output.len().checked_sub(16) != Some(bytes) {
+        bail!("原始截图长度不匹配")
+    }
+    // 仅接收带 sRGB 色彩空间编号的格式；其他格式由手机生成 PNG，避免误读或丢失颜色信息。
+    if word(12) != 1 {
+        bail!("原始截图色彩空间需要手机 PNG")
+    }
+    output.drain(..16);
+    if format == 2 {
+        for pixel in output.chunks_exact_mut(4) {
+            pixel[3] = 255;
+        }
+    }
+    Ok(image::DynamicImage::ImageRgba8(
+        image::RgbaImage::from_raw(width, height, output).context("原始截图像素不完整")?,
+    ))
+}
+
 fn keyguard_locked(policy: &str) -> bool {
     policy.contains("mShowingLockscreen=true")
         || policy
@@ -217,16 +398,16 @@ fn active_capture_display(dump: &str) -> Result<Option<String>> {
     bail!("无法确认当前亮着的屏幕，请点亮目标屏幕后重新截图")
 }
 
-fn clean_screenshot(mut output: Vec<u8>) -> Result<Vec<u8>> {
+fn clean_screenshot(mut output: Vec<u8>) -> Result<(Vec<u8>, image::DynamicImage)> {
     // 部分多屏手机会将显示屏提示写到 PNG 前面的标准输出中。
     let start = output
         .windows(8)
         .position(|bytes| bytes == b"\x89PNG\r\n\x1a\n")
         .context("手机未返回有效截图，请解锁后重试")?;
     output.drain(..start);
-    image::load_from_memory_with_format(&output, image::ImageFormat::Png)
+    let image = image::load_from_memory_with_format(&output, image::ImageFormat::Png)
         .context("手机截图不完整，请重新截图")?;
-    Ok(output)
+    Ok((output, image))
 }
 
 fn screen_size(png: &[u8]) -> Result<(u32, u32)> {
@@ -243,6 +424,44 @@ fn screen_size(png: &[u8]) -> Result<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn raw_image(format: u32, color_space: u32) -> Vec<u8> {
+        [
+            2u32.to_le_bytes().as_slice(),
+            1u32.to_le_bytes().as_slice(),
+            format.to_le_bytes().as_slice(),
+            color_space.to_le_bytes().as_slice(),
+            &[255, 0, 0, 255, 0, 128, 255, 64],
+        ]
+        .concat()
+    }
+    #[test]
+    fn raw_capture_preserves_pixels_and_ignores_display_warning() {
+        let original = raw_image(1, 1);
+        let image = raw_screenshot(original.clone()).unwrap();
+        assert_eq!((image.width(), image.height()), (2, 1));
+        assert_eq!(image.as_bytes(), &original[16..]);
+        let mut warned = b"[Warning] Multiple displays were found\n".to_vec();
+        warned.extend(original);
+        assert_eq!(raw_screenshot(warned).unwrap().as_bytes(), image.as_bytes());
+        let rgbx = raw_screenshot(raw_image(2, 1)).unwrap();
+        assert_eq!(rgbx.as_bytes(), &[255, 0, 0, 255, 0, 128, 255, 255]);
+    }
+    #[test]
+    fn raw_capture_rejects_incomplete_and_unsupported_images() {
+        let raw = raw_image(1, 1);
+        for length in 0..raw.len() {
+            assert!(raw_screenshot(raw[..length].to_vec()).is_err());
+        }
+        let mut extra = raw.clone();
+        extra.push(0);
+        assert!(raw_screenshot(extra).is_err());
+        for (format, color) in [(5, 1), (1, 0), (1, 2)] {
+            assert!(raw_screenshot(raw_image(format, color)).is_err());
+        }
+        let mut oversized = raw;
+        oversized[..8].fill(255);
+        assert!(raw_screenshot(oversized).is_err());
+    }
     #[test]
     fn folded_and_unfolded_capture_the_lit_display() {
         let folded = "DisplayDeviceInfo{uniqueId=\"local:100\", type INTERNAL, state OFF,}\nDisplayDeviceInfo{uniqueId=\"local:200\", type INTERNAL, state ON,}";
@@ -274,10 +493,10 @@ mod tests {
             .write_to(&mut encoded, image::ImageFormat::Png)
             .unwrap();
         let png = encoded.into_inner();
-        assert_eq!(clean_screenshot(png.clone()).unwrap(), png);
+        assert_eq!(clean_screenshot(png.clone()).unwrap().0, png);
         let mut warned = b"[Warning] Multiple displays were found\n".to_vec();
         warned.extend_from_slice(&png);
-        assert_eq!(clean_screenshot(warned).unwrap(), png);
+        assert_eq!(clean_screenshot(warned).unwrap().0, png);
         assert!(clean_screenshot(b"error".to_vec()).is_err());
         assert!(clean_screenshot(png[..24].to_vec()).is_err());
     }

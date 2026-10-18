@@ -110,8 +110,8 @@ pub async fn ocr(app: &App, png: &[u8]) -> Result<Vec<Word>> {
     Ok(serde_json::from_slice(&out.stdout)?)
 }
 pub async fn frame(app: &App, id: &str) -> Result<Frame> {
-    let png = app.adb.shot(id).await?;
-    let image = image::load_from_memory(&png)?;
+    let shot = app.adb.capture(id).await?;
+    let (png, image) = (shot.png, shot.image);
     let words = ocr(app, &png).await?;
     Ok(Frame { png, image, words })
 }

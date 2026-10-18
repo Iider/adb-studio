@@ -13,7 +13,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def request(method, path, body=None, base="http://127.0.0.1:17841"):
+def request(method, path, body=None, base="http://127.0.0.1:17841", timings=False):
     if urllib.parse.urlparse(base).hostname not in {"127.0.0.1", "localhost"}:
         raise ValueError("工作台只允许本机地址")
     data = Path(os.getenv("ADB_STUDIO_DATA", ROOT / "data"))
@@ -32,6 +32,8 @@ def request(method, path, body=None, base="http://127.0.0.1:17841"):
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as response:
+            if timings and response.headers.get("Server-Timing"):
+                print(response.headers["Server-Timing"], file=sys.stderr)
             return (
                 response.read()
                 if response.headers.get_content_type().startswith("image/")
@@ -53,6 +55,7 @@ def main():
     call.add_argument("--file", type=Path, help="请求内容 JSON 文件")
     call.add_argument("--json", help="请求内容 JSON 文本")
     call.add_argument("--output", type=Path)
+    call.add_argument("--timings", action="store_true", help="显示截图各环节耗时，单位毫秒")
     run = sub.add_parser("run")
     run.add_argument("workflow")
     run.add_argument("--device", required=True)
@@ -86,7 +89,7 @@ def main():
         )
     else:
         method, path = "GET", "/" + args.command
-    data = request(method, path, body, args.url)
+    data = request(method, path, body, args.url, getattr(args, "timings", False))
     if isinstance(data, bytes):
         if not getattr(args, "output", None):
             raise ValueError("截图请指定 --output 文件路径")
