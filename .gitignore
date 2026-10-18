@@ -1,0 +1,9 @@
+/data/
+/target/
+/web/node_modules/
+/web/.svelte-kit/
+/web/build/
+/.env
+/.DS_Store
+*.log
+__pycache__/

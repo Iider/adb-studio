@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "id": "feed-duck",
+  "version": 1,
+  "name": "招财鸭 · 点击喂鸭",
+  "description": "在当前招财鸭页面点击底部喂鸭按钮；页面变化时停止。先点击一次，再等待设定间隔。",
+  "devices": [
+    "ABNU025902001166"
+  ],
+  "entry": "feed",
+  "model_limit": 0,
+  "nodes": [
+    {
+      "id": "feed",
+      "label": "点击喂鸭，可设置次数和间隔",
+      "type": "tap_loop",
+      "text": "喂鸭",
+      "guard": "招财鸭",
+      "package": "com.smile.gifmaker",
+      "region": [
+        0.3,
+        0.68,
+        0.7,
+        0.86
+      ],
+      "count": 1,
+      "interval": 5,
+      "next": "end"
+    },
+    {
+      "id": "end",
+      "label": "完成",
+      "type": "end",
+      "result": "succeeded"
+    }
+  ],
+  "tests": [
+    {
+      "node": "feed",
+      "text": "招财鸭 8580粒 喂鸭 赚饲料",
+      "expected": "ready"
+    },
+    {
+      "node": "feed",
+      "text": "首页 喂鸭",
+      "expected": "unknown"
+    },
+    {
+      "node": "feed",
+      "text": "招财鸭 饲料不足 去赚饲料",
+      "expected": "unknown"
+    }
+  ]
+}

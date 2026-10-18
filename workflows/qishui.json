@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "id": "qishui",
+  "version": 1,
+  "name": "汽水音乐 · 连续刷视频赚金币",
+  "description": "进入任务页，金币暂停后上滑；多次复查确认无法继续后完成。",
+  "devices": [
+    "3430131496001EB"
+  ],
+  "entry": "open",
+  "nodes": [
+    {
+      "id": "open",
+      "label": "打开汽水音乐",
+      "type": "launch",
+      "package": "com.luna.music",
+      "next": "navigate"
+    },
+    {
+      "id": "navigate",
+      "label": "金币入口 → 连续刷视频任务",
+      "type": "qishui_navigate",
+      "next": "earn"
+    },
+    {
+      "id": "earn",
+      "label": "金币暂停 → 上滑 → 复查完成",
+      "type": "qishui_loop",
+      "coin_region": [
+        0.818,
+        0.163,
+        0.961,
+        0.233
+      ],
+      "identity_region": [
+        0.25,
+        0.815,
+        0.67,
+        0.89
+      ],
+      "warmup": 5,
+      "stall": 3,
+      "finish_stall": 10,
+      "finish_swipes": 3,
+      "next": "end"
+    },
+    {
+      "id": "end",
+      "label": "任务完成",
+      "type": "end",
+      "result": "succeeded"
+    }
+  ],
+  "tests": [
+    {
+      "node": "earn",
+      "text": "39591 金币 赚钱中",
+      "expected": "video"
+    },
+    {
+      "node": "earn",
+      "text": "网络异常，请重试",
+      "expected": "blocked"
+    },
+    {
+      "node": "earn",
+      "text": "金币 暂停赚钱",
+      "expected": "video"
+    },
+    {
+      "node": "navigate",
+      "text": "做任务 连续刷视频赚金币",
+      "expected": "task"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "swipe",
+  "version": 1,
+  "name": "定时滑动",
+  "description": "保持当前页面，先等待，再按间隔上滑。默认试跑 3 次。",
+  "devices": [],
+  "entry": "swipe",
+  "nodes": [
+    {
+      "id": "swipe",
+      "label": "每隔 25 秒上滑，共 3 次",
+      "type": "swipe_loop",
+      "interval": 25,
+      "count": 3,
+      "minutes": null,
+      "long": false,
+      "next": "end"
+    },
+    {
+      "id": "end",
+      "label": "完成",
+      "type": "end",
+      "result": "succeeded"
+    }
+  ],
+  "tests": [
+    {
+      "node": "swipe",
+      "text": "interval=25,count=3",
+      "expected": "valid"
+    }
+  ]
+}
