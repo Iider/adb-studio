@@ -8,7 +8,7 @@
     Settings as SettingsIcon,
     Play,
     Square,
-    ChevronRight,
+    ArrowLeft,
     ArrowDown,
     Download,
     Check,
@@ -20,6 +20,7 @@
   } from "@lucide/svelte";
   import Button from "$lib/components/ui/button/button.svelte";
   import DeviceManager from "$lib/components/DeviceManager.svelte";
+  import TaskList from "$lib/components/TaskList.svelte";
   import Badge from "$lib/components/ui/badge/badge.svelte";
   import {
     api,
@@ -47,12 +48,18 @@
   ];
   let tab = $state("devices");
   let selectedDeviceId = $state("");
+  let workflowOpen = $state(false);
   let contentElement = $state<HTMLElement>();
   $effect(() => {
     const currentTab = tab;
     const currentDeviceId = selectedDeviceId;
+    const currentWorkflowOpen = workflowOpen;
     void tick().then(() => {
-      if (tab === currentTab && selectedDeviceId === currentDeviceId)
+      if (
+        tab === currentTab &&
+        selectedDeviceId === currentDeviceId &&
+        workflowOpen === currentWorkflowOpen
+      )
         contentElement?.scrollTo(0, 0);
     });
   });
@@ -132,6 +139,23 @@
         w.id === selectedWorkflow &&
         (selectedVersion === 0 || w.version === selectedVersion),
     ),
+  );
+  const launchDevice = $derived(
+    devices.find((device) => device.id === targetDevice),
+  );
+  const launchRun = $derived(
+    activeRuns.find((run) => run.device_id === targetDevice),
+  );
+  const launchBlocked = $derived(
+    !launchDevice?.online
+      ? "手机离线，连接后可开始。"
+      : launchDevice.locked
+        ? "请先在设备详情中唤醒并解锁手机。"
+        : launchRun
+          ? `当前任务：${runState(launchRun.state)}。停止后可开始新任务。`
+          : flow?.id === "point-click" && !launchDevice.tap_point
+            ? "请先标注这台手机的点击位置。"
+            : "",
   );
   $effect(() => {
     if (flow && flow.devices.length && !flow.devices.includes(targetDevice))
@@ -278,14 +302,25 @@
         targetDevice = deviceId;
         selectedWorkflow = "point-click";
         selectedVersion = 0;
+        workflowOpen = true;
         tab = "workflows";
         pointDialog?.close();
       },
       "点击位置已保存；可设置次数和间隔",
     );
   }
+  function stopAllRuns() {
+    void action(
+      "stop-all",
+      () =>
+        Promise.all(
+          activeRuns.map((run) => api(`/runs/${run.id}/stop`, "POST")),
+        ),
+      "已请求停止全部任务",
+    );
+  }
   async function startFlow(trial: boolean) {
-    if (!flow) return;
+    if (!flow || working || launchBlocked) return;
     if (flow.id === "swipe") {
       localStorage.setItem(
         "swipe-settings",
@@ -541,6 +576,7 @@
           onclick={() => {
             tab = item.id;
             selectedDeviceId = "";
+            workflowOpen = false;
             notice = "";
             error = "";
           }}
@@ -566,7 +602,9 @@
         工作空间 <span>/</span><strong
           >{tab === "devices" && selectedDeviceId
             ? "设备详情"
-            : tabs.find((item) => item.id === tab)?.label}</strong
+            : tab === "workflows" && workflowOpen
+              ? "任务详情"
+              : tabs.find((item) => item.id === tab)?.label}</strong
         >
       </div>
       <div class="top-actions">
@@ -603,7 +641,7 @@
             onclick={() => (notice = "")}>×</button
           >
         </div>{/if}
-      {#if tab !== "devices"}<div class="page-heading">
+      {#if tab !== "devices" && tab !== "workflows"}<div class="page-heading">
           <div>
             <p class="eyebrow">手机自动化 · 本地托管</p>
             <h1>
@@ -612,7 +650,6 @@
             <p class="intro">
               {(
                 {
-                  workflows: "查看 Agent 制作的流程，试跑或直接执行。",
                   schedules: "设置执行时间，交给后台完成。",
                   runs: "任务进度、结果与判断依据。",
                   settings: "后台状态与识别模型。",
@@ -624,15 +661,7 @@
               variant="outline"
               class="stop-button"
               disabled={!!working}
-              onclick={() =>
-                action(
-                  "stop-all",
-                  () =>
-                    Promise.all(
-                      activeRuns.map((r) => api(`/runs/${r.id}/stop`, "POST")),
-                    ),
-                  "已请求停止全部任务",
-                )}><Square size={16} />全部停止</Button
+              onclick={stopAllRuns}><Square size={16} />全部停止</Button
             >{/if}
         </div>
       {/if}
@@ -678,6 +707,7 @@
             targetDevice = device.id;
             selectedWorkflow = "swipe";
             selectedVersion = 0;
+            workflowOpen = true;
             tab = "workflows";
           }}
           onViewRuns={(device) => {
@@ -686,52 +716,91 @@
             tab = "runs";
             if (latest) void selectRun(latest.id);
           }}
-          onStopAll={() => {
-            void action(
-              "stop-all",
-              () =>
-                Promise.all(
-                  activeRuns.map((run) => api(`/runs/${run.id}/stop`, "POST")),
-                ),
-              "已请求停止全部任务",
-            );
-          }}
+          onStopAll={stopAllRuns}
         />
       {:else if tab === "workflows"}
-        <div class="workflow-layout">
-          <div class="workflow-list">
-            {#each [...new Set(workflows.map((w) => w.id))] as id}{@const w =
-                workflows.find((w) => w.id === id)!}<button
-                class:selected={selectedWorkflow === id}
+        <div hidden={workflowOpen && !!flow}>
+          <TaskList
+            {workflows}
+            {devices}
+            {runs}
+            {schedules}
+            {loading}
+            {connected}
+            {working}
+            onOpen={(workflow) => {
+              selectedWorkflow = workflow.id;
+              selectedVersion = workflow.version;
+              workflowOpen = true;
+              notice = "";
+              error = "";
+            }}
+            onRefresh={() => {
+              void action("refresh-tasks", load, "任务已刷新");
+            }}
+            onViewRuns={(run) => {
+              tab = "runs";
+              void selectRun(run.id);
+            }}
+            onStop={(run) => {
+              void action(
+                `stop-${run.id}`,
+                () => api(`/runs/${run.id}/stop`, "POST"),
+                "已请求停止任务",
+              );
+            }}
+            onStopAll={stopAllRuns}
+          />
+        </div>
+        {#if workflowOpen && flow}
+          <div class="page-heading">
+            <div>
+              <h1>任务详情</h1>
+              <p class="intro">选择手机与参数，再试跑或运行。</p>
+            </div>
+            <div class="page-actions">
+              {#if activeRuns.length}<Button
+                  variant="outline"
+                  class="stop-button"
+                  disabled={!!working}
+                  onclick={stopAllRuns}><Square size={14} />全部停止</Button
+                >{/if}
+              <Button
+                variant="outline"
                 onclick={() => {
-                  selectedWorkflow = id;
-                  selectedVersion = 0;
-                }}
-                ><FlowIcon size={22} /><span
-                  ><strong>{w.name}</strong><small
-                    >{workflows.some((v) => v.id === id && v.active)
-                      ? "已有启用版本"
-                      : "等待试跑"}</small
-                  ></span
-                ><ChevronRight size={17} /></button
-              >{/each}
+                  workflowOpen = false;
+                  notice = "";
+                  error = "";
+                }}><ArrowLeft size={14} />返回任务</Button
+              >
+            </div>
           </div>
-          {#if flow}<article class="panel flow-panel">
-              <div class="panel-heading">
-                <div>
-                  <h2>{flow.name}</h2>
-                  <p>
-                    {flow.id === "swipe"
-                      ? "保持当前页面，按下方时长和间隔滑动。"
-                      : flow.description}
-                  </p>
-                </div>
-                <Badge
-                  class="status"
-                  variant={flow.active ? "default" : "outline"}
-                  >{flow.active ? "已启用" : "待试跑"}</Badge
-                >
+          <article class="panel flow-panel">
+            <div class="panel-heading">
+              <div>
+                <h2>{flow.name}</h2>
+                <p>
+                  {flow.id === "swipe"
+                    ? "保持当前页面，按下方时长和间隔滑动。"
+                    : flow.description}
+                </p>
               </div>
+              <Badge
+                class="status"
+                variant={flow.active ? "default" : "outline"}
+                >{flow.active ? "已启用" : "待试跑"}</Badge
+              >
+            </div>
+            <form
+              class="task-launch"
+              onsubmit={(event) => {
+                event.preventDefault();
+                void startFlow(
+                  (event.submitter as HTMLButtonElement | null)?.value !==
+                    "run",
+                );
+              }}
+            >
               {#if flow.id === "point-click"}
                 <div class="card-actions">
                   <Button
@@ -821,17 +890,16 @@
                       >{/each}</select
                   ></label
                 ><Button
-                  disabled={!!working ||
-                    !devices.find((d) => d.id === targetDevice)?.online ||
-                    activeRuns.some((r) => r.device_id === targetDevice)}
-                  onclick={() => startFlow(true)}
-                  ><Play size={16} />试跑此版本</Button
+                  disabled={!!working || !!launchBlocked}
+                  type="submit"
+                  name="mode"
+                  value="trial"><Play size={16} />试跑此版本</Button
                 >{#if flow.active}<Button
                     variant="outline"
-                    disabled={!!working ||
-                      !devices.find((d) => d.id === targetDevice)?.online ||
-                      activeRuns.some((r) => r.device_id === targetDevice)}
-                    onclick={() => startFlow(false)}>直接运行</Button
+                    disabled={!!working || !!launchBlocked}
+                    type="submit"
+                    name="mode"
+                    value="run">直接运行</Button
                   >{/if}{#if !flow.active && runs.some((r) => r.trial && r.state === "succeeded" && r.workflow.id === flow.id && r.workflow.version === flow.version)}<Button
                     variant="outline"
                     onclick={() =>
@@ -846,71 +914,69 @@
                       )}>启用 / 回退到此版</Button
                   >{/if}
               </div>
+              {#if launchBlocked}<p class="hint" role="status">
+                  {launchBlocked}
+                </p>{/if}
               <p class="hint">
                 试跑通过后自动启用。Agent 修改步骤；你查看流程、管理运行和定时。
               </p>
-              <ol class="flow-nodes">
-                {#each flow.nodes as n, i}<li
-                    class:executing={activeRuns.some(
-                      (r) =>
-                        r.workflow.id === flow.id &&
-                        r.workflow.version === flow.version &&
-                        r.node === n.id,
-                    )}
-                  >
-                    <div class="node-card">
-                      <span class="step-no"
-                        >{String(i + 1).padStart(2, "0")}</span
-                      >
-                      <div>
-                        <small>步骤 {String(i + 1).padStart(2, "0")}</small>
-                        <h3>
-                          {flow.id === "swipe" && n.type === "swipe_loop"
-                            ? `每隔 ${swipeInterval} 秒上滑，运行 ${swipeMinutes} 分钟`
-                            : n.label}
-                        </h3>
-                        {#if n.type === "qishui_loop"}<div class="branches">
-                            <span>金币增长 → 继续播放</span><span
-                              >暂停 {String(n.stall)} 秒 → 上滑</span
-                            ><span
-                              >{String(n.finish_stall)} 秒无增长 + {String(
-                                n.finish_swipes,
-                              )} 次无法切换 → 复查完成</span
-                            ><span>加载 / 网络异常 → 等待</span>
-                          </div>{:else if n.type === "branch"}<div
-                            class="branches"
-                          >
-                            {#each n.cases || [] as c}<span
-                                >{c.contains} → {stepTitle(flow, c.next)}</span
-                              >{/each}<span
-                              >其他 → {stepTitle(
-                                flow,
-                                String(n.otherwise),
-                              )}</span
-                            >
-                          </div>{:else if n.type === "qishui_navigate"}<p>
-                            识别金币入口、关闭遮挡，点任务文字，确认视频页。
-                          </p>{/if}
-                      </div>
-                      {#if activeRuns.some((r) => r.workflow.id === flow.id && r.node === n.id)}<Badge
-                          >执行中</Badge
-                        >{/if}
-                    </div>
-                    {#if n.next}<div class="flow-arrow">
-                        <ArrowDown size={20} /><span
-                          >下一步 · {stepTitle(flow, n.next)}</span
+            </form>
+            <ol class="flow-nodes">
+              {#each flow.nodes as n, i}
+                {@const nodeRun =
+                  launchRun?.workflow.id === flow.id &&
+                  launchRun.workflow.version === flow.version &&
+                  launchRun.node === n.id
+                    ? launchRun
+                    : null}
+                <li class:executing={!!nodeRun}>
+                  <div class="node-card">
+                    <span class="step-no">{String(i + 1).padStart(2, "0")}</span
+                    >
+                    <div>
+                      <small>步骤 {String(i + 1).padStart(2, "0")}</small>
+                      <h3>
+                        {flow.id === "swipe" && n.type === "swipe_loop"
+                          ? `每隔 ${swipeInterval} 秒上滑，运行 ${swipeMinutes} 分钟`
+                          : n.label}
+                      </h3>
+                      {#if n.type === "qishui_loop"}<div class="branches">
+                          <span>金币增长 → 继续播放</span><span
+                            >暂停 {String(n.stall)} 秒 → 上滑</span
+                          ><span
+                            >{String(n.finish_stall)} 秒无增长 + {String(
+                              n.finish_swipes,
+                            )} 次无法切换 → 复查完成</span
+                          ><span>加载 / 网络异常 → 等待</span>
+                        </div>{:else if n.type === "branch"}<div
+                          class="branches"
                         >
-                      </div>{/if}
-                  </li>{/each}
-              </ol>
-              <div class="flow-footer">
-                适用：{flow.devices.length
-                  ? flow.devices.map(name).join("、")
-                  : "所有已登记手机"}
-                <span>模型上限：{flow.model_limit} 次 / 运行</span>
-              </div>
-            </article>{/if}
-        </div>
+                          {#each n.cases || [] as c}<span
+                              >{c.contains} → {stepTitle(flow, c.next)}</span
+                            >{/each}<span
+                            >其他 → {stepTitle(flow, String(n.otherwise))}</span
+                          >
+                        </div>{:else if n.type === "qishui_navigate"}<p>
+                          识别金币入口、关闭遮挡，点任务文字，确认视频页。
+                        </p>{/if}
+                    </div>
+                    {#if nodeRun}<Badge>{runState(nodeRun.state)}</Badge>{/if}
+                  </div>
+                  {#if n.next}<div class="flow-arrow">
+                      <ArrowDown size={20} /><span
+                        >下一步 · {stepTitle(flow, n.next)}</span
+                      >
+                    </div>{/if}
+                </li>{/each}
+            </ol>
+            <div class="flow-footer">
+              适用：{flow.devices.length
+                ? flow.devices.map(name).join("、")
+                : "所有已登记手机"}
+              <span>模型上限：{flow.model_limit} 次 / 运行</span>
+            </div>
+          </article>
+        {/if}
       {:else if tab === "schedules"}
         <div class="schedule-layout">
           <form
