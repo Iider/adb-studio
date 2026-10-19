@@ -1,5 +1,9 @@
 # 来源声明
 
+## Pulse V2 原型
+
+界面依据用户提供的 `pulse-adb-fusion-v2.html`，沿用配色、品牌外观、侧栏、顶部栏及设备卡片样式。设备数据和操作接入本项目服务。
+
 ## bili-sync
 
 来源：https://github.com/amtoaer/bili-sync ，参考版本 `c900777`，MIT。

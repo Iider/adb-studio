@@ -6,22 +6,20 @@
     CalendarClock,
     History,
     Settings as SettingsIcon,
-    RefreshCw,
     Play,
     Square,
-    Camera,
-    Pencil,
     ChevronRight,
     ArrowDown,
     Download,
     Check,
     Plus,
-    Wifi,
-    Usb,
     LoaderCircle,
     Trash2,
+    Sun,
+    Moon,
   } from "@lucide/svelte";
   import Button from "$lib/components/ui/button/button.svelte";
+  import DeviceManager from "$lib/components/DeviceManager.svelte";
   import Badge from "$lib/components/ui/badge/badge.svelte";
   import {
     api,
@@ -41,13 +39,34 @@
   } from "$lib/api";
 
   const tabs = [
-    { id: "devices", label: "手机", icon: Smartphone },
-    { id: "workflows", label: "工作流", icon: FlowIcon },
-    { id: "schedules", label: "定时", icon: CalendarClock },
-    { id: "runs", label: "记录", icon: History },
-    { id: "settings", label: "设置", icon: SettingsIcon },
+    { id: "devices", label: "设备管理", icon: Smartphone },
+    { id: "workflows", label: "自动化任务", icon: FlowIcon },
+    { id: "schedules", label: "定时任务", icon: CalendarClock },
+    { id: "runs", label: "执行记录", icon: History },
+    { id: "settings", label: "系统设置", icon: SettingsIcon },
   ];
   let tab = $state("devices");
+  let selectedDeviceId = $state("");
+  let contentElement = $state<HTMLElement>();
+  $effect(() => {
+    const currentTab = tab;
+    const currentDeviceId = selectedDeviceId;
+    void tick().then(() => {
+      if (tab === currentTab && selectedDeviceId === currentDeviceId)
+        contentElement?.scrollTo(0, 0);
+    });
+  });
+  let theme = $state("light");
+  let clock = $state("");
+  function toggleTheme() {
+    theme = theme === "light" ? "dark" : "light";
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem("adb-studio-theme", theme);
+    } catch {
+      /* 当前页面仍可切换主题 */
+    }
+  }
   let devices = $state<Device[]>([]);
   let workflows = $state<Workflow[]>([]);
   let runs = $state<Run[]>([]);
@@ -104,7 +123,6 @@
     api: "responses",
     key_env: "MODEL_KEY",
   });
-  const online = $derived(devices.filter((d) => d.online));
   const activeRuns = $derived(runs.filter(busy));
   const finishedRuns = $derived(runs.filter((r) => !busy(r)));
   const activeWorkflows = $derived(workflows.filter((w) => w.active));
@@ -441,6 +459,19 @@
   }
   onMount(() => {
     alive = true;
+    theme =
+      document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+    const updateClock = () => {
+      clock = new Intl.DateTimeFormat("zh-CN", {
+        timeZone: "Asia/Shanghai",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).format(new Date());
+    };
+    updateClock();
+    const clockTimer = setInterval(updateClock, 1000);
     try {
       const saved = JSON.parse(
         localStorage.getItem("swipe-settings") || "null",
@@ -478,6 +509,7 @@
     return () => {
       alive = false;
       clearTimeout(retry);
+      clearInterval(clockTimer);
       socket?.close();
       Object.values(pictures).forEach(URL.revokeObjectURL);
     };
@@ -493,10 +525,14 @@
 <div class="shell">
   <aside class="sidebar">
     <a class="brand" href="/" aria-label="ADB 工作台首页"
-      ><span class="brand-icon"><Smartphone size={24} /></span><span
-        >ADB 工作台<small>手机自动化</small></span
+      ><span class="brand-icon" aria-hidden="true">⌁</span><span
+        class="brand-words"
+        >pulse<span class="brand-accent">.</span> studio<small
+          >ANDROID AUTOMATION</small
+        ></span
       ></a
     >
+    <div class="nav-label">工作空间</div>
     <nav aria-label="主要功能">
       {#each tabs as item}<button
           aria-label={item.label}
@@ -504,6 +540,7 @@
           class:current={tab === item.id}
           onclick={() => {
             tab = item.id;
+            selectedDeviceId = "";
             notice = "";
             error = "";
           }}
@@ -515,37 +552,46 @@
         >{/each}
     </nav>
     <div class="sidebar-foot">
-      <span class="local-dot"></span>
-      {settings?.host.startsWith("0.0.0.0:") ? "局域网可访问" : "仅此 Mac"}
-      <small>网页关闭后，后台继续运行</small>
+      <div>
+        <span class="local-dot"></span>本地服务 · {connected
+          ? "已连接"
+          : "连接中"}
+      </div>
+      <small>ADB 工作台 · 网页关闭后继续运行</small>
     </div>
   </aside>
   <main>
     <header class="topbar">
-      <span
-        >工作台 <ChevronRight size={16} />
-        {tabs.find((t) => t.id === tab)?.label}</span
-      >
+      <div class="breadcrumb">
+        工作空间 <span>/</span><strong
+          >{tab === "devices" && selectedDeviceId
+            ? "设备详情"
+            : tabs.find((item) => item.id === tab)?.label}</strong
+        >
+      </div>
       <div class="top-actions">
-        <span class="connection" class:disconnected={!connected}
-          ><span></span>{connected ? "后台已连接" : "后台连接中"}</span
-        ><Button
-          variant="outline"
-          onclick={() =>
-            action(
-              "refresh",
-              () => api("/devices/refresh", "POST"),
-              "已刷新手机状态",
-            )}
-          disabled={!!working || !connected}
-          ><RefreshCw
-            size={17}
-            class={working === "refresh" ? "spin" : ""}
-          />刷新</Button
+        <span class="mode-tag" class:disconnected={!connected}
+          >{connected ? "LOCAL" : "连接中"}</span
+        >
+        <button
+          class="theme-button"
+          onclick={toggleTheme}
+          aria-label={theme === "light" ? "切换夜间模式" : "切换日间模式"}
+          >{#if theme === "light"}<Moon
+              size={12}
+              aria-hidden="true"
+            />夜间模式{:else}<Sun
+              size={12}
+              aria-hidden="true"
+            />日间模式{/if}</button
+        >
+        <time class="clock">{clock}</time><span
+          class="avatar"
+          aria-hidden="true">PS</span
         >
       </div>
     </header>
-    <section class="content">
+    <section class="content" bind:this={contentElement}>
       {#if error}<div class="message error" role="alert">
           {error}<button aria-label="关闭提示" onclick={() => (error = "")}
             >×</button
@@ -557,211 +603,100 @@
             onclick={() => (notice = "")}>×</button
           >
         </div>{/if}
-      <div class="page-heading">
-        <div>
-          <p class="eyebrow">手机自动化 · 本地托管</p>
-          <h1>
-            {tabs.find((t) => t.id === tab)?.label === "手机"
-              ? "你的手机"
-              : tabs.find((t) => t.id === tab)?.label}
-          </h1>
-          <p class="intro">
-            {(
-              {
-                devices: "查看连接，选择手机，开始任务。",
-                workflows: "查看 Agent 制作的流程，试跑或直接执行。",
-                schedules: "设置执行时间，交给后台完成。",
-                runs: "任务进度、结果与判断依据。",
-                settings: "后台状态与识别模型。",
-              } as Record<string, string>
-            )[tab]}
-          </p>
+      {#if tab !== "devices"}<div class="page-heading">
+          <div>
+            <p class="eyebrow">手机自动化 · 本地托管</p>
+            <h1>
+              {tabs.find((t) => t.id === tab)?.label}
+            </h1>
+            <p class="intro">
+              {(
+                {
+                  workflows: "查看 Agent 制作的流程，试跑或直接执行。",
+                  schedules: "设置执行时间，交给后台完成。",
+                  runs: "任务进度、结果与判断依据。",
+                  settings: "后台状态与识别模型。",
+                } as Record<string, string>
+              )[tab]}
+            </p>
+          </div>
+          {#if activeRuns.length}<Button
+              variant="outline"
+              class="stop-button"
+              disabled={!!working}
+              onclick={() =>
+                action(
+                  "stop-all",
+                  () =>
+                    Promise.all(
+                      activeRuns.map((r) => api(`/runs/${r.id}/stop`, "POST")),
+                    ),
+                  "已请求停止全部任务",
+                )}><Square size={16} />全部停止</Button
+            >{/if}
         </div>
-        {#if activeRuns.length}<Button
-            variant="outline"
-            class="stop-button"
-            disabled={!!working}
-            onclick={() =>
-              action(
-                "stop-all",
-                () =>
-                  Promise.all(
-                    activeRuns.map((r) => api(`/runs/${r.id}/stop`, "POST")),
-                  ),
-                "已请求停止全部任务",
-              )}><Square size={16} />全部停止</Button
-          >{/if}
-      </div>
-
+      {/if}
       {#if tab === "devices"}
-        <div class="summary-grid">
-          <div>
-            <small>在线手机</small><strong
-              >{online.length}<span> / {devices.length}</span></strong
-            >
-          </div>
-          <div>
-            <small>正在执行</small><strong
-              >{activeRuns.length}<span> 个任务</span></strong
-            >
-          </div>
-          <div>
-            <small>下次定时</small><strong class="next-time"
-              >{schedules
-                .filter((s) => s.enabled)
-                .sort((a, b) => a.next_at.localeCompare(b.next_at))[0]
-                ? time(
-                    schedules
-                      .filter((s) => s.enabled)
-                      .sort((a, b) => a.next_at.localeCompare(b.next_at))[0]
-                      .next_at,
-                  )
-                : "尚未设置"}</strong
-            >
-          </div>
-        </div>
-        <div class="section-label">
-          <h2>已登记手机</h2>
-          <span
-            >{lastUpdated
-              ? "更新于 " + time(lastUpdated, true)
-              : "等待后台"}</span
-          >
-        </div>
-        {#if loading}<div class="empty">
-            <LoaderCircle class="spin" />正在读取手机…
-          </div>{/if}
-        <div class="device-grid">
-          {#each devices as d}<article class="device-card">
-              <div class="device-top">
-                <div class="phone-icon"><Smartphone size={29} /></div>
-                <Badge
-                  variant="outline"
-                  class={d.online ? "status online" : "status offline"}
-                  ><span class="status-dot"></span>{d.locked
-                    ? "需要解锁"
-                    : d.online
-                      ? "在线"
-                      : "离线"}</Badge
-                >
-              </div>
-              <div class="device-name">
-                <h2>{d.name}</h2>
-                <button
-                  aria-label={`重命名${d.name}`}
-                  onclick={() => {
-                    editDevice = d;
-                    rename = d.name;
-                  }}><Pencil size={17} /></button
-                >
-              </div>
-              <p class="model">{d.model}</p>
-              <dl>
-                <div>
-                  <dt>连接</dt>
-                  <dd>
-                    {#if d.online}{#if d.connection === "USB"}<Usb
-                          size={15}
-                        />{:else}<Wifi size={15} />{/if}{/if}{d.connection}
-                  </dd>
-                </div>
-                <div>
-                  <dt>最近在线</dt>
-                  <dd>{time(d.last_seen)}</dd>
-                </div>
-              </dl>
-              <label class="awake"
-                ><span
-                  >保持常亮<small
-                    >{d.restore_pending
-                      ? "等待恢复原设置"
-                      : d.keep_awake
-                        ? "建议保持接电"
-                        : "按原来的息屏设置"}</small
-                  ></span
-                ><input
-                  type="checkbox"
-                  class="switch"
-                  checked={d.keep_awake}
-                  disabled={!!working}
-                  onchange={(e) =>
-                    action(
-                      `awake-${d.id}`,
-                      () =>
-                        api(`/devices/${d.id}`, "PUT", {
-                          keep_awake: e.currentTarget.checked,
-                        }),
-                      "常亮设置已保存",
-                    )}
-                /></label
-              >
-              <div class="card-actions">
-                <Button
-                  variant="outline"
-                  disabled={!d.online ||
-                    !!working ||
-                    activeRuns.some((r) => r.device_id === d.id)}
-                  onclick={() => controlScreen(d, "wake")}
-                  >唤醒／尝试解锁</Button
-                >
-                <Button
-                  variant="outline"
-                  disabled={!d.online ||
-                    !!working ||
-                    activeRuns.some((r) => r.device_id === d.id)}
-                  onclick={() => controlScreen(d, "lock")}>锁屏</Button
-                >
-              </div>
-              <div class="card-actions">
-                <Button
-                  disabled={!d.online ||
-                    !!working ||
-                    activeRuns.some((r) => r.device_id === d.id)}
-                  onclick={() => {
-                    targetDevice = d.id;
-                    selectedWorkflow = "swipe";
-                    selectedVersion = 0;
-                    tab = "workflows";
-                  }}><Play size={16} />选择任务</Button
-                ><Button
-                  variant="outline"
-                  disabled={!d.online || !!working}
-                  onclick={() => capture(d)}><Camera size={17} />截图</Button
-                >
-              </div>
-              <Button
-                variant="outline"
-                disabled={!!working || !d.online}
-                onclick={() => markPoint(d)}>标注点击位置</Button
-              >
-              {#if d.tap_point}<p class="hint">
-                  点击位置：{d.tap_point.x}，{d.tap_point.y}
-                </p>{/if}
-              {#if pictures[d.id]}<details>
-                  <summary>查看手机截图</summary><img
-                    class="preview"
-                    src={pictures[d.id]}
-                    alt={`${d.name}当前画面`}
-                  />
-                </details>{/if}{#if activeRuns.some((r) => r.device_id === d.id)}<button
-                  class="running-link"
-                  onclick={() => {
-                    selectedRun = activeRuns.find(
-                      (r) => r.device_id === d.id,
-                    )!.id;
-                    tab = "runs";
-                    void selectRun(selectedRun);
-                  }}>正在运行 · 查看进度 <ChevronRight size={15} /></button
-                >{/if}
-            </article>{/each}
-        </div>
-        <div class="tip">
-          <Wifi size={20} />
-          <div>
-            <strong>无线连接会自动检查</strong>
-            <p>已配对手机会尝试重连。手机显示密码锁屏时，请先在手机上解锁。</p>
-          </div>
-        </div>
+        <DeviceManager
+          {devices}
+          {runs}
+          {pictures}
+          {working}
+          {loading}
+          {connected}
+          {lastUpdated}
+          bind:selectedDeviceId
+          onRefresh={() => {
+            void action(
+              "refresh",
+              () => api("/devices/refresh", "POST"),
+              "已刷新手机状态",
+            );
+          }}
+          onCapture={(device) => {
+            void capture(device);
+          }}
+          onRename={(device) => {
+            editDevice = device;
+            rename = device.name;
+          }}
+          onScreen={(device, operation) => {
+            void controlScreen(device, operation);
+          }}
+          onAwake={(device, enabled) => {
+            void action(
+              `awake-${device.id}`,
+              () =>
+                api(`/devices/${device.id}`, "PUT", { keep_awake: enabled }),
+              "常亮设置已保存",
+            );
+          }}
+          onMarkPoint={(device) => {
+            void markPoint(device);
+          }}
+          onChooseTask={(device) => {
+            targetDevice = device.id;
+            selectedWorkflow = "swipe";
+            selectedVersion = 0;
+            tab = "workflows";
+          }}
+          onViewRuns={(device) => {
+            const latest = runs.find((run) => run.device_id === device.id);
+            selectedRun = latest?.id || "";
+            tab = "runs";
+            if (latest) void selectRun(latest.id);
+          }}
+          onStopAll={() => {
+            void action(
+              "stop-all",
+              () =>
+                Promise.all(
+                  activeRuns.map((run) => api(`/runs/${run.id}/stop`, "POST")),
+                ),
+              "已请求停止全部任务",
+            );
+          }}
+        />
       {:else if tab === "workflows"}
         <div class="workflow-layout">
           <div class="workflow-list">
