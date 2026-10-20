@@ -12,7 +12,6 @@
     ArrowDown,
     Download,
     Check,
-    Plus,
     LoaderCircle,
     Trash2,
     Sun,
@@ -21,6 +20,8 @@
   import Button from "$lib/components/ui/button/button.svelte";
   import DeviceManager from "$lib/components/DeviceManager.svelte";
   import TaskList from "$lib/components/TaskList.svelte";
+  import ScheduleManager from "$lib/components/ScheduleManager.svelte";
+  import { scheduleInput } from "$lib/schedules";
   import Badge from "$lib/components/ui/badge/badge.svelte";
   import {
     api,
@@ -36,7 +37,6 @@
     type Schedule,
     type Settings,
     type Event,
-    type Rule,
   } from "$lib/api";
 
   const tabs = [
@@ -100,12 +100,8 @@
   let pointHeight = $state(0);
   let tapCount = $state(10);
   let tapInterval = $state(5);
-  let scheduleTapCount = $state(10);
-  let scheduleTapInterval = $state(5);
   let swipeMinutes = $state(15);
   let swipeInterval = $state(25);
-  let scheduleSwipeMinutes = $state(15);
-  let scheduleSwipeInterval = $state(25);
   let selectedRun = $state("");
   let events = $state<Event[]>([]);
   let clearDialog = $state<HTMLDialogElement>();
@@ -114,16 +110,6 @@
   let clearRequest = $state<{ ids: string[]; description: string } | null>(
     null,
   );
-  let editingSchedule = $state("");
-  let scheduleEnabled = $state(true);
-  let scheduleName = $state("");
-  let scheduleDevice = $state("3430131496001EB");
-  let scheduleWorkflow = $state("swipe");
-  let ruleKind = $state("daily");
-  let ruleTime = $state("09:00");
-  let ruleDate = $state("");
-  let ruleMinutes = $state(60);
-  let ruleDays = $state<number[]>([1, 2, 3, 4, 5]);
   let model = $state({
     endpoint: "",
     model: "",
@@ -132,7 +118,6 @@
   });
   const activeRuns = $derived(runs.filter(busy));
   const finishedRuns = $derived(runs.filter((r) => !busy(r)));
-  const activeWorkflows = $derived(workflows.filter((w) => w.active));
   const flow = $derived(
     workflows.find(
       (w) =>
@@ -211,7 +196,7 @@
     fn: () => Promise<unknown>,
     message = "已保存",
   ) {
-    if (working) return;
+    if (working) return false;
     working = key;
     error = "";
     notice = "";
@@ -219,8 +204,10 @@
       await fn();
       notice = message;
       await load();
+      return true;
     } catch (e) {
       error = e instanceof Error ? e.message : "操作失败";
+      return false;
     } finally {
       working = "";
     }
@@ -441,46 +428,6 @@
       "记录已导出",
     );
   }
-  function editSchedule(s: Schedule) {
-    editingSchedule = s.id;
-    scheduleName = s.name;
-    scheduleDevice = s.device_id;
-    scheduleWorkflow = s.workflow_id;
-    scheduleEnabled = s.enabled;
-    scheduleTapCount = s.tap?.count ?? 10;
-    scheduleTapInterval = s.tap?.interval ?? 5;
-    scheduleSwipeMinutes = s.swipe?.minutes ?? 15;
-    scheduleSwipeInterval = s.swipe?.interval ?? 25;
-    ruleKind = s.rule.kind;
-    if (s.rule.kind === "once")
-      ruleDate = new Date(new Date(s.rule.at).getTime() + 8 * 3600000)
-        .toISOString()
-        .slice(0, 16);
-    else if (s.rule.kind === "interval") ruleMinutes = s.rule.minutes;
-    else {
-      ruleTime = s.rule.time;
-      if (s.rule.kind === "weekly") ruleDays = [...s.rule.days];
-    }
-  }
-  function rule(): Rule {
-    if (ruleKind === "once")
-      return {
-        kind: "once",
-        at: new Date(`${ruleDate}:00+08:00`).toISOString(),
-      };
-    if (ruleKind === "weekly")
-      return { kind: "weekly", time: ruleTime, days: ruleDays };
-    if (ruleKind === "interval")
-      return { kind: "interval", minutes: Number(ruleMinutes) };
-    return { kind: "daily", time: ruleTime };
-  }
-  function ruleLabel(r: Rule) {
-    if (r.kind === "once") return "执行一次";
-    if (r.kind === "interval") return `每 ${r.minutes} 分钟`;
-    if (r.kind === "weekly")
-      return `${r.days.map((d) => ["", "周一", "周二", "周三", "周四", "周五", "周六", "周日"][d]).join("、")} ${r.time}`;
-    return `每天 ${r.time}`;
-  }
   function stepTitle(workflow: Workflow, id: string) {
     return workflow.nodes.find((node) => node.id === id)?.label || id;
   }
@@ -641,7 +588,7 @@
             onclick={() => (notice = "")}>×</button
           >
         </div>{/if}
-      {#if tab !== "devices" && tab !== "workflows"}<div class="page-heading">
+      {#if tab === "runs" || tab === "settings"}<div class="page-heading">
           <div>
             <p class="eyebrow">手机自动化 · 本地托管</p>
             <h1>
@@ -650,7 +597,6 @@
             <p class="intro">
               {(
                 {
-                  schedules: "设置执行时间，交给后台完成。",
                   runs: "任务进度、结果与判断依据。",
                   settings: "后台状态与识别模型。",
                 } as Record<string, string>
@@ -978,226 +924,48 @@
           </article>
         {/if}
       {:else if tab === "schedules"}
-        <div class="schedule-layout">
-          <form
-            class="panel"
-            onsubmit={(e) => {
-              e.preventDefault();
-              void action(
-                "schedule",
-                () =>
-                  api(
-                    editingSchedule
-                      ? `/schedules/${editingSchedule}`
-                      : "/schedules",
-                    editingSchedule ? "PUT" : "POST",
-                    {
-                      name: scheduleName || "定时任务",
-                      device_id: scheduleDevice,
-                      workflow_id: scheduleWorkflow,
-                      rule: rule(),
-                      enabled: scheduleEnabled,
-                      tap: activeWorkflows
-                        .find((w) => w.id === scheduleWorkflow)
-                        ?.nodes.some((n) =>
-                          ["tap_loop", "fixed_tap_loop"].includes(n.type),
-                        )
-                        ? {
-                            count: Number(scheduleTapCount),
-                            interval: Number(scheduleTapInterval),
-                          }
-                        : null,
-                      swipe:
-                        scheduleWorkflow === "swipe"
-                          ? {
-                              minutes: Number(scheduleSwipeMinutes),
-                              interval: Number(scheduleSwipeInterval),
-                            }
-                          : null,
-                    },
-                  ),
-                "定时已保存",
-              );
-            }}
-          >
-            <h2>
-              <Plus size={21} />{editingSchedule ? "调整定时" : "新建定时"}
-            </h2>
-            <label
-              >名称<input
-                bind:value={scheduleName}
-                placeholder="例如：早上刷视频"
-                maxlength="80"
-              /></label
-            ><label
-              >手机<select bind:value={scheduleDevice}
-                >{#each devices as d}<option value={d.id}>{d.name}</option
-                  >{/each}</select
-              ></label
-            ><label
-              >工作流<select bind:value={scheduleWorkflow}
-                >{#each activeWorkflows as w}<option value={w.id}
-                    >{w.name}</option
-                  >{/each}</select
-              ></label
-            >{#if activeWorkflows
-              .find((w) => w.id === scheduleWorkflow)
-              ?.nodes.some( (n) => ["tap_loop", "fixed_tap_loop"].includes(n.type) )}
-              <label
-                >点击次数<input
-                  type="number"
-                  min="1"
-                  max="10000"
-                  step="1"
-                  required
-                  bind:value={scheduleTapCount}
-                /></label
-              >
-              <label
-                >点击间隔（秒）<input
-                  type="number"
-                  min="1"
-                  max="86400"
-                  step="any"
-                  required
-                  bind:value={scheduleTapInterval}
-                /></label
-              >
-            {/if}{#if scheduleWorkflow === "swipe"}
-              <label
-                >总时长（分钟）<input
-                  type="number"
-                  min="0.01"
-                  max="10080"
-                  step="any"
-                  required
-                  bind:value={scheduleSwipeMinutes}
-                /></label
-              >
-              <label
-                >滑动间隔（秒）<input
-                  type="number"
-                  min="0.01"
-                  max="86400"
-                  step="any"
-                  required
-                  bind:value={scheduleSwipeInterval}
-                /></label
-              >
-            {/if}{#if !activeWorkflows.length}<p class="hint">
-                先试跑工作流，通过后即可设置定时。
-              </p>{/if}<label
-              >执行规则<select bind:value={ruleKind}
-                ><option value="daily">每天</option><option value="weekly"
-                  >每周</option
-                ><option value="interval">固定间隔</option><option value="once"
-                  >只执行一次</option
-                ></select
-              ></label
-            >{#if ruleKind === "once"}<label
-                >日期与时间<input
-                  type="datetime-local"
-                  required
-                  bind:value={ruleDate}
-                /></label
-              >{:else if ruleKind === "interval"}<label
-                >间隔（分钟）<input
-                  type="number"
-                  min="1"
-                  max="525600"
-                  required
-                  bind:value={ruleMinutes}
-                /></label
-              >{:else}<label
-                >时间<input type="time" required bind:value={ruleTime} /></label
-              >{/if}{#if ruleKind === "weekly"}<fieldset>
-                <legend>星期</legend>
-                <div class="weekdays">
-                  {#each ["一", "二", "三", "四", "五", "六", "日"] as day, i}<label
-                      ><input
-                        type="checkbox"
-                        checked={ruleDays.includes(i + 1)}
-                        onchange={(e) =>
-                          (ruleDays = e.currentTarget.checked
-                            ? [...ruleDays, i + 1]
-                            : ruleDays.filter((d) => d !== i + 1))}
-                      />周{day}</label
-                    >{/each}
-                </div>
-              </fieldset>{/if}
-            <label class="awake"
-              ><span>开启定时</span><input
-                type="checkbox"
-                class="switch"
-                bind:checked={scheduleEnabled}
-              /></label
-            >
-            <p class="hint">
-              上海时间。手机离线时，本次跳过；正在执行的任务掉线后等待上线。
-            </p>
-            <Button
-              type="submit"
-              disabled={!!working || !activeWorkflows.length || !connected}
-              ><CalendarClock size={17} />{editingSchedule
-                ? "保存修改"
-                : "保存定时"}</Button
-            >
-          </form>
-          <div class="schedule-list">
-            {#if !schedules.length}<div class="empty">
-                <CalendarClock size={32} />
-                <h3>还没有定时</h3>
-                <p>选择手机和工作流，设置执行时间。</p>
-              </div>{/if}{#each schedules as s}<article class="panel">
-                <div class="panel-heading">
-                  <h2>{s.name}</h2>
-                  <Badge variant="outline"
-                    >{s.enabled ? "已开启" : "已暂停"}</Badge
-                  >
-                </div>
-                <p>
-                  {name(s.device_id)} · {workflows.find(
-                    (w) => w.id === s.workflow_id,
-                  )?.name}
-                </p>
-                <strong class="schedule-rule">{ruleLabel(s.rule)}</strong>
-                <p>下次：{s.enabled ? time(s.next_at) : "暂停中"}</p>
-                {#if s.last_result}<p class="hint">
-                    最近：{s.last_result}
-                  </p>{/if}
-                <div class="card-actions">
-                  <Button
-                    variant="outline"
-                    disabled={!!working}
-                    onclick={() => editSchedule(s)}>修改</Button
-                  >
-                  <Button
-                    variant="outline"
-                    disabled={!!working}
-                    onclick={() =>
-                      action(
-                        "toggle-schedule",
-                        () =>
-                          api(`/schedules/${s.id}`, "PUT", {
-                            ...s,
-                            enabled: !s.enabled,
-                          }),
-                        "定时已更新",
-                      )}>{s.enabled ? "暂停" : "开启"}</Button
-                  ><Button
-                    variant="ghost"
-                    disabled={!!working}
-                    onclick={() =>
-                      action(
-                        "delete-schedule",
-                        () => api(`/schedules/${s.id}`, "DELETE"),
-                        "定时已删除",
-                      )}>删除</Button
-                  >
-                </div>
-              </article>{/each}
-          </div>
-        </div>
+        <ScheduleManager
+          {schedules}
+          {workflows}
+          {devices}
+          {loading}
+          {connected}
+          {working}
+          {error}
+          activeCount={activeRuns.length}
+          onStopAll={stopAllRuns}
+          onSave={(id, input) =>
+            action(
+              "save-schedule",
+              () =>
+                api(
+                  id ? `/schedules/${id}` : "/schedules",
+                  id ? "PUT" : "POST",
+                  input,
+                ),
+              "定时已保存",
+            )}
+          onToggle={(schedule) =>
+            action(
+              "toggle-schedule",
+              () =>
+                api(`/schedules/${schedule.id}`, "PUT", {
+                  ...scheduleInput(schedule),
+                  enabled: !schedule.enabled,
+                }),
+              schedule.enabled ? "定时已暂停" : "定时已开启",
+            )}
+          onDelete={(schedule) =>
+            action(
+              "delete-schedule",
+              () => api(`/schedules/${schedule.id}`, "DELETE"),
+              "定时已删除",
+            )}
+          onViewTasks={() => {
+            tab = "workflows";
+            workflowOpen = false;
+          }}
+        />
       {:else if tab === "runs"}
         <div class="run-toolbar">
           <p aria-live="polite">
