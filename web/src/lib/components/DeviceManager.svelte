@@ -11,6 +11,7 @@
     Sun,
     Moon,
   } from "@lucide/svelte";
+  import LiveScreen from "$lib/components/LiveScreen.svelte";
   import Button from "$lib/components/ui/button/button.svelte";
   import { busy, runLabel, time, type Device, type Run } from "$lib/api";
 
@@ -261,46 +262,16 @@
       </article>
     </div>
     <article class="panel device-screen">
-      <div class="device-row">
-        <h2>{deviceTab === "screen" ? "屏幕截图预览" : "屏幕预览"}</h2>
-        {@render status(device)}
-      </div>
-      <div class="device-screen-body">
-        {#if pictures[device.id]}
-          <img
-            class="device-screenshot"
-            src={pictures[device.id]}
-            alt={`${device.name}当前截图`}
-          />
-        {:else}
-          <div class="device-screen-placeholder">
-            <Camera size={32} strokeWidth={1.4} /><strong>尚未获取截图</strong
-            ><span
-              >{device.online
-                ? "点击下方按钮，查看手机当前画面"
-                : "手机连接后可获取画面"}</span
-            >
-          </div>
-        {/if}
-      </div>
-      <p class="hint">
-        {pictures[device.id]
-          ? "这是最近获取的截图，可手动更新。"
-          : "截图保留手机当前画面的原分辨率。"}
-      </p>
-      <Button
-        variant="outline"
-        class="device-open"
-        disabled={!device.online || !!working}
-        onclick={() => onCapture(device)}
-      >
-        {#if working === `photo-${device.id}`}<LoaderCircle
-            size={15}
-            class="spin"
-          />获取中…{:else}<Camera size={15} />{pictures[device.id]
-            ? "更新截图"
-            : "获取当前截图"}{/if}
-      </Button>
+      {#key device.id}
+        <LiveScreen
+          id={device.id}
+          name={device.name}
+          online={device.online}
+          picture={pictures[device.id]}
+          capturing={working === `photo-${device.id}`}
+          onCapture={() => onCapture(device)}
+        />
+      {/key}
     </article>
   </div>
 {:else}

@@ -1,5 +1,13 @@
 # 来源声明
 
+## scrcpy 与浏览器解码库
+
+投屏使用 Genymobile scrcpy 3.1 官方服务端（Apache-2.0），由 `scripts/setup-mirror.py` 下载并校验。来源：https://github.com/Genymobile/scrcpy/tree/v3.1 。许可证见 `licenses/scrcpy-LICENSE`。
+
+浏览器使用 `@yume-chan/scrcpy` 1.1.0、`@yume-chan/scrcpy-decoder-webcodecs` 1.1.0、`@yume-chan/stream-extra` 1.0.0（MIT），来源：https://github.com/yume-chan/ya-webadb 。许可证见 `licenses/yume-chan-MIT`；间接依赖的许可证见安装包内的 LICENSE。
+
+连接方式参考 Aya 1.14.2 的设计，工作台直接接入上述底层组件，未复制 Aya 的 AGPL 源码。
+
 ## Pulse V2 原型
 
 界面依据用户提供的 `pulse-adb-fusion-v2.html`，沿用配色、品牌外观、侧栏、顶部栏及设备卡片样式。设备数据和操作接入本项目服务。

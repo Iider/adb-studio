@@ -23,6 +23,9 @@
   },
   "dependencies": {
     "@lucide/svelte": "^1.24.0",
+    "@yume-chan/scrcpy": "1.1.0",
+    "@yume-chan/scrcpy-decoder-webcodecs": "1.1.0",
+    "@yume-chan/stream-extra": "1.0.0",
     "clsx": "^2.1.1",
     "tailwind-merge": "^3.6.0",
     "tailwind-variants": "^3.2.2"

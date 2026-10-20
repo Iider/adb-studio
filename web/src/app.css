@@ -1817,3 +1817,43 @@ summary {
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
+
+.live-canvas {
+  display: none;
+  background: var(--panel2);
+}
+.live-canvas.visible {
+  display: block;
+}
+.live-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 16px 0;
+}
+.live-actions button {
+  min-height: 44px;
+}
+.live-error {
+  overflow-wrap: anywhere;
+}
+.live-footnote {
+  margin-bottom: 0;
+}
+
+.screen-active .device-screen-body {
+  min-height: 240px;
+}
+.screen-active .device-screenshot {
+  max-height: clamp(220px, calc(100dvh - 450px), 680px);
+}
+.device-screenshot:fullscreen {
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  background: var(--bg);
+}

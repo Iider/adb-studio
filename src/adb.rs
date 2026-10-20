@@ -71,6 +71,7 @@ fn elapsed_ms(start: Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1000.0
 }
 
+#[derive(Clone)]
 struct Target {
     endpoint: String,
     transport: Option<String>,
@@ -193,6 +194,88 @@ impl Adb {
         Ok(String::from_utf8(self.phone(id, args).await?)?
             .trim()
             .into())
+    }
+    pub async fn video(
+        &self,
+        id: &str,
+        server: &std::path::Path,
+        cleanup: tokio_util::task::TaskTracker,
+    ) -> Result<VideoConnection> {
+        if !server.is_file() {
+            bail!("投屏组件尚未安装，请运行 python3 scripts/setup-mirror.py 后更新服务")
+        }
+        let target = self.target(id).await?;
+        let power = self
+            .at_target(&target, &["shell", "dumpsys", "power"])
+            .await?;
+        if !String::from_utf8_lossy(&power).contains("mWakefulness=Awake") {
+            bail!("手机已息屏，请先唤醒并解锁，再开启投屏")
+        }
+        let scid = format!(
+            "{:08x}",
+            (uuid::Uuid::new_v4().as_u128() as u32) & 0x7fff_ffff
+        );
+        let remote = format!("/data/local/tmp/adb-studio-{scid}.jar");
+        let socket = format!("localabstract:scrcpy_{scid}");
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+        let port = format!("tcp:{}", listener.local_addr()?.port());
+        let mut connection = VideoConnection {
+            child: None,
+            cleanup,
+            stream: None,
+            path: self.path.clone(),
+            target,
+            socket,
+            remote: remote.clone(),
+        };
+        self.at_target(
+            &connection.target,
+            &[
+                "push",
+                server.to_str().context("投屏组件路径无效")?,
+                &remote,
+            ],
+        )
+        .await?;
+        self.at_target(&connection.target, &["reverse", &connection.socket, &port])
+            .await?;
+        let classpath = format!("CLASSPATH={remote}");
+        let session = format!("scid={scid}");
+        let child = Command::new(&self.path)
+            .args(connection.target.selector())
+            .args([
+                "shell",
+                &classpath,
+                "app_process",
+                "/",
+                "com.genymobile.scrcpy.Server",
+                "3.1",
+                &session,
+                "tunnel_forward=false",
+                "audio=false",
+                "control=false",
+                "power_on=false",
+                "cleanup=true",
+                "video_codec=h264",
+                "max_size=1280",
+                "max_fps=30",
+                "video_bit_rate=4000000",
+                "send_dummy_byte=false",
+                "send_device_meta=false",
+                "send_codec_meta=true",
+                "send_frame_meta=true",
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .context("无法启动手机投屏")?;
+        connection.child = Some(child);
+        let (stream, _) = tokio::time::timeout(Duration::from_secs(10), listener.accept())
+            .await
+            .context("投屏连接超时，请解锁手机并检查连接后重试")??;
+        connection.stream = Some(stream);
+        Ok(connection)
     }
     pub async fn shot(&self, id: &str) -> Result<Vec<u8>> {
         Ok(self.capture(id).await?.png)
@@ -365,6 +448,40 @@ impl Adb {
     pub async fn size(&self, id: &str) -> Result<(u32, u32)> {
         let png = self.shot(id).await?;
         screen_size(&png)
+    }
+}
+
+pub struct VideoConnection {
+    cleanup: tokio_util::task::TaskTracker,
+    child: Option<tokio::process::Child>,
+    pub stream: Option<tokio::net::TcpStream>,
+    path: PathBuf,
+    target: Target,
+    socket: String,
+    remote: String,
+}
+impl Drop for VideoConnection {
+    fn drop(&mut self) {
+        self.stream.take();
+        self.child.take();
+        let path = self.path.clone();
+        let target = self.target.clone();
+        let socket = self.socket.clone();
+        let remote = self.remote.clone();
+        self.cleanup.spawn(async move {
+            let mut command = Command::new(&path);
+            command
+                .args(target.selector())
+                .args(["reverse", "--remove", &socket])
+                .kill_on_drop(true);
+            let _ = tokio::time::timeout(Duration::from_secs(3), command.output()).await;
+            let mut remove = Command::new(path);
+            remove
+                .args(target.selector())
+                .args(["shell", "rm", "-f", &remote])
+                .kill_on_drop(true);
+            let _ = tokio::time::timeout(Duration::from_secs(3), remove.output()).await;
+        });
     }
 }
 

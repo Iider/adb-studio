@@ -39,6 +39,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/devices/{id}", put(update_device))
         .route("/devices/{id}/screenshot", get(screenshot))
         .route("/devices/{id}/screen", post(screen_control))
+        .route("/devices/{id}/mirror", get(mirror))
         .route("/workflows", get(workflows).post(submit))
         .route("/workflows/{key}/validate", post(validate))
         .route("/workflows/{key}/publish", post(publish))
@@ -246,6 +247,24 @@ async fn screenshot(State(app): State<Arc<App>>, Path(id): Path<String>) -> Resu
         ],
         shot.png,
     )
+        .into_response())
+}
+async fn mirror(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+    ws: WebSocketUpgrade,
+) -> Result<Response> {
+    if app.db.get::<Device>("devices", &id).await?.is_none() {
+        return Err(anyhow::anyhow!("手机未登记").into());
+    }
+    Ok(ws
+        .on_upgrade(move |socket| async move {
+            let worker = app.clone();
+            let _ = app
+                .workers
+                .spawn(crate::mirror::serve(worker, id, socket))
+                .await;
+        })
         .into_response())
 }
 async fn workflows(State(app): State<Arc<App>>) -> Result<Json<Vec<Workflow>>> {

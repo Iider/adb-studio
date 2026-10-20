@@ -2,6 +2,7 @@ mod adb;
 mod api;
 mod db;
 mod engine;
+mod mirror;
 mod recognition;
 mod run_control;
 mod schedule;
@@ -23,6 +24,7 @@ pub struct App {
     run_gate: Mutex<()>,
     device_gate: Mutex<()>,
     schedule_gate: Mutex<()>,
+    mirrors: Mutex<std::collections::HashMap<String, Arc<tokio::sync::Semaphore>>>,
     stop: CancellationToken,
     controls: Mutex<std::collections::HashMap<String, Arc<run_control::RunControl>>>,
     workers: tokio_util::task::TaskTracker,
@@ -83,6 +85,7 @@ async fn main() -> Result<()> {
         run_gate: Mutex::new(()),
         device_gate: Mutex::new(()),
         schedule_gate: Mutex::new(()),
+        mirrors: Mutex::new(Default::default()),
         stop: CancellationToken::new(),
         controls: Mutex::new(Default::default()),
         workers: tokio_util::task::TaskTracker::new(),

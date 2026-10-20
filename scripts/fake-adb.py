@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import socket
 
 root = Path(os.environ["FAKE_ADB_DIR"])
 args = sys.argv[1:]
@@ -28,6 +29,27 @@ elif args[:1] in (["-s"], ["-t"]):
         print("device offline", file=sys.stderr)
         sys.exit(1)
     command = args[2:]
+    if command[:1] == ["reverse"]:
+        if command[1] == "--remove":
+            (root / command[2].replace(":", "-")).unlink(missing_ok=True)
+        else:
+            (root / command[1].replace(":", "-")).write_text(command[2])
+        sys.exit(0)
+    if command[:1] == ["shell"] and len(command) > 1 and command[1].startswith("CLASSPATH="):
+        scid = next(value.split("=", 1)[1] for value in command if value.startswith("scid="))
+        port = int((root / ("localabstract-scrcpy_" + scid)).read_text().split(":")[1])
+        if (root / "slow-mirror").exists():
+            time.sleep(2)
+        with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
+            connection.sendall(b"studio-video-test")
+            connection.settimeout(0.2)
+            while (root / "online").exists() and not (root / "end-mirror").exists():
+                try:
+                    if not connection.recv(1):
+                        break
+                except socket.timeout:
+                    pass
+        sys.exit(0)
     if command[:2] == ["shell", "input"] and command[2] in {"tap", "swipe"}:
         with (root / "input-attempts").open("a") as log:
             log.write(json.dumps(command) + "\n")

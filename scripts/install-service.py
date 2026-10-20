@@ -47,6 +47,8 @@ def main():
     shutil.copy2(ROOT / "../platform-tools/adb", runtime / "data/bin/adb")
     if (ROOT / "data/bin/ocr").exists():
         shutil.copy2(ROOT / "data/bin/ocr", runtime / "data/bin/ocr")
+    if (ROOT / "data/bin/scrcpy-server-v3.1").exists():
+        shutil.copy2(ROOT / "data/bin/scrcpy-server-v3.1", runtime / "data/bin/scrcpy-server-v3.1")
     for name in ["access-token"]:
         if not (runtime / "data" / name).exists() and (ROOT / "data" / name).exists():
             shutil.copy2(ROOT / "data" / name, runtime / "data" / name)
