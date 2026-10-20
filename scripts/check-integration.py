@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE = "http://127.0.0.1:17842"
 
 
-def png():
+def png(width=400, height=800):
     def chunk(name, value):
         return (
             struct.pack(">I", len(value))
@@ -31,8 +31,8 @@ def png():
 
     return (
         b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", 400, 800, 8, 2, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress((b"\x00" + b"\xff" * 1200) * 800))
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress((b"\x00" + b"\xff" * (width * 3)) * height))
         + chunk(b"IEND", b"")
     )
 
@@ -148,7 +148,7 @@ def main():
                 r = record(id)
                 return (
                     r
-                    if r["state"] not in {"running", "waiting_device", "recovering"}
+                    if r["state"] not in {"running", "waiting_device", "recovering", "paused"}
                     else None
                 )
 
@@ -429,6 +429,124 @@ def main():
             assert len(call("/runs")) == baseline + 1
             print("通过：等待时可停止、单次定时只执行一次", flush=True)
 
+            wait(lambda: all(r["state"] not in {"running", "waiting_device", "recovering", "paused"} for r in call("/runs")))
+
+            def begin(w):
+                call("/workflows", "POST", w)
+                return call("/runs", "POST", {"device_id": "mock-phone", "workflow_id": w["id"], "version": 1, "trial": True})
+
+            def paused(id):
+                return wait(lambda: record(id) if record(id)["state"] == "paused" else None)
+
+            before = count()
+            r = begin(workflow("handoff", count=6, interval=0.4))
+            wait(lambda: count() > before)
+            call(f"/runs/{r['id']}/pause", "POST")
+            held = paused(r["id"])
+            assert held["ended_at"] is None and held["resume_app"] == "com.luna.music"
+            progress = held["checkpoint"].copy()
+            held_count = count()
+            time.sleep(0.7)
+            assert count() == held_count and record(r["id"])["checkpoint"] == progress
+            call(f"/runs/{r['id']}", "DELETE", expected=400)
+            call("/runs", "POST", {"device_id":"mock-phone", "workflow_id":"fixture"}, expected=400)
+            due=(dt.datetime.now(dt.timezone.utc)+dt.timedelta(seconds=2)).isoformat()
+            scheduled=call("/schedules", "POST", {"name":"接管期间避让", "device_id":"mock-phone", "workflow_id":"fixture", "rule":{"kind":"once","at":due}})
+            wait(lambda: "跳过" in (next(s for s in call("/schedules") if s["id"]==scheduled["id"])["last_result"] or ""))
+            assert "跳过" in next(s for s in call("/schedules") if s["id"]==scheduled["id"])["last_result"]
+            assert count()==held_count
+            process.terminate()
+            process.wait(timeout=15)
+            process=boot()
+            assert record(r["id"])["state"]=="paused"
+            time.sleep(0.5)
+            assert count()==held_count
+            call("/devices/mock-phone/screen", "POST", {"action":"lock"})
+            call(f"/runs/{r['id']}/resume", "POST", expected=400)
+            call("/devices/mock-phone/screen", "POST", {"action":"wake"})
+            (fake/"foreground").write_text("com.example.other")
+            call(f"/runs/{r['id']}/resume", "POST", expected=400)
+            assert record(r["id"])["state"]=="paused" and count()==held_count
+            (fake/"foreground").unlink()
+            (fake/"online").unlink()
+            call(f"/runs/{r['id']}/resume", "POST", expected=400)
+            (fake/"online").touch()
+            call(f"/runs/{r['id']}/resume", "POST")
+            assert done(r["id"])["state"]=="succeeded" and count()-before==6
+            print("通过：人工接管保留进度、定时避让、不可清理、重启保持暂停、锁屏/离线/换应用拒绝继续、原记录续跑", flush=True)
+
+            w=workflow("handoff-wait",count=1,interval=0.2)
+            w["entry"]="wait"
+            w["nodes"].insert(0,{"id":"wait","label":"人工等待","type":"wait","seconds":20,"next":"swipe"})
+            r=begin(w)
+            time.sleep(0.8)
+            call(f"/runs/{r['id']}/pause","POST")
+            held=paused(r["id"])
+            waited=held["checkpoint"]["wait_elapsed"]
+            assert 0<waited<20
+            call(f"/runs/{r['id']}/resume","POST")
+            time.sleep(0.7)
+            call(f"/runs/{r['id']}/pause","POST")
+            assert paused(r["id"])["checkpoint"]["wait_elapsed"]>waited
+            call(f"/runs/{r['id']}/stop","POST")
+            assert done(r["id"])["state"]=="cancelled"
+            print("通过：长等待可立即接管、已等待时长保留、暂停期间不累计",flush=True)
+
+            (fake/"slow-input").touch()
+            (fake/"input-started").unlink(missing_ok=True)
+            before=count()
+            r=begin(workflow("handoff-inflight",count=3,interval=0.2))
+            wait(lambda:(fake/"input-started").exists())
+            call(f"/runs/{r['id']}/pause", "POST")
+            assert record(r["id"])["pause_requested"] and record(r["id"])["state"]!="paused"
+            held=paused(r["id"])
+            assert count()-before==1 and held["pending"] is None
+            (fake/"slow-input").unlink()
+            call(f"/runs/{r['id']}/resume", "POST")
+            assert done(r["id"])["state"]=="succeeded" and count()-before==3
+            print("通过：执行中的命令结束后才允许接管，不中断输入也不重复输入", flush=True)
+
+            for flag in ["reject-input","timeout-input"]:
+                (fake/flag).touch()
+                before=count()
+                r=begin(workflow("input-"+flag,count=3,interval=0.2))
+                held=paused(r["id"])
+                assert held["pending"]=="swipe" and held["ended_at"] is None and held["error_detail"]
+                assert count()==before
+                (fake/flag).unlink()
+                call(f"/runs/{r['id']}/resume", "POST")
+                assert done(r["id"])["state"]=="succeeded" and count()-before==2
+            print("通过：触控拒绝与ADB超时保留暂停，继续不补发未确认滑动", flush=True)
+
+            r=call("/runs","POST",{"device_id":"mock-phone","workflow_id":"point-click","version":1,"trial":True,"tap":{"count":10,"interval":1}})
+            wait(lambda: record(r["id"])["checkpoint"].get("done",0)>=1)
+            call(f"/runs/{r['id']}/pause","POST")
+            held=paused(r["id"])
+            assert held["pending"] is None and held["resume_size"]==[400,800]
+            call("/devices/mock-phone","PUT",{"tap_point":{"x":10,"y":10,"width":800,"height":400}})
+            (fake/"screen.png").write_bytes(png(800,400))
+            call(f"/runs/{r['id']}/resume","POST",expected=400)
+            assert record(r["id"])["state"]=="paused"
+            (fake/"screen.png").write_bytes(png())
+            call(f"/runs/{r['id']}/resume","POST")
+            call(f"/runs/{r['id']}/stop","POST")
+            assert done(r["id"])["state"]=="cancelled"
+            call("/devices/mock-phone","PUT",{"tap_point":point})
+            print("通过：继续使用启动时的屏幕尺寸，旋转后重新标注也不能覆盖任务快照",flush=True)
+
+            (fake/"reject-input").touch()
+            r=call("/runs","POST",{"device_id":"mock-phone","workflow_id":"point-click","version":1,"trial":True,"tap":{"count":2,"interval":1}})
+            held=paused(r["id"])
+            assert held["pending"]=="fixed_tap"
+            (fake/"reject-input").unlink()
+            taps=(fake/"taps").read_text()
+            call(f"/runs/{r['id']}/resume","POST",expected=400)
+            assert (fake/"taps").read_text()==taps
+            call(f"/runs/{r['id']}/stop","POST")
+            assert done(r["id"])["state"]=="cancelled"
+            call(f"/runs/{r['id']}/resume","POST",expected=400)
+            print("通过：不重发未确认点击、暂停可停止、已停止不可继续",flush=True)
+
             class ModelHandler(http.server.BaseHTTPRequestHandler):
                 choice = "outside-allowed-branches"
                 calls = 0
@@ -470,7 +588,7 @@ def main():
             try:
                 wait(
                     lambda: all(
-                        r["state"] not in {"running", "waiting_device", "recovering"}
+                        r["state"] not in {"running", "waiting_device", "recovering", "paused"}
                         for r in call("/runs")
                     )
                 )

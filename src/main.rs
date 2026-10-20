@@ -3,6 +3,7 @@ mod api;
 mod db;
 mod engine;
 mod recognition;
+mod run_control;
 mod schedule;
 mod types;
 
@@ -23,7 +24,7 @@ pub struct App {
     device_gate: Mutex<()>,
     schedule_gate: Mutex<()>,
     stop: CancellationToken,
-    controls: Mutex<std::collections::HashMap<String, CancellationToken>>,
+    controls: Mutex<std::collections::HashMap<String, Arc<run_control::RunControl>>>,
     workers: tokio_util::task::TaskTracker,
 }
 

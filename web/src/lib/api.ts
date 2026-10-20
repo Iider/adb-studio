@@ -88,6 +88,9 @@ export interface Run {
   trial: boolean;
   checkpoint: Record<string, unknown>;
   last_shot: string | null;
+  pending?: string | null;
+  error_detail?: string | null;
+  pause_requested?: boolean;
 }
 export type Rule =
   | { kind: "once"; at: string }
@@ -120,7 +123,14 @@ export interface Event {
   message: string;
 }
 export function busy(run: Run) {
-  return ["running", "waiting_device", "recovering"].includes(run.state);
+  return ["running", "waiting_device", "recovering", "paused"].includes(
+    run.state,
+  );
+}
+export function runLabel(run: Run) {
+  return state(
+    run.pause_requested && run.state !== "paused" ? "pausing" : run.state,
+  );
 }
 export function time(value: string | null, short = false) {
   if (!value) return "尚未连接";
@@ -140,6 +150,8 @@ export function state(value: string) {
         running: "执行中",
         waiting_device: "等待手机",
         recovering: "恢复中",
+        pausing: "正在暂停",
+        paused: "已暂停",
         succeeded: "已完成",
         needs_help: "需要处理",
         cancelled: "已停止",

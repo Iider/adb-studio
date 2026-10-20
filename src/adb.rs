@@ -11,6 +11,31 @@ use std::{
 };
 use tokio::process::Command;
 
+#[derive(Debug)]
+pub enum AdbIssue {
+    TimedOut,
+    InputDenied(String),
+}
+impl AdbIssue {
+    pub fn summary(&self) -> &'static str {
+        match self {
+            Self::TimedOut => "ADB 响应超时，已暂停。请检查手机连接与其他 ADB 操作，再点击继续。",
+            Self::InputDenied(_) => {
+                "手机拒绝触控，已暂停。请检查手机状态、调试权限或操作冲突，再点击继续。"
+            }
+        }
+    }
+}
+impl std::fmt::Display for AdbIssue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TimedOut => f.write_str("ADB 响应超时"),
+            Self::InputDenied(detail) => write!(f, "ADB：{detail}"),
+        }
+    }
+}
+impl std::error::Error for AdbIssue {}
+
 pub struct Screenshot {
     pub png: Vec<u8>,
     pub image: image::DynamicImage,
@@ -76,9 +101,13 @@ impl Adb {
         cmd.args(args).kill_on_drop(true);
         let out = tokio::time::timeout(Duration::from_secs(12), cmd.output())
             .await
-            .context("ADB 响应超时")??;
+            .map_err(|_| AdbIssue::TimedOut)??;
         if !out.status.success() {
-            bail!("ADB：{}", String::from_utf8_lossy(&out.stderr).trim());
+            let detail = String::from_utf8_lossy(&out.stderr).trim().to_owned();
+            if detail.contains("INJECT_EVENTS") {
+                return Err(AdbIssue::InputDenied(detail).into());
+            }
+            bail!("ADB：{detail}");
         }
         Ok(out.stdout)
     }
@@ -292,6 +321,19 @@ impl Adb {
             .filter(|l| l.contains("topResumedActivity") || l.contains("mResumedActivity"))
             .collect::<Vec<_>>()
             .join(" "))
+    }
+    pub async fn check_unlocked(&self, id: &str) -> Result<()> {
+        let policy = self
+            .phone_text(id, &["shell", "dumpsys", "window", "policy"])
+            .await?;
+        if keyguard_locked(&policy) {
+            bail!("请先在手机上解锁，再点击继续")
+        }
+        let power = self.phone_text(id, &["shell", "dumpsys", "power"]).await?;
+        if power.contains("mWakefulness=Asleep") || power.contains("mInteractive=false") {
+            bail!("请先唤醒手机并回到目标页面，再点击继续")
+        }
+        Ok(())
     }
     pub async fn tap(&self, id: &str, x: u32, y: u32) -> Result<()> {
         self.phone(

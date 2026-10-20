@@ -7,6 +7,7 @@
     History,
     Settings as SettingsIcon,
     Play,
+    Hand,
     Square,
     ArrowLeft,
     ArrowDown,
@@ -21,6 +22,8 @@
   import DeviceManager from "$lib/components/DeviceManager.svelte";
   import TaskList from "$lib/components/TaskList.svelte";
   import ScheduleManager from "$lib/components/ScheduleManager.svelte";
+  import RunFeedback from "$lib/components/RunFeedback.svelte";
+  import { resumeBlocked } from "$lib/run-feedback";
   import { scheduleInput } from "$lib/schedules";
   import Badge from "$lib/components/ui/badge/badge.svelte";
   import {
@@ -29,7 +32,7 @@
     photo,
     busy,
     time,
-    state as runState,
+    runLabel,
     type Device,
     type TapPoint,
     type Workflow,
@@ -137,7 +140,7 @@
       : launchDevice.locked
         ? "请先在设备详情中唤醒并解锁手机。"
         : launchRun
-          ? `当前任务：${runState(launchRun.state)}。停止后可开始新任务。`
+          ? `当前任务：${runLabel(launchRun)}。停止后可开始新任务。`
           : flow?.id === "point-click" && !launchDevice.tap_point
             ? "请先标注这台手机的点击位置。"
             : "",
@@ -906,7 +909,7 @@
                           识别金币入口、关闭遮挡，点任务文字，确认视频页。
                         </p>{/if}
                     </div>
-                    {#if nodeRun}<Badge>{runState(nodeRun.state)}</Badge>{/if}
+                    {#if nodeRun}<Badge>{runLabel(nodeRun)}</Badge>{/if}
                   </div>
                   {#if n.next}<div class="flow-arrow">
                       <ArrowDown size={20} /><span
@@ -971,7 +974,7 @@
           <p aria-live="polite">
             共 <strong>{runs.length}</strong> 条
             <span
-              >进行中 {activeRuns.length} · 已结束 {finishedRuns.length}</span
+              >未结束 {activeRuns.length} · 已结束 {finishedRuns.length}</span
             >
           </p>
           <Button
@@ -1008,7 +1011,7 @@
                   <Badge
                     variant={r.state === "needs_help"
                       ? "destructive"
-                      : "outline"}>{runState(r.state)}</Badge
+                      : "outline"}>{runLabel(r)}</Badge
                   ></button
                 >{/each}
             </div>
@@ -1025,10 +1028,41 @@
                   <Badge
                     variant={run.state === "needs_help"
                       ? "destructive"
-                      : "default"}>{runState(run.state)}</Badge
+                      : "default"}>{runLabel(run)}</Badge
                   >
                 </div>
                 <div class="card-actions run-actions">
+                  {#if run.state === "paused"}
+                    <Button
+                      disabled={!!working || !connected || resumeBlocked(run)}
+                      onclick={() =>
+                        action(
+                          "resume-run",
+                          () => api(`/runs/${run.id}/resume`, "POST"),
+                          "已请求继续，正在检查当前步骤",
+                        )}><Play size={16} aria-hidden="true" />继续任务</Button
+                    >
+                  {:else if busy(run)}
+                    <Button
+                      variant="outline"
+                      disabled={!!working || !connected || run.pause_requested}
+                      onclick={() =>
+                        action(
+                          "pause-run",
+                          () => api(`/runs/${run.id}/pause`, "POST"),
+                          "已请求暂停；显示“已暂停”后再操作手机",
+                        )}
+                    >
+                      {#if run.pause_requested}<LoaderCircle
+                          size={16}
+                          class="spin"
+                          aria-hidden="true"
+                        />正在暂停{:else}<Hand
+                          size={16}
+                          aria-hidden="true"
+                        />人工接管{/if}
+                    </Button>
+                  {/if}
                   {#if busy(run)}<Button
                       variant="destructive"
                       disabled={!!working}
@@ -1054,7 +1088,18 @@
                       />清理这条记录</Button
                     >{/if}
                 </div>
-                <div class="run-reason" aria-live="polite">{run.reason}</div>
+                <div
+                  class="run-reason"
+                  class:run-paused={run.state === "paused"}
+                  aria-live="polite"
+                >
+                  <RunFeedback message={run.reason} detail={run.error_detail} />
+                </div>
+                {#if run.state === "paused"}<p class="run-resume-hint">
+                    {resumeBlocked(run)
+                      ? "上次动作结果未确认，暂不能继续。请停止任务，核对页面后重新开始，避免重复操作。"
+                      : "操作完成后，请回到原应用的目标页面，再点击“继续任务”。应用内的具体页面需要你确认；暂停期间仍可停止任务。"}
+                  </p>{/if}
                 <div class="run-meta">
                   <span>当前步骤：{stepTitle(run.workflow, run.node)}</span
                   ><span
@@ -1068,15 +1113,23 @@
                   </p>{:else if run.checkpoint.done !== undefined}<p
                     class="hint"
                   >
-                    已滑动 {String(run.checkpoint.done)} 次
+                    {run.workflow.nodes.some((node) =>
+                      ["fixed_tap_loop", "tap_loop"].includes(node.type),
+                    )
+                      ? "已点击"
+                      : "已尝试滑动"}
+                    {String(run.checkpoint.done)} 次
+                    {#if Number(run.checkpoint.uncertain_swipes || 0) || run.pending === "swipe"}（含
+                      {Number(run.checkpoint.uncertain_swipes || 0) +
+                        (run.pending === "swipe" ? 1 : 0)} 次结果未确认）{/if}
                   </p>{/if}
                 <h3 class="event-heading">判断与行动</h3>
                 <ol class="event-list">
-                  {#each events as ev}<li>
+                  {#each events as ev (ev.id)}<li>
                       <time>{time(ev.at, true)}</time>
                       <div>
                         <small>步骤 {stepNumber(run.workflow, ev.node)}</small>
-                        <p>{ev.message}</p>
+                        <RunFeedback message={ev.message} />
                       </div>
                     </li>{/each}
                 </ol>

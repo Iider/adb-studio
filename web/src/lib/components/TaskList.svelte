@@ -11,7 +11,7 @@
   } from "@lucide/svelte";
   import Button from "$lib/components/ui/button/button.svelte";
   import {
-    state as runState,
+    runLabel,
     time,
     type Device,
     type Run,
@@ -217,7 +217,7 @@
             {#each task.inProgress as run (run.id)}
               <div>
                 <button class="task-progress" onclick={() => onViewRuns(run)}
-                  >{deviceName(run.device_id)} · {runState(run.state)}</button
+                  >{deviceName(run.device_id)} · {runLabel(run)}</button
                 ><Button
                   variant="outline"
                   class="stop-button"
@@ -240,7 +240,7 @@
             {task.inProgress.length
               ? `${task.inProgress.length} 个进行中`
               : task.latestRun
-                ? runState(task.latestRun.state)
+                ? runLabel(task.latestRun)
                 : "暂无记录"}
           </span>
           <div class="task-buttons">

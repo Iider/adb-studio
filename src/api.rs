@@ -45,6 +45,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/runs", get(runs).post(start))
         .route("/runs/{id}", axum::routing::delete(clear_run))
         .route("/runs/{id}/stop", post(stop))
+        .route("/runs/{id}/pause", post(pause_run))
+        .route("/runs/{id}/resume", post(resume_run))
         .route("/runs/{id}/export", get(export))
         .route("/runs/{id}/events", get(events))
         .route("/schedules", get(schedules).post(add_schedule))
@@ -221,9 +223,9 @@ async fn screen_control(
             .list::<Run>("runs")
             .await?
             .iter()
-            .any(|run| run.device_id == id && run.busy())
+            .any(|run| run.device_id == id && run.busy() && run.state != "paused")
         {
-            return Err(anyhow::anyhow!("请先停止这台手机的任务，再操作屏幕").into());
+            return Err(anyhow::anyhow!("请先暂停接管或停止这台手机的任务，再操作屏幕").into());
         }
         app.adb.screen_control(&id, wake).await?
     };
@@ -330,8 +332,21 @@ async fn start(State(app): State<Arc<App>>, Json(s): Json<Start>) -> Result<Json
     let w = engine::with_tap_settings(w, s.tap.as_ref())?;
     Ok(Json(engine::start(app, &s.device_id, w, s.trial).await?))
 }
-async fn runs(State(app): State<Arc<App>>) -> Result<Json<Vec<Run>>> {
-    Ok(Json(app.db.list("runs").await?))
+async fn runs(State(app): State<Arc<App>>) -> Result<Json<Vec<Value>>> {
+    let rows = app.db.list::<Run>("runs").await?;
+    let controls = app.controls.lock().await;
+    Ok(Json(
+        rows.into_iter()
+            .map(|run| {
+                let requested = controls
+                    .get(&run.id)
+                    .is_some_and(|control| control.pause.is_cancelled());
+                let mut value = json!(run);
+                value["pause_requested"] = json!(requested);
+                value
+            })
+            .collect(),
+    ))
 }
 async fn clear_run(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Json<Value>> {
     let _gate = app.run_gate.lock().await;
@@ -363,12 +378,33 @@ async fn clear_run(State(app): State<Arc<App>>, Path(id): Path<String>) -> Resul
 }
 
 async fn stop(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Json<Value>> {
-    if let Some(token) = app.controls.lock().await.get(&id) {
-        token.cancel();
+    let _gate = app.run_gate.lock().await;
+    let control = app.controls.lock().await.get(&id).cloned();
+    if let Some(control) = control {
+        control.stop.cancel();
     } else {
-        return Err(anyhow::anyhow!("任务未运行").into());
+        let mut run = app
+            .db
+            .get::<Run>("runs", &id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("任务不存在"))?;
+        if run.state != "paused" {
+            return Err(anyhow::anyhow!("任务未运行").into());
+        }
+        run.state = "cancelled".into();
+        run.reason = "用户停止".into();
+        run.ended_at = Some(now());
+        app.db.put("runs", &id, &run).await?;
+        app.event(&run, &run.reason).await?;
     }
     Ok(Json(json!({"ok":true})))
+}
+async fn pause_run(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Json<Value>> {
+    engine::request_pause(&app, &id).await?;
+    Ok(Json(json!({"ok":true})))
+}
+async fn resume_run(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Json<Run>> {
+    Ok(Json(engine::resume(app, &id).await?))
 }
 async fn events(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Json<Vec<Value>>> {
     Ok(Json(

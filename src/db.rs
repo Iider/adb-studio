@@ -15,7 +15,8 @@ impl Store {
             "PRAGMA journal_mode=WAL",
             "PRAGMA busy_timeout=5000",
             "CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(kind,id))",
-            "CREATE UNIQUE INDEX IF NOT EXISTS one_run_per_phone ON records(json_extract(body,'$.device_id')) WHERE kind='runs' AND json_extract(body,'$.state') IN ('running','waiting_device','recovering')",
+            "CREATE UNIQUE INDEX IF NOT EXISTS one_run_per_phone_v2 ON records(json_extract(body,'$.device_id')) WHERE kind='runs' AND json_extract(body,'$.state') IN ('running','waiting_device','recovering','paused')",
+            "DROP INDEX IF EXISTS one_run_per_phone",
         ] {
             db.execute(Statement::from_string(DbBackend::Sqlite, sql))
                 .await?;

@@ -175,12 +175,18 @@ pub struct Run {
     pub checkpoint: Value,
     pub pending: Option<String>,
     pub last_shot: Option<String>,
+    #[serde(default)]
+    pub error_detail: Option<String>,
+    #[serde(default)]
+    pub resume_app: Option<String>,
+    #[serde(default)]
+    pub resume_size: Option<[u32; 2]>,
 }
 impl Run {
     pub fn busy(&self) -> bool {
         matches!(
             self.state.as_str(),
-            "running" | "waiting_device" | "recovering"
+            "running" | "waiting_device" | "recovering" | "paused"
         )
     }
 }

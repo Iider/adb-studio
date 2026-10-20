@@ -12,13 +12,7 @@
     Moon,
   } from "@lucide/svelte";
   import Button from "$lib/components/ui/button/button.svelte";
-  import {
-    busy,
-    state as runState,
-    time,
-    type Device,
-    type Run,
-  } from "$lib/api";
+  import { busy, runLabel, time, type Device, type Run } from "$lib/api";
 
   let {
     devices,
@@ -169,8 +163,9 @@
         </article>
         <article class="panel">
           <p>运行状态</p>
-          <strong>{activeRun ? runState(activeRun.state) : "空闲"}</strong
-          ><small>{activeRun ? activeRun.workflow.name : "当前没有任务"}</small>
+          <strong>{activeRun ? runLabel(activeRun) : "空闲"}</strong><small
+            >{activeRun ? activeRun.workflow.name : "当前没有任务"}</small
+          >
         </article>
       </div>
       <article class="panel device-information">
@@ -220,19 +215,25 @@
         <h2>快捷操作</h2>
         <p class="hint">
           {activeRun
-            ? "任务执行中，停止后可操作屏幕。"
+            ? activeRun.state === "paused"
+              ? "任务已暂停，可以手动操作；完成后到执行记录继续。"
+              : "请先到执行记录暂停接管，再操作屏幕。"
             : "需要密码时，请在手机上解锁。"}
         </p>
         <div class="card-actions">
           <Button
             variant="outline"
-            disabled={!device.online || !!working || !!activeRun}
+            disabled={!device.online ||
+              !!working ||
+              (!!activeRun && activeRun.state !== "paused")}
             onclick={() => onScreen(device, "wake")}
             ><Sun size={15} />唤醒／尝试解锁</Button
           >
           <Button
             variant="outline"
-            disabled={!device.online || !!working || !!activeRun}
+            disabled={!device.online ||
+              !!working ||
+              (!!activeRun && activeRun.state !== "paused")}
             onclick={() => onScreen(device, "lock")}
             ><Moon size={15} />锁屏</Button
           >
@@ -254,9 +255,7 @@
         </div>
         {#if activeRun}
           <button class="running-link" onclick={() => onViewRuns(device)}
-            >{runState(activeRun.state)} · 查看进度<ChevronRight
-              size={14}
-            /></button
+            >{runLabel(activeRun)} · 查看进度<ChevronRight size={14} /></button
           >
         {/if}
       </article>

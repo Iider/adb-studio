@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 root = Path(os.environ["FAKE_ADB_DIR"])
 args = sys.argv[1:]
@@ -27,6 +28,17 @@ elif args[:1] in (["-s"], ["-t"]):
         print("device offline", file=sys.stderr)
         sys.exit(1)
     command = args[2:]
+    if command[:2] == ["shell", "input"] and command[2] in {"tap", "swipe"}:
+        with (root / "input-attempts").open("a") as log:
+            log.write(json.dumps(command) + "\n")
+        if (root / "slow-input").exists():
+            (root / "input-started").touch()
+            time.sleep(1.5)
+        if (root / "timeout-input").exists():
+            time.sleep(14)
+        if (root / "reject-input").exists():
+            print("java.lang.SecurityException: Injecting to another application requires INJECT_EVENTS permission\n\tat android.hardware.input.InputManager.injectInputEvent(InputManager.java:886)", file=sys.stderr)
+            sys.exit(1)
     if command[:2] == ["shell", "getprop"]:
         identity = (root / "identity").read_text() if (root / "identity").exists() else "mock-phone"
         print(identity if command[-1] == "ro.serialno" else "模拟手机")
@@ -70,7 +82,7 @@ elif args[:1] in (["-s"], ["-t"]):
         else:
             sys.stdout.buffer.write((root / "screen.raw").read_bytes() if (root / "screen.raw").exists() else b"unsupported raw format")
     elif command[:3] == ["shell", "dumpsys", "activity"]:
-        print("mResumedActivity: com.luna.music/MainActivity")
+        print("mResumedActivity: " + ((root / "foreground").read_text() if (root / "foreground").exists() else "com.luna.music") + "/MainActivity")
     elif command[:3] == ["shell", "dumpsys", "package"]:
         print("versionName=21.1.0")
     elif command[:3] == ["shell", "dumpsys", "window"]:

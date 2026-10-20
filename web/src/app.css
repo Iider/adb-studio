@@ -1425,6 +1425,38 @@ summary {
 .run-actions {
   margin: 18px 0;
 }
+.run-reason.run-paused {
+  border-left: 3px solid var(--accent);
+}
+.run-resume-hint {
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--dim);
+}
+.run-technical {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--dim);
+}
+.run-technical summary {
+  cursor: pointer;
+  min-height: 44px;
+  padding: 8px 0;
+}
+.run-technical pre {
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.6;
+  max-height: 280px;
+  overflow-y: auto;
+}
 .run-meta {
   display: flex;
   gap: 24px;
@@ -1726,6 +1758,9 @@ summary {
   }
   .run-toolbar button[data-slot="button"] {
     width: 100%;
+  }
+  .run-actions button[data-slot="button"] {
+    min-height: 44px;
   }
   .panel-heading {
     flex-wrap: wrap;

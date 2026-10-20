@@ -61,8 +61,9 @@ def main():
     run.add_argument("--device", required=True)
     run.add_argument("--trial", action="store_true")
     run.add_argument("--version", type=int)
-    stop = sub.add_parser("stop")
-    stop.add_argument("run_id")
+    for command in ["stop", "pause", "resume"]:
+        control = sub.add_parser(command)
+        control.add_argument("run_id")
     args = parser.parse_args()
     body = None
     if args.command == "request":
@@ -82,10 +83,10 @@ def main():
             "trial": args.trial,
             "version": args.version,
         }
-    elif args.command == "stop":
+    elif args.command in {"stop", "pause", "resume"}:
         method, path = (
             "POST",
-            "/runs/" + urllib.parse.quote(args.run_id, safe="") + "/stop",
+            "/runs/" + urllib.parse.quote(args.run_id, safe="") + "/" + args.command,
         )
     else:
         method, path = "GET", "/" + args.command

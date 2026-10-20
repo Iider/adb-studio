@@ -1,13 +1,13 @@
 use crate::{
     App,
     recognition::{self, Frame},
+    run_control::{PauseRequested, RunControl},
     types::*,
 };
 use anyhow::{Context, Result, bail};
 use image::GenericImageView;
 use serde_json::json;
 use std::{collections::HashSet, sync::Arc, time::Duration};
-use tokio_util::sync::CancellationToken;
 
 pub fn builtins() -> Vec<Workflow> {
     [
@@ -444,6 +444,13 @@ pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow, trial: bool)
     {
         bail!("这台手机已有任务")
     }
+    let resume_size = if w.id == "point-click" {
+        d.tap_point
+            .as_ref()
+            .map(|point| [point.width, point.height])
+    } else {
+        None
+    };
     let r = Run {
         id: uuid::Uuid::new_v4().to_string(),
         device_id: device_id.into(),
@@ -458,6 +465,9 @@ pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow, trial: bool)
         checkpoint: json!({}),
         pending: None,
         last_shot: None,
+        error_detail: None,
+        resume_app: None,
+        resume_size,
     };
     app.db.put("runs", &r.id, &r).await?;
     app.event(&r, "开始执行").await?;
@@ -465,13 +475,79 @@ pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow, trial: bool)
     Ok(r)
 }
 async fn spawn(app: Arc<App>, r: Run) {
-    let stop = CancellationToken::new();
-    app.controls.lock().await.insert(r.id.clone(), stop.clone());
-    app.workers.spawn(execute(app.clone(), r, stop));
+    let control = Arc::new(RunControl::default());
+    app.controls
+        .lock()
+        .await
+        .insert(r.id.clone(), control.clone());
+    app.workers.spawn(execute(app.clone(), r, control));
+}
+pub async fn request_pause(app: &App, id: &str) -> Result<()> {
+    let _gate = app.run_gate.lock().await;
+    let r = app.db.get::<Run>("runs", id).await?.context("任务不存在")?;
+    if r.state == "paused" {
+        return Ok(());
+    }
+    let control = app
+        .controls
+        .lock()
+        .await
+        .get(id)
+        .cloned()
+        .context("任务未运行")?;
+    control.pause.cancel();
+    let _ = app.events.send(json!({"type":"changed","run_id":id}));
+    Ok(())
+}
+pub async fn resume(app: Arc<App>, id: &str) -> Result<Run> {
+    let _gate = app.run_gate.lock().await;
+    let mut r = app.db.get::<Run>("runs", id).await?.context("任务不存在")?;
+    if r.state != "paused" {
+        bail!("只有已暂停的任务可以继续")
+    }
+    if app.controls.lock().await.contains_key(id) {
+        bail!("任务正在完成暂停，请稍后再试")
+    }
+    let node = r
+        .workflow
+        .nodes
+        .iter()
+        .find(|node| node.id == r.node)
+        .context("当前步骤不存在")?;
+    if r.pending.is_some()
+        && matches!(
+            node.action,
+            Action::FixedTapLoop { .. } | Action::TapLoop { .. } | Action::Swipe { .. }
+        )
+    {
+        bail!("上次动作结果未确认，保持暂停以避免重复操作。请停止任务，核对页面后重新开始。")
+    }
+    app.adb.check_unlocked(&r.device_id).await?;
+    let expected = r
+        .resume_app
+        .as_deref()
+        .context("暂停时未能确认原应用，请停止任务并在目标页面重新开始")?;
+    let current = foreground_package(&app.adb.foreground(&r.device_id).await?);
+    if current.as_deref() != Some(expected) {
+        bail!("请先回到暂停前的应用和目标页面，再点击继续")
+    }
+    if let Some([width, height]) = r.resume_size {
+        if app.adb.size(&r.device_id).await? != (width, height) {
+            bail!("屏幕尺寸与任务启动时不同，请停止任务并重新标注点击位置")
+        }
+    }
+    r.state = "recovering".into();
+    r.reason = "已请求继续，重新检查当前步骤".into();
+    r.error_detail = None;
+    save(&app, &r).await?;
+    app.event(&r, "继续任务；保留进度，不补发结果未确认的动作")
+        .await?;
+    spawn(app.clone(), r.clone()).await;
+    Ok(r)
 }
 pub async fn recover(app: Arc<App>) -> Result<()> {
     for mut r in app.db.list::<Run>("runs").await? {
-        if r.busy() {
+        if r.busy() && r.state != "paused" {
             r.state = "recovering".into();
             r.reason = "后台重启，重新观察后恢复".into();
             app.db.put("runs", &r.id, &r).await?;
@@ -497,6 +573,7 @@ async fn shot(app: &App, r: &mut Run, f: &Frame, label: &str) -> Result<()> {
 async fn ready(app: &App, r: &mut Run) -> Result<bool> {
     let mut restored = r.state != "running";
     loop {
+        check_pause(app, r).await?;
         let d = app.db.get::<Device>("devices", &r.device_id).await?;
         let connected = app.adb.endpoint(&r.device_id).await.is_ok();
         if connected && d.as_ref().is_some_and(|d| !d.locked) {
@@ -520,17 +597,40 @@ async fn ready(app: &App, r: &mut Run) -> Result<bool> {
             save(app, r).await?;
             app.event(r, reason).await?;
         }
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        pause(app, r, 3.).await?;
     }
 }
-async fn pause(seconds: f64) {
-    tokio::time::sleep(Duration::from_secs_f64(seconds.max(0.))).await;
+async fn check_pause(app: &App, r: &Run) -> Result<()> {
+    if app
+        .controls
+        .lock()
+        .await
+        .get(&r.id)
+        .is_some_and(|control| control.pause.is_cancelled())
+    {
+        return Err(PauseRequested.into());
+    }
+    Ok(())
+}
+async fn pause(app: &App, r: &Run, seconds: f64) -> Result<()> {
+    let control = app
+        .controls
+        .lock()
+        .await
+        .get(&r.id)
+        .cloned()
+        .context("任务控制已结束")?;
+    tokio::select! {
+        biased;
+        _ = control.pause.cancelled() => Err(PauseRequested.into()),
+        _ = tokio::time::sleep(Duration::from_secs_f64(seconds.max(0.))) => Ok(()),
+    }
 }
 
-async fn execute(app: Arc<App>, mut r: Run, stop: CancellationToken) {
+async fn execute(app: Arc<App>, mut r: Run, control: Arc<RunControl>) {
     let outcome = tokio::select! {
-        _=stop.cancelled()=>Ok("cancelled"),
-        _=app.stop.cancelled()=>Ok("recovering"),
+        _=control.stop.cancelled()=>Ok("cancelled"),
+        _=app.stop.cancelled()=>if control.pause.is_cancelled() {Err(PauseRequested.into())} else {Ok("recovering")},
         result=run_steps(&app,&mut r)=>result,
     };
     match outcome {
@@ -545,9 +645,31 @@ async fn execute(app: Arc<App>, mut r: Run, stop: CancellationToken) {
             .into();
         }
         Err(e) => {
-            r.state = "needs_help".into();
-            r.reason = e.to_string();
-            if !fixed_click_workflow(&r.workflow) {
+            if e.is::<PauseRequested>() || e.is::<crate::adb::AdbIssue>() {
+                r.state = "paused".into();
+                r.reason = e
+                    .downcast_ref::<crate::adb::AdbIssue>()
+                    .map(|issue| issue.summary().to_owned())
+                    .unwrap_or_else(|| e.to_string());
+                r.error_detail = e
+                    .downcast_ref::<crate::adb::AdbIssue>()
+                    .map(|_| e.to_string());
+                r.resume_app = r.checkpoint["foreground"].as_str().map(str::to_owned);
+                if r.resume_app.is_none() {
+                    r.resume_app = tokio::time::timeout(
+                        Duration::from_secs(3),
+                        app.adb.foreground(&r.device_id),
+                    )
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .and_then(|activity| foreground_package(&activity));
+                }
+            } else {
+                r.state = "needs_help".into();
+                r.reason = e.to_string();
+            }
+            if r.state != "paused" && !fixed_click_workflow(&r.workflow) {
                 if let Ok(f) = recognition::frame(&app, &r.device_id).await {
                     let _ = shot(&app, &mut r, &f, "error").await;
                 }
@@ -557,10 +679,10 @@ async fn execute(app: Arc<App>, mut r: Run, stop: CancellationToken) {
     if !r.busy() {
         r.ended_at = Some(now());
     }
+    let _gate = app.run_gate.lock().await;
     let _ = save(&app, &r).await;
     let _ = app.event(&r, &r.reason).await;
     if r.trial && r.state == "succeeded" {
-        let _gate = app.run_gate.lock().await;
         if let Ok(Some(wf)) = app.db.get::<Workflow>("workflows", &r.workflow.key()).await {
             if activate(&app, &wf, true).await.unwrap_or(false) {
                 let _ = app.event(&r, "样本验证与真机试跑通过，已自动启用").await;
@@ -591,6 +713,10 @@ async fn run_steps(app: &App, r: &mut Run) -> Result<&'static str> {
             Ok(Some(state)) => return Ok(state),
             Ok(None) => {}
             Err(e) => {
+                check_pause(app, r).await?;
+                if e.is::<crate::adb::AdbIssue>() {
+                    return Err(e);
+                }
                 if app.adb.endpoint(&r.device_id).await.is_err() {
                     ready(app, r).await?;
                     continue;
@@ -636,7 +762,15 @@ async fn step(app: &App, r: &mut Run, n: &Node) -> Result<Option<&'static str>> 
         } => {
             tap_loop(app, r, text, guard, package, *region, *count, *interval).await?;
         }
-        Action::Wait { seconds } => pause(*seconds).await,
+        Action::Wait { seconds } => {
+            let elapsed = r.checkpoint["wait_elapsed"].as_f64().unwrap_or(0.);
+            let started = tokio::time::Instant::now();
+            let result = pause(app, r, (*seconds - elapsed).max(0.)).await;
+            r.checkpoint["wait_elapsed"] =
+                json!((elapsed + started.elapsed().as_secs_f64()).min(*seconds));
+            save(app, r).await?;
+            result?;
+        }
         Action::Launch { package } => {
             if !app.adb.foreground(&r.device_id).await?.contains(package) {
                 r.pending = Some("launch".into());
@@ -655,7 +789,7 @@ async fn step(app: &App, r: &mut Run, n: &Node) -> Result<Option<&'static str>> 
                         ],
                     )
                     .await?;
-                pause(2.).await;
+                pause(app, r, 2.).await?;
             }
             if !app.adb.foreground(&r.device_id).await?.contains(package) {
                 bail!("未确认应用已打开")
@@ -688,7 +822,7 @@ async fn step(app: &App, r: &mut Run, n: &Node) -> Result<Option<&'static str>> 
             r.pending = Some("tap".into());
             save(app, r).await?;
             app.adb.tap(&r.device_id, m.x, m.y).await?;
-            pause(2.).await;
+            pause(app, r, 2.).await?;
             let after = recognition::frame(app, &r.device_id).await?;
             shot(app, r, &after, "tap").await?;
             if !after.text().contains(verify) {
@@ -717,7 +851,7 @@ async fn step(app: &App, r: &mut Run, n: &Node) -> Result<Option<&'static str>> 
             app.adb
                 .tap(&r.device_id, (*x * w as f64) as u32, (*y * h as f64) as u32)
                 .await?;
-            pause(2.).await;
+            pause(app, r, 2.).await?;
             let after = recognition::frame(app, &r.device_id).await?;
             shot(app, r, &after, "tap").await?;
             if !after.text().contains(verify) {
@@ -740,7 +874,7 @@ async fn step(app: &App, r: &mut Run, n: &Node) -> Result<Option<&'static str>> 
                     &["shell", "input", "keyevent", &format!("KEYCODE_{key}")],
                 )
                 .await?;
-            pause(1.).await;
+            pause(app, r, 1.).await?;
             if !recognition::frame(app, &r.device_id)
                 .await?
                 .text()
@@ -857,7 +991,14 @@ async fn fixed_tap_loop(
     let mut last_click: Option<tokio::time::Instant> = None;
     while done < u64::from(count) {
         if let Some(last) = last_click {
-            tokio::time::sleep_until(last + Duration::from_secs_f64(interval)).await;
+            pause(
+                app,
+                r,
+                (last + Duration::from_secs_f64(interval))
+                    .saturating_duration_since(tokio::time::Instant::now())
+                    .as_secs_f64(),
+            )
+            .await?;
         }
         ready(app, r).await?;
         r.pending = Some("fixed_tap".into());
@@ -914,7 +1055,7 @@ async fn tap_loop(
     let mut done = r.checkpoint["done"].as_u64().unwrap_or(0);
     while done < u64::from(count) {
         if done > 0 {
-            pause(interval).await;
+            pause(app, r, interval).await?;
         }
         ready(app, r).await?;
         if !app.adb.foreground(&r.device_id).await?.contains(package) {
@@ -934,7 +1075,7 @@ async fn tap_loop(
         r.pending = Some("tap_loop".into());
         save(app, r).await?;
         app.adb.tap(&r.device_id, x, y).await?;
-        pause(0.5).await;
+        pause(app, r, 0.5).await?;
         let after = recognition::frame(app, &r.device_id).await?;
         if let Err(error) = tap_target(&after, text, guard, area) {
             shot(app, r, &after, "verify-failed").await?;
@@ -968,10 +1109,18 @@ async fn swipe_loop(
     save(app, r).await?;
     let mut done = r.checkpoint["done"].as_u64().unwrap_or(0);
     let mut elapsed = r.checkpoint["elapsed"].as_f64().unwrap_or(0.);
+    let mut uncertain = r.checkpoint["uncertain_swipes"].as_u64().unwrap_or(0);
     // 未确认的滑动只计入一次，恢复后重新等待，不重放。
     if r.pending.is_some() {
+        uncertain += 1;
+        r.checkpoint["uncertain_swipes"] = json!(uncertain);
         r.pending = None;
         save(app, r).await?;
+        app.event(
+            r,
+            "上次滑动结果未确认，保留尝试次数，重新等待；不补发该次滑动",
+        )
+        .await?;
     }
     loop {
         if count.is_some_and(|n| done >= u64::from(n))
@@ -982,7 +1131,7 @@ async fn swipe_loop(
         let wait = minutes
             .map(|m| interval.min((m * 60. - elapsed).max(0.)))
             .unwrap_or(interval);
-        pause(wait).await;
+        pause(app, r, wait).await?;
         elapsed += wait;
         ready(app, r).await?;
         if foreground_package(&app.adb.foreground(&r.device_id).await?).as_deref()
@@ -991,13 +1140,13 @@ async fn swipe_loop(
             bail!("当前应用已改变，请在目标页面重新开始")
         };
         if wait < interval {
-            r.checkpoint = json!({"done":done,"elapsed":elapsed,"foreground":current});
+            r.checkpoint = json!({"done":done,"elapsed":elapsed,"foreground":current,"uncertain_swipes":uncertain});
             save(app, r).await?;
             return Ok(());
         }
         done += 1;
         r.pending = Some("swipe".into());
-        r.checkpoint = json!({"done":done,"elapsed":elapsed,"foreground":current});
+        r.checkpoint = json!({"done":done,"elapsed":elapsed,"foreground":current,"uncertain_swipes":uncertain});
         save(app, r).await?;
         app.adb
             .swipe(
@@ -1009,7 +1158,12 @@ async fn swipe_loop(
             .await?;
         r.pending = None;
         save(app, r).await?;
-        app.event(r, &format!("已滑动 {done} 次")).await?;
+        let message = if uncertain == 0 {
+            format!("已滑动 {done} 次")
+        } else {
+            format!("已尝试滑动 {done} 次，其中 {uncertain} 次结果未确认")
+        };
+        app.event(r, &message).await?;
     }
 }
 
@@ -1045,7 +1199,7 @@ async fn navigate(app: &App, r: &mut Run) -> Result<()> {
         }
         if recognition::blocked(&text) {
             app.event(r, "页面加载或网络异常，等待复查").await?;
-            pause(5.).await;
+            pause(app, r, 5.).await?;
             continue;
         }
         let (w, h) = f.image.dimensions();
@@ -1070,7 +1224,7 @@ async fn navigate(app: &App, r: &mut Run) -> Result<()> {
             r.pending = Some("navigate".into());
             save(app, r).await?;
             app.adb.tap(&r.device_id, x, y).await?;
-            pause(2.).await;
+            pause(app, r, 2.).await?;
             continue;
         }
         let v=recognition::model(app,r,&[&f.png],"寻找汽水音乐的金币入口、连续刷视频赚金币文字入口，或者可关闭的遮挡弹窗。宝箱、提现、广告膨胀、下载按钮不是目标。选择 coin_entry/task_entry/close_popup 并返回按钮中心；视频任务选择 video",&["coin_entry","task_entry","close_popup","video","unknown"]).await?;
@@ -1092,7 +1246,7 @@ async fn navigate(app: &App, r: &mut Run) -> Result<()> {
         r.pending = Some("navigate".into());
         save(app, r).await?;
         app.adb.tap(&r.device_id, x, y).await?;
-        pause(2.).await;
+        pause(app, r, 2.).await?;
     }
     bail!("未能进入视频任务，需要处理")
 }
@@ -1139,7 +1293,7 @@ async fn earn(
     let mut entered = false;
     r.pending = None;
     save(app, r).await?;
-    pause(warmup).await;
+    pause(app, r, warmup).await?;
     let mut observed_at: Option<tokio::time::Instant> = None;
     let mut sampler = tokio::time::interval(Duration::from_secs(1));
     sampler.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -1151,7 +1305,7 @@ async fn earn(
             previous = None;
             evidence.clear();
             observed_at = None;
-            pause(warmup).await;
+            pause(app, r, warmup).await?;
         }
         if !app
             .adb
@@ -1167,7 +1321,7 @@ async fn earn(
             app.event(r, "网络或加载异常，暂停完成判断").await?;
             state = Earnings::default();
             previous = None;
-            pause(5.).await;
+            pause(app, r, 5.).await?;
             continue;
         }
         if !recognition::video(&text) {
@@ -1185,7 +1339,7 @@ async fn earn(
             if v.choice != "video" {
                 state = Earnings::default();
                 previous = None;
-                pause(5.).await;
+                pause(app, r, 5.).await?;
                 continue;
             }
         }
@@ -1199,7 +1353,7 @@ async fn earn(
                 state.idle = 0.;
                 state.failures = 0;
                 previous = None;
-                pause(1.).await;
+                pause(app, r, 1.).await?;
                 continue;
             }
             let v = recognition::model(
@@ -1213,7 +1367,7 @@ async fn earn(
             if v.choice != "coin" {
                 state = Earnings::default();
                 previous = None;
-                pause(5.).await;
+                pause(app, r, 5.).await?;
                 continue;
             }
             let fresh = recognition::frame(app, &r.device_id).await?;
@@ -1226,7 +1380,7 @@ async fn earn(
             {
                 state = Earnings::default();
                 previous = None;
-                pause(1.).await;
+                pause(app, r, 1.).await?;
                 continue;
             }
             coin = Some(v.coin.context("未识别到金币数字")?);
@@ -1273,7 +1427,7 @@ async fn earn(
             state = Earnings::default();
             evidence.clear();
             previous = None;
-            pause(5.).await;
+            pause(app, r, 5.).await?;
             continue;
         }
         if state.idle >= stall && state.since_swipe >= stall {
@@ -1286,7 +1440,7 @@ async fn earn(
             app.adb
                 .swipe(&r.device_id, [0.5, 0.83], [0.5, 0.21], 300)
                 .await?;
-            pause(2.).await;
+            pause(app, r, 2.).await?;
             let after = recognition::frame(app, &r.device_id).await?;
             let next_identity = after.region_text(identity_region);
             let changed =
