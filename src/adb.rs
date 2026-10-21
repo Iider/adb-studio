@@ -223,6 +223,8 @@ impl Adb {
             child: None,
             cleanup,
             stream: None,
+            control: None,
+            errors: None,
             path: self.path.clone(),
             target,
             socket,
@@ -253,7 +255,8 @@ impl Adb {
                 &session,
                 "tunnel_forward=false",
                 "audio=false",
-                "control=false",
+                "control=true",
+                "clipboard_autosync=false",
                 "power_on=false",
                 "cleanup=true",
                 "video_codec=h264",
@@ -265,16 +268,48 @@ impl Adb {
                 "send_codec_meta=true",
                 "send_frame_meta=true",
             ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .context("无法启动手机投屏")?;
         connection.child = Some(child);
-        let (stream, _) = tokio::time::timeout(Duration::from_secs(10), listener.accept())
-            .await
-            .context("投屏连接超时，请解锁手机并检查连接后重试")??;
-        connection.stream = Some(stream);
+        let (error_tx, error_rx) = tokio::sync::mpsc::channel(4);
+        let child = connection.child.as_mut().unwrap();
+        for pipe in [
+            child
+                .stdout
+                .take()
+                .map(|p| Box::pin(p) as std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>),
+            child
+                .stderr
+                .take()
+                .map(|p| Box::pin(p) as std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let tx = error_tx.clone();
+            connection.cleanup.spawn(async move {
+                use tokio::io::AsyncBufReadExt;
+                let mut lines = tokio::io::BufReader::new(pipe).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if line.contains("INJECT_EVENTS") || line.contains("Could not inject") {
+                        let _ = tx.try_send(
+                            "手机拒绝操作，请检查调试权限或其他控制软件，再重新投屏".to_owned(),
+                        );
+                    }
+                }
+            });
+        }
+        connection.errors = Some(error_rx);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            connection.stream = Some(listener.accept().await?.0);
+            connection.control = Some(listener.accept().await?.0);
+            Ok::<_, std::io::Error>(())
+        })
+        .await
+        .context("投屏连接超时，请解锁手机并检查连接后重试")??;
         Ok(connection)
     }
     pub async fn shot(&self, id: &str) -> Result<Vec<u8>> {
@@ -455,14 +490,35 @@ pub struct VideoConnection {
     cleanup: tokio_util::task::TaskTracker,
     child: Option<tokio::process::Child>,
     pub stream: Option<tokio::net::TcpStream>,
+    pub control: Option<tokio::net::TcpStream>,
+    pub errors: Option<tokio::sync::mpsc::Receiver<String>>,
     path: PathBuf,
     target: Target,
     socket: String,
     remote: String,
 }
+impl VideoConnection {
+    pub async fn stop(&mut self) {
+        if let Some(mut control) = self.control.take() {
+            use tokio::io::AsyncWriteExt;
+            let _ = control.shutdown().await;
+        }
+        if let Some(mut child) = self.child.take() {
+            // 控制通道 EOF 排在取消触点之后；先让手机处理完，再等待服务退出。
+            if tokio::time::timeout(Duration::from_secs(1), child.wait())
+                .await
+                .is_err()
+            {
+                let _ = tokio::time::timeout(Duration::from_secs(3), child.kill()).await;
+            }
+        }
+        self.stream.take();
+    }
+}
 impl Drop for VideoConnection {
     fn drop(&mut self) {
         self.stream.take();
+        self.control.take();
         self.child.take();
         let path = self.path.clone();
         let target = self.target.clone();

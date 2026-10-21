@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+import urllib.error
+import runpy
 
 ROOT = Path(__file__).resolve().parents[1]
 PORT = 17843
@@ -74,12 +76,21 @@ def connect(token="", device="mock-phone", expected=101, origin=None):
     return stream
 
 
+def touch(action, x=100):
+    return struct.pack(">BBQIIHHHII",2,action,0,x,200,400,800,0 if action in (1,3) else 65535,1 if action in (0,1) else 0,0 if action in (1,3) else 1)
+
+
+def keys(key):
+    return struct.pack(">BBIII",0,0,key,0,0)+struct.pack(">BBIII",0,1,key,0,0)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="adb-mirror-check-") as directory:
         data = Path(directory)
         fake = data / "fake"
         fake.mkdir()
         (fake / "online").touch()
+        (fake / "screen.png").write_bytes(runpy.run_path(str(ROOT / "scripts/check-integration.py"))["png"]())
         (data / "bin").mkdir()
         (data / "bin/scrcpy-server-v3.1").write_bytes(b"simulation")
         adb = data / "adb"
@@ -100,8 +111,8 @@ def main():
                 duplicate = connect(token)
                 assert "其他页面" in json.loads(frame(duplicate)[1])["error"]
                 duplicate.close()
-                send(first, 1, b"touch")
-                assert "仅供观看" in json.loads(frame(first)[1])["error"]
+                send(first, 2, touch(0))
+                assert "先开启" in json.loads(frame(first)[1])["error"]
                 first.close()
                 wait(lambda: not list(fake.glob("localabstract-scrcpy_*")))
                 again = connect(token)
@@ -111,7 +122,7 @@ def main():
                 interrupted = connect(token)
                 assert frame(interrupted) == (2, b"studio-video-test")
                 (fake / "end-mirror").touch()
-                assert "手机投屏已结束" in json.loads(frame(interrupted)[1])["error"]
+                assert "已结束" in json.loads(frame(interrupted)[1])["error"]
                 interrupted.close()
                 wait(lambda: not list(fake.glob("localabstract-scrcpy_*")))
                 (fake / "end-mirror").unlink()
@@ -132,16 +143,86 @@ def main():
                 assert "手机未连接或未授权" in json.loads(frame(wrong)[1])["error"]
                 wrong.close()
                 (fake / "identity").unlink()
-                active = connect(token)
-                assert frame(active) == (2, b"studio-video-test")
+                def call(path, body=None, expected=200):
+                    request = urllib.request.Request(f"http://127.0.0.1:{PORT}/api" + path,
+                        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+                        data=json.dumps(body).encode() if body is not None else None)
+                    try:
+                        with urllib.request.urlopen(request, timeout=20) as response:
+                            status, result = response.status, json.load(response)
+                    except urllib.error.HTTPError as error:
+                        status, result = error.code, json.load(error)
+                    assert status == expected, (path,status,result)
+                    return result
+                def records():
+                    return [bytes.fromhex(line) for line in (fake / "controls").read_text().splitlines()] if (fake / "controls").exists() else []
+                def control_message(stream, enabled):
+                    send(stream,1,json.dumps({"type":"control","enabled":enabled}).encode())
+                    opcode, data = frame(stream)
+                    assert opcode == 1
+                    return json.loads(data)
+                def viewer():
+                    stream=connect(token)
+                    assert frame(stream) == (2,b"studio-video-test")
+                    return stream
+                def paused(run):
+                    return next(row for row in call("/runs") if row["id"] == run["id"])["state"] == "paused"
+                body={"device_id":"mock-phone","workflow_id":"swipe","version":1,"trial":True}
+                manual=viewer()
+                assert control_message(manual,True)["enabled"]
+                assert "手动操作" in call("/runs",body,400)["error"]
+                assert "手动操作" in call("/devices/mock-phone/screen",{"action":"lock"},400)["error"]
+                for action in [0,2,1]: send(manual,2,touch(action))
+                for key in [3,4,187]: send(manual,2,keys(key))
+                wait(lambda: len(records()) == 9)
+                assert [record[1] for record in records()[:3]] == [0,2,1]
+                assert [int.from_bytes(record[2:6],"big") for record in records()[3::2]] == [3,4,187]
+                send(manual,2,touch(0))
+                wait(lambda: len(records()) == 10)
+                assert not control_message(manual,False)["enabled"]
+                wait(lambda: records()[-1][1] == 3)
+                run = call("/runs",body)
+                assert "任务仍在运行" in control_message(manual,True)["error"]
+                call(f"/runs/{run['id']}/pause",{})
+                wait(lambda: paused(run))
+                assert control_message(manual,True)["enabled"]
+                assert "手动操作" in call(f"/runs/{run['id']}/resume",{},400)["error"]
+                count=len(records());send(manual,2,touch(0))
+                wait(lambda: len(records())>count)
+                manual.close()
+                wait(lambda: not list(fake.glob("localabstract-scrcpy_*")))
+                assert records()[-1][1] == 3
+                call(f"/runs/{run['id']}/resume",{})
+                call(f"/runs/{run['id']}/pause",{})
+                wait(lambda: paused(run))
+                denied=viewer()
+                assert control_message(denied,True)["enabled"]
+                (fake / "reject-control").touch()
+                send(denied,2,touch(0))
+                status=json.loads(frame(denied)[1])
+                assert not status["enabled"] and "拒绝操作" in status["error"]
+                denied.close()
+                wait(lambda: not list(fake.glob("localabstract-scrcpy_*")))
+                (fake / "reject-control").unlink()
+                invalid=viewer()
+                assert control_message(invalid,True)["enabled"]
+                send(invalid,2,touch(0,x=400))
+                assert "超出画面" in json.loads(frame(invalid)[1])["error"]
+                invalid.close()
+                wait(lambda: not list(fake.glob("localabstract-scrcpy_*")))
+                call(f"/runs/{run['id']}/stop",{})
+                active = viewer()
+                assert control_message(active,True)["enabled"]
+                count=len(records());send(active,2,touch(0))
+                wait(lambda: len(records())>count)
                 process.terminate()
                 process.wait(timeout=10)
                 active.close()
                 assert not list(fake.glob("localabstract-scrcpy_*"))
                 commands = [json.loads(line) for line in (fake / "commands").read_text().splitlines()]
                 assert not any("input" in command for command in commands)
-                assert any("control=false" in command and "power_on=false" in command for command in commands)
-                print("通过：鉴权、跨站拒绝、手机核验、视频转发、重复连接、只读限制、断开重开、手机中断、启动取消、息屏提示、换机拒绝、退出清理；未发送触控命令")
+                assert any("control=true" in command and "power_on=false" in command for command in commands)
+                print("通过：投屏回归、单指点按拖动、三键成对发送、任务互斥、暂停后操作、操作中禁止继续、退出仍暂停、断开取消触点、权限拒绝、越界拦截与退出清理")
             finally:
                 if process.poll() is None:
                     process.terminate()

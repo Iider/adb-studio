@@ -269,6 +269,7 @@
           online={device.online}
           picture={pictures[device.id]}
           capturing={working === `photo-${device.id}`}
+          run={activeRun}
           onCapture={() => onCapture(device)}
         />
       {/key}

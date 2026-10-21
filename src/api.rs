@@ -216,6 +216,7 @@ async fn screen_control(
     };
     let message = {
         let _gate = app.run_gate.lock().await;
+        crate::mirror::ensure_automatic(&app, &id).await?;
         if app.db.get::<Device>("devices", &id).await?.is_none() {
             return Err(anyhow::anyhow!("手机未登记").into());
         }

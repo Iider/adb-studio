@@ -412,6 +412,7 @@ pub fn with_swipe_settings(mut w: Workflow, settings: Option<&SwipeSettings>) ->
 
 pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow, trial: bool) -> Result<Run> {
     let _gate = app.run_gate.lock().await;
+    crate::mirror::ensure_automatic(&app, device_id).await?;
     validate(&w)?;
     let d = app
         .db
@@ -502,6 +503,7 @@ pub async fn request_pause(app: &App, id: &str) -> Result<()> {
 pub async fn resume(app: Arc<App>, id: &str) -> Result<Run> {
     let _gate = app.run_gate.lock().await;
     let mut r = app.db.get::<Run>("runs", id).await?.context("任务不存在")?;
+    crate::mirror::ensure_automatic(&app, &r.device_id).await?;
     if r.state != "paused" {
         bail!("只有已暂停的任务可以继续")
     }

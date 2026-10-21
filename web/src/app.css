@@ -1848,12 +1848,90 @@ summary {
 .screen-active .device-screenshot {
   max-height: clamp(220px, calc(100dvh - 450px), 680px);
 }
-.device-screenshot:fullscreen {
-  width: 100vw;
-  height: 100dvh;
-  max-width: none;
-  max-height: none;
+.device-screen {
+  container-type: inline-size;
+}
+.live-canvas.controllable {
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+.live-canvas:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
+}
+.live-control-area {
+  width: 100%;
+  min-width: 0;
+}
+.live-control-mode,
+.live-navigation {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.live-control-area button {
+  min-height: 44px;
+  padding-inline: 10px;
+}
+.live-navigation button {
+  flex: 1;
+  white-space: nowrap;
+  font-size: 12px;
+  gap: 5px;
+}
+.live-swipes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.live-swipes button {
+  min-width: 0;
+}
+.live-operation-hint {
+  margin: 12px 0 0;
+  line-height: 1.7;
+}
+.fullscreen-exit {
+  display: none;
+}
+@container (min-width: 460px) {
+  .live-stage.ready {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 18px;
+    align-items: center;
+  }
+}
+.live-stage:fullscreen {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  overflow: auto;
+  padding: 16px;
+  gap: 12px;
+  background: var(--bg);
+}
+.live-stage:fullscreen .device-screen-body {
+  margin: 0;
+  min-height: 0;
+  width: 100%;
+}
+.live-stage:fullscreen .device-screenshot {
+  max-height: calc(100dvh - 240px);
+  max-width: 100%;
   border: none;
   border-radius: 0;
-  background: var(--bg);
+}
+.live-stage:fullscreen .live-control-area {
+  max-width: 410px;
+}
+.live-stage:fullscreen .live-swipes {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.live-stage:fullscreen .fullscreen-exit {
+  display: inline-flex;
 }

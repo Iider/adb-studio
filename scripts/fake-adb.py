@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import time
 import socket
+import select
 
 root = Path(os.environ["FAKE_ADB_DIR"])
 args = sys.argv[1:]
@@ -40,15 +41,30 @@ elif args[:1] in (["-s"], ["-t"]):
         port = int((root / ("localabstract-scrcpy_" + scid)).read_text().split(":")[1])
         if (root / "slow-mirror").exists():
             time.sleep(2)
-        with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
+        with socket.create_connection(("127.0.0.1", port), timeout=10) as connection, socket.create_connection(("127.0.0.1", port), timeout=10) as control:
             connection.sendall(b"studio-video-test")
-            connection.settimeout(0.2)
+            buffered = b""
             while (root / "online").exists() and not (root / "end-mirror").exists():
-                try:
-                    if not connection.recv(1):
+                ready, _, _ = select.select([connection, control], [], [], 0.2)
+                if connection in ready and not connection.recv(1):
+                    break
+                if control in ready:
+                    part = control.recv(4096)
+                    if not part:
                         break
-                except socket.timeout:
-                    pass
+                    buffered += part
+                    while buffered:
+                        size = 32 if buffered[0] == 2 else 14
+                        if len(buffered) < size:
+                            break
+                        packet, buffered = buffered[:size], buffered[size:]
+                        with (root / "control-attempts").open("a") as log:
+                            log.write(packet.hex() + "\n")
+                        if (root / "reject-control").exists():
+                            print("java.lang.SecurityException: INJECT_EVENTS permission denied", file=sys.stderr, flush=True)
+                        else:
+                            with (root / "controls").open("a") as log:
+                                log.write(packet.hex() + "\n")
         sys.exit(0)
     if command[:2] == ["shell", "input"] and command[2] in {"tap", "swipe"}:
         with (root / "input-attempts").open("a") as log:
