@@ -525,7 +525,6 @@
           class:current={tab === item.id}
           onclick={() => {
             tab = item.id;
-            selectedDeviceId = "";
             workflowOpen = false;
             notice = "";
             error = "";

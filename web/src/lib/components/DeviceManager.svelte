@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
-    ArrowLeft,
+    LayoutGrid,
+    X,
     Camera,
     ChevronRight,
     LoaderCircle,
@@ -54,6 +55,7 @@
   } = $props();
 
   let search = $state("");
+  let deviceDialog = $state<HTMLDialogElement>();
   let deviceTab = $state("status");
   const selectedDevice = $derived(
     devices.find((device) => device.id === selectedDeviceId),
@@ -73,9 +75,22 @@
     if (!device.keep_awake) return "已关闭";
     return device.awake_applied ? "已开启" : "等待手机";
   }
+  $effect(() => {
+    if (
+      devices.length &&
+      !devices.some((device) => device.id === selectedDeviceId)
+    ) {
+      selectedDeviceId = (devices.find((device) => device.online) || devices[0])
+        .id;
+    }
+  });
   function openDevice(device: Device) {
     selectedDeviceId = device.id;
-    deviceTab = "status";
+    deviceDialog?.close();
+  }
+  function showDevices() {
+    search = "";
+    deviceDialog?.showModal();
   }
 </script>
 
@@ -91,38 +106,58 @@
 {/snippet}
 
 <div class="page-heading device-heading">
-  <div>
-    <h1>{selectedDevice?.name || "设备管理"}</h1>
+  <div class="device-selection">
+    <h1 class="visually-hidden">设备管理</h1>
+    <div class="device-selector-row">
+      <label class="visually-hidden" for="device-picker">切换手机</label>
+      <select
+        id="device-picker"
+        class="device-picker"
+        bind:value={selectedDeviceId}
+        disabled={!devices.length}
+      >
+        {#if !devices.length}<option value=""
+            >{loading ? "正在读取手机…" : "暂无手机"}</option
+          >{/if}
+        {#each devices as device (device.id)}<option value={device.id}
+            >{device.name} · {device.online
+              ? device.locked
+                ? "需要解锁"
+                : "在线"
+              : "离线"}</option
+          >{/each}
+      </select>
+      <Button variant="outline" class="device-all-button" onclick={showDevices}
+        ><LayoutGrid size={15} />查看全部</Button
+      >
+    </div>
     <p class="intro">
       {selectedDevice
         ? `${selectedDevice.model} · ${selectedDevice.id}`
-        : "管理 Android 设备、连接状态和设备详情。"}
+        : "连接手机后，点击刷新设备。"}
     </p>
   </div>
   <div class="page-actions">
-    {#if activeRuns.length}
-      <Button
+    {#if activeRuns.length}<Button
         variant="outline"
         class="stop-button"
         disabled={!!working}
         onclick={onStopAll}><Square size={14} />全部停止</Button
-      >
-    {/if}
-    {#if selectedDevice}
-      <Button variant="outline" onclick={() => (selectedDeviceId = "")}
-        ><ArrowLeft size={14} />返回设备</Button
-      >
-      <Button variant="outline" onclick={() => onRename(selectedDevice)}
+      >{/if}
+    <Button
+      variant="outline"
+      onclick={onRefresh}
+      disabled={!!working || !connected}
+      ><RefreshCw
+        size={14}
+        class={working === "refresh" ? "spin" : ""}
+      />刷新设备</Button
+    >
+    {#if selectedDevice}<Button
+        variant="outline"
+        onclick={() => onRename(selectedDevice)}
         ><Pencil size={14} />重命名</Button
-      >
-    {:else}
-      <Button onclick={onRefresh} disabled={!!working || !connected}
-        ><RefreshCw
-          size={14}
-          class={working === "refresh" ? "spin" : ""}
-        />刷新设备</Button
-      >
-    {/if}
+      >{/if}
   </div>
 </div>
 
@@ -146,6 +181,19 @@
     >
   </nav>
   <div class="device-detail-grid" class:screen-active={deviceTab === "screen"}>
+    <article class="panel device-screen">
+      {#key device.id}
+        <LiveScreen
+          id={device.id}
+          name={device.name}
+          online={device.online}
+          picture={pictures[device.id]}
+          capturing={working === `photo-${device.id}`}
+          run={activeRun}
+          onCapture={() => onCapture(device)}
+        />
+      {/key}
+    </article>
     <div class="device-stack">
       <div class="device-metrics">
         <article class="panel">
@@ -261,21 +309,31 @@
         {/if}
       </article>
     </div>
-    <article class="panel device-screen">
-      {#key device.id}
-        <LiveScreen
-          id={device.id}
-          name={device.name}
-          online={device.online}
-          picture={pictures[device.id]}
-          capturing={working === `photo-${device.id}`}
-          run={activeRun}
-          onCapture={() => onCapture(device)}
-        />
-      {/key}
-    </article>
   </div>
 {:else}
+  <div class="empty">
+    {#if loading}<LoaderCircle
+        class="spin"
+      />正在读取手机…{:else}尚未发现手机，请连接后刷新。{/if}
+  </div>
+{/if}
+
+<dialog
+  bind:this={deviceDialog}
+  class="modal device-directory"
+  aria-labelledby="device-directory-title"
+>
+  <div class="device-directory-heading">
+    <div>
+      <h2 id="device-directory-title">全部手机</h2>
+      <p class="hint">选择一台手机，切换到对应设备。</p>
+    </div>
+    <Button
+      variant="outline"
+      aria-label="关闭设备列表"
+      onclick={() => deviceDialog?.close()}><X size={18} /></Button
+    >
+  </div>
   <div class="device-tools">
     <label class="visually-hidden" for="device-search"
       >搜索设备名称、型号或序列号</label
@@ -302,7 +360,10 @@
   {:else}
     <div class="device-grid">
       {#each filteredDevices as device (device.id)}
-        <article class="device-card">
+        <article
+          class="device-card"
+          class:selected={device.id === selectedDeviceId}
+        >
           <div class="device-row">
             <div class="phone-icon" aria-hidden="true"></div>
             {@render status(device)}
@@ -339,11 +400,12 @@
           <Button
             variant="outline"
             class="device-open"
-            aria-label={`查看${device.name}设备详情`}
-            onclick={() => openDevice(device)}>查看设备详情 →</Button
+            aria-label={`切换到${device.name}`}
+            onclick={() => openDevice(device)}
+            >{device.id === selectedDeviceId ? "当前设备" : "切换到此手机"} →</Button
           >
         </article>
       {/each}
     </div>
   {/if}
-{/if}
+</dialog>
