@@ -1,6 +1,6 @@
 # ADB 工作台
 
-在 Mac 上管理手机、运行 Agent 制作的工作流、设置定时。
+在 macOS／Linux 上管理手机、运行 Agent 制作的工作流、设置定时。
 
 打开 [本机工作台](http://127.0.0.1:17841)。
 
@@ -33,7 +33,7 @@ ADB 超时或手机拒绝触控时，任务也会暂停，处理问题后再继�
 
 ## 启动与自启
 
-开发环境需要 Rust、Node.js 22.19+、Mac 自带 Swift；ADB 默认使用上一层目录的 `platform-tools/adb`。
+开发环境需要 Rust 1.96+、Node.js 22.19+、Python 3.10+ 与本机 ADB。Mac 本地识别需要 Swift；Linux 的纯视觉任务不依赖 Swift。以下为 Mac 源码安装步骤，其他平台与发行包见 [部署说明](docs/deployment.md)。
 
 ```sh
 cd web
@@ -56,25 +56,30 @@ python3 scripts/install-service.py install
 
 ## 数据与模型
 
-- 后台运行文件与数据：`~/Library/Application Support/ADB Studio/`；源码保留在本项目。
-- 数据库、令牌、关键截图：后台目录的 `data/`；服务日志：`~/Library/Logs/ADB Studio/`。
+- Mac 后台运行文件与数据：`~/Library/Application Support/ADB Studio/`；Linux 默认为 `~/.local/share/adb-studio/`；源码保留在本项目。
+- 数据库、令牌、关键截图：后台目录的 `data/`；Mac 日志：`~/Library/Logs/ADB Studio/`；Linux 日志见部署说明。
 - 手动开发运行的数据在本项目 `data/`，不进入 Git。命令工具通过 `data/service-root` 查找后台数据。
 - 令牌文件仅当前用户可读。
 - 手动清理从列表移除记录，本机归档、判断记录和截图仍保留。
 - 未手动清理的记录和关键截图：保留 30 天；正在执行或等待的任务不会自动清理。
 - 安装自启时，已有 `MODEL_KEY` 复制到后台目录 `.env`，仅当前用户可读；重新安装不会覆盖已有密钥。
 - 更换后台密钥时编辑后台目录 `.env`；手动开发可使用环境变量、本项目或上一层 `.env`。
+- macOS 与 Linux 支持纯视觉检查、页面判断与受保护点击；现有任务保持原识别方式，高频任务需另行适配。
 - 默认模型：`doubao-seed-2-1-lite-260915`，Responses 接口。
 - 每次运行最多 10 次模型调用；同一次疑难识别最多 2 次。工作流可以声明其他上限，最高 100 次。
-- 登录服务监听 `0.0.0.0:17841`，局域网可通过 Mac 的 IP 访问；网页和 Agent 接口仍验证访问凭据并检查同源请求。开发启动默认 `127.0.0.1`，可通过 `ADB_STUDIO_HOST` 修改监听地址。
+- 后台服务监听 `0.0.0.0:17841`，局域网可通过运行电脑的 IP 访问；网页和 Agent 接口仍验证访问凭据并检查同源请求。开发启动默认 `127.0.0.1`，可通过 `ADB_STUDIO_HOST` 修改监听地址。
 
 Agent 使用 [工作流说明](docs/workflows.md) 与 [使用技能](.agents/skills/adb-studio/SKILL.md)。
+
+纯视觉功能见 [识别使用说明](docs/vision-recognition.md)；多平台安装见 [Mac／Linux 部署](docs/deployment.md)，当前飞牛的入口与维护命令见 [飞牛原生部署](docs/feiniu-native.md)，开发与验收范围见 [方案](docs/vision-recognition-plan.md)。
 
 ## 检查
 
 ```sh
 cargo test
 python3 scripts/check-integration.py
+python3 scripts/check-vision.py
+python3 scripts/check-platform.py
 cd web
 npm run check
 npm run build
