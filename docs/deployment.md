@@ -12,6 +12,8 @@ macOS、Linux 共用 Rust 后台与静态网页。Mac 可使用苹果文字识�
 
 Linux 原生包需与构建环境兼容的 glibc、ADB；安装脚本需 Python 3.10+ 与 systemd 用户会话。官方 Linux 发行文件在 Debian 12 环境编译，要求 glibc 2.36 或更新版本；更旧 Linux 需另行构建。Docker 已包含运行依赖。macOS 原生包包含 ADB 与当前架构的文字识别程序；源码构建需 Xcode 命令行工具。
 
+已验证的飞牛静态 x86_64 部署包已保存在仓库 [releases/linux-x86_64/2026-10-23](../releases/linux-x86_64/2026-10-23/README.md)，不依赖特定 glibc 版本；使用说明及实测范围见该目录。
+
 ## 原生发行包
 
 在对应系统解压对应架构的压缩包，进入目录后运行：

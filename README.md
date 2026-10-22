@@ -33,6 +33,8 @@ ADB 超时或手机拒绝触控时，任务也会暂停，处理问题后再继�
 
 ## 启动与自启
 
+已验证的飞牛 Linux x86_64 部署包与用法见 [本地部署包](releases/linux-x86_64/2026-10-23/README.md)。
+
 开发环境需要 Rust 1.96+、Node.js 22.19+、Python 3.10+ 与本机 ADB。Mac 本地识别需要 Swift；Linux 的纯视觉任务不依赖 Swift。以下为 Mac 源码安装步骤，其他平台与发行包见 [部署说明](docs/deployment.md)。
 
 ```sh
