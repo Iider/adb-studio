@@ -29,6 +29,8 @@
 
 ## 安装
 
+下列命令用于 Mac 源码安装；Linux／Docker 与原生发行包见 [跨平台部署](deployment.md)。
+
 在项目目录运行：
 
 ```sh

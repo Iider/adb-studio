@@ -2017,3 +2017,89 @@ summary {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.vision-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.vision-checkbox {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+.vision-checkbox input {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  flex: none;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.vision-picture {
+  position: relative;
+  width: min(100%, 280px);
+  margin-top: 16px;
+}
+.vision-picture img {
+  display: block;
+  width: 100%;
+  border-radius: 12px;
+}
+.vision-target {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border: 3px solid #ff453a;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 2px #fff;
+}
+.vision-result {
+  overflow-wrap: anywhere;
+}
+
+.vision-fields textarea {
+  width: 100%;
+  min-height: 100px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel2);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+.vision-fields textarea:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-color: var(--accent);
+}
+.vision-result h3 {
+  margin: 16px 0 8px;
+}
+
+.vision-inspector {
+  grid-column: 1 / -1;
+}
+@media (min-width: 1000px) {
+  .vision-inspector {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 28px;
+  }
+  .vision-inspector > h2,
+  .vision-inspector > .hint {
+    grid-column: 1 / -1;
+  }
+  .vision-inspector .vision-fields,
+  .vision-inspector > .vision-status {
+    grid-column: 1;
+  }
+  .vision-inspector .vision-result {
+    grid-column: 2;
+    grid-row: 3 / span 2;
+  }
+}

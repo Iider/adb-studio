@@ -13,7 +13,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def request(method, path, body=None, base="http://127.0.0.1:17841", timings=False):
+def request(method, path, body=None, base="http://127.0.0.1:17841", timings=False, timeout=150):
     if urllib.parse.urlparse(base).hostname not in {"127.0.0.1", "localhost"}:
         raise ValueError("工作台只允许本机地址")
     data = Path(os.getenv("ADB_STUDIO_DATA", ROOT / "data"))
@@ -31,7 +31,7 @@ def request(method, path, body=None, base="http://127.0.0.1:17841", timings=Fals
         data=None if body is None else json.dumps(body, ensure_ascii=False).encode(),
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
             if timings and response.headers.get("Server-Timing"):
                 print(response.headers["Server-Timing"], file=sys.stderr)
             return (
@@ -46,6 +46,7 @@ def request(method, path, body=None, base="http://127.0.0.1:17841", timings=Fals
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="http://127.0.0.1:17841")
+    parser.add_argument("--timeout", type=float, default=150, help="请求等待上限，秒")
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ["devices", "workflows", "runs", "schedules", "settings"]:
         sub.add_parser(name)
@@ -65,6 +66,8 @@ def main():
         control = sub.add_parser(command)
         control.add_argument("run_id")
     args = parser.parse_args()
+    if not 0 < args.timeout <= 3600:
+        parser.error("--timeout 需大于 0 且不超过 3600 秒")
     body = None
     if args.command == "request":
         if args.file and args.json:
@@ -90,7 +93,7 @@ def main():
         )
     else:
         method, path = "GET", "/" + args.command
-    data = request(method, path, body, args.url, getattr(args, "timings", False))
+    data = request(method, path, body, args.url, getattr(args, "timings", False), args.timeout)
     if isinstance(data, bytes):
         if not getattr(args, "output", None):
             raise ValueError("截图请指定 --output 文件路径")

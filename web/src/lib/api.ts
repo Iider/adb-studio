@@ -8,9 +8,11 @@ export async function api<T>(
   path: string,
   method = "GET",
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(`/api${path}`, {
     method,
+    signal,
     headers: {
       Authorization: `Bearer ${token}`,
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
@@ -74,6 +76,8 @@ export interface Workflow {
   active: boolean;
   sample_validated: boolean;
   model_limit: number;
+  tests?: { image?: string }[];
+  recognition?: "local" | "vision";
 }
 export interface Run {
   id: string;
@@ -112,6 +116,9 @@ export interface Schedule {
 export interface Settings {
   model: { endpoint: string; model: string; api: string; key_env: string };
   autostart: boolean;
+  platform: string;
+  arch: string;
+  local_ocr: boolean;
   timezone: string;
   retention_days: number;
   host: string;
@@ -158,4 +165,22 @@ export function state(value: string) {
       } as Record<string, string>
     )[value] || value
   );
+}
+
+export interface VisionInspection {
+  id: string;
+  image: string;
+  size: [number, number];
+  query: { condition: string; target: string | null; read_number: boolean };
+  model: Settings["model"];
+  calls: number;
+  capture_ms: number;
+  model_ms: number;
+  result: {
+    choice: "confirmed" | "unknown";
+    reason: string;
+    target: [number, number] | null;
+    coin: number | null;
+  } | null;
+  error: string | null;
 }

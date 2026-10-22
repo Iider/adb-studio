@@ -176,3 +176,9 @@ python3 scripts/studio.py request GET /devices/手机自身编号/screenshot --o
 设备详情提供“唤醒／尝试解锁”和“锁屏”。唤醒使用 Android 唤醒按键及 `wm dismiss-keyguard`，仅适用于无密码或系统允许 ADB 解除的锁屏；需要密码时提示用户自行解锁。不在已打开的页面上滑动。锁屏使用睡眠按键，重复点击不会反向唤醒。运行任务期间先停止任务，再操作屏幕。
 
 `POST /api/devices/{id}/screen` 接受 `{"action":"wake"}` 或 `{"action":"lock"}`，返回操作结果 `message`。
+
+## 纯视觉任务
+
+工作流可声明 `recognition: "vision"`，使用 `vision_check` 与 `vision_tap`；省略时沿用本地优先。纯视觉步骤需要截图样本验证，定位、复查和结果检查均计入模型预算；更换模型后需重新验证与试跑。不能用纯视觉方式直接运行尚未适配的本地读字或高频步骤。
+
+字段、样本与只读检查接口见 [纯视觉识别](vision-recognition.md)。模型配置随运行固定，密钥不写入记录；执行导出增加 `vision`，包含本次视觉结果、截图引用与耗时。

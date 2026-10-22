@@ -55,6 +55,11 @@ pub fn router(app: Arc<App>) -> Router {
             "/schedules/{id}",
             put(update_schedule).delete(remove_schedule),
         )
+        .route(
+            "/recognition/check",
+            post(inspect_vision).layer(DefaultBodyLimit::max(12 * 1024 * 1024)),
+        )
+        .route("/recognition/samples/{name}", get(vision_sample))
         .route("/settings", get(settings))
         .route("/settings/model", put(set_model))
         .route("/shots/{run}/{file}", get(get_shot))
@@ -71,33 +76,6 @@ pub fn router(app: Arc<App>) -> Router {
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
         .with_state(app)
 }
-fn allowed_origin(headers: &HeaderMap) -> bool {
-    let host = headers
-        .get(header::HOST)
-        .and_then(|s| s.to_str().ok())
-        .unwrap_or("");
-    let Some((name, port)) = host.rsplit_once(':') else {
-        return false;
-    };
-    let lan = std::env::var("ADB_STUDIO_HOST").as_deref() == Ok("0.0.0.0");
-    let allowed_host = ["127.0.0.1", "localhost"].contains(&name)
-        || (lan && name.parse::<std::net::Ipv4Addr>().is_ok());
-    if !allowed_host || port.parse::<u16>().is_err() {
-        return false;
-    }
-    if headers
-        .get("sec-fetch-site")
-        .is_some_and(|s| s == "cross-site")
-    {
-        return false;
-    }
-    if let Some(origin) = headers.get(header::ORIGIN) {
-        if origin != format!("http://{host}").as_str() {
-            return false;
-        }
-    }
-    true
-}
 async fn auth(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let h = request.headers();
     let authorization = h.get(header::AUTHORIZATION).and_then(|s| s.to_str().ok());
@@ -108,7 +86,7 @@ async fn auth(State(app): State<Arc<App>>, request: Request, next: Next) -> Resp
             s.split(';')
                 .any(|p| p.trim() == format!("adb_session={}", app.token))
         });
-    if !allowed_origin(h)
+    if !app.access.allows(h)
         || !(authorization == Some(format!("Bearer {}", app.token).as_str()) || cookie)
     {
         return (
@@ -124,7 +102,7 @@ async fn auth(State(app): State<Arc<App>>, request: Request, next: Next) -> Resp
     response
 }
 async fn session(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
-    if !allowed_origin(&headers) {
+    if !app.access.allows(&headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
     (
@@ -132,8 +110,13 @@ async fn session(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
             (
                 header::SET_COOKIE,
                 format!(
-                    "adb_session={}; HttpOnly; SameSite=Strict; Path=/api",
-                    app.token
+                    "adb_session={}; HttpOnly; SameSite=Strict; Path=/api{}",
+                    app.token,
+                    if app.access.secure(&headers) {
+                        "; Secure"
+                    } else {
+                        ""
+                    }
                 ),
             ),
             (header::CACHE_CONTROL, "no-store".into()),
@@ -304,7 +287,7 @@ async fn validate(State(app): State<Arc<App>>, Path(key): Path<String>) -> Resul
         .get::<Workflow>("workflows", &key)
         .await?
         .ok_or_else(|| anyhow::anyhow!("工作流不存在"))?;
-    engine::samples(&w)?;
+    validate_workflow_samples(&app, &w).await?;
     w.sample_validated = true;
     app.db.put("workflows", &key, &w).await?;
     Ok(Json(json!({"ok":true,"samples":w.tests.len()})))
@@ -341,7 +324,7 @@ async fn start(State(app): State<Arc<App>>, Json(s): Json<Start>) -> Result<Json
             .get::<Workflow>("workflows", &key)
             .await?
             .ok_or_else(|| anyhow::anyhow!("版本不存在"))?;
-        engine::samples(&w)?;
+        validate_workflow_samples(&app, &w).await?;
         w.sample_validated = true;
         app.db.put("workflows", &key, &w).await?;
         w
@@ -449,7 +432,14 @@ async fn export(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<J
         .into_iter()
         .filter(|e| e["run_id"] == id)
         .collect::<Vec<_>>();
-    Ok(Json(json!({"run":r,"events":e})))
+    let vision = app
+        .db
+        .list::<Value>("vision_results")
+        .await?
+        .into_iter()
+        .filter(|item| item["run_id"] == id)
+        .collect::<Vec<_>>();
+    Ok(Json(json!({"run":r,"events":e,"vision":vision})))
 }
 async fn schedules(State(app): State<Arc<App>>) -> Result<Json<Vec<Schedule>>> {
     Ok(Json(app.db.list("schedules").await?))
@@ -539,7 +529,7 @@ async fn settings(State(app): State<Arc<App>>) -> Result<Json<Value>> {
         .await?
         .unwrap_or_default();
     Ok(Json(
-        json!({"model":s,"timezone":"Asia/Shanghai","retention_days":30,"host":format!("{}:{}",std::env::var("ADB_STUDIO_HOST").unwrap_or_else(|_|"127.0.0.1".into()),std::env::var("ADB_STUDIO_PORT").unwrap_or_else(|_|"17841".into())),"autostart":std::env::var("HOME").ok().is_some_and(|p|std::path::Path::new(&p).join("Library/LaunchAgents/local.adb-studio.plist").exists())}),
+        json!({"model":s,"timezone":"Asia/Shanghai","retention_days":30,"host":format!("{}:{}",std::env::var("ADB_STUDIO_HOST").unwrap_or_else(|_|"127.0.0.1".into()),std::env::var("ADB_STUDIO_PORT").unwrap_or_else(|_|"17841".into())),"autostart":crate::platform::autostart(),"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"local_ocr":crate::platform::has_local_ocr(&app.root,&app.data)}),
     ))
 }
 async fn set_model(
@@ -565,6 +555,7 @@ async fn set_model(
     {
         return Err(anyhow::anyhow!("模型或密钥变量无效").into());
     }
+    let _gate = app.run_gate.lock().await;
     app.db.put("settings", "model", &s).await?;
     Ok(Json(json!({"ok":true})))
 }
@@ -586,4 +577,31 @@ async fn get_shot(
 }
 async fn ws(State(app): State<Arc<App>>, upgrade: WebSocketUpgrade) -> Response {
     upgrade.on_upgrade(move|mut socket|async move{let mut rx=app.events.subscribe();loop{tokio::select!{event=rx.recv()=>{match event{Ok(v)=>if socket.send(Message::Text(v.to_string().into())).await.is_err(){break},Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>{if socket.send(Message::Text(json!({"type":"changed"}).to_string().into())).await.is_err(){break}},Err(_)=>break}},msg=socket.recv()=>if !matches!(msg,Some(Ok(Message::Ping(_)|Message::Pong(_)|Message::Text(_)))){break},_=app.stop.cancelled()=>break}}}).into_response()
+}
+
+async fn validate_workflow_samples(app: &App, workflow: &Workflow) -> anyhow::Result<()> {
+    engine::samples(workflow)?;
+    if workflow.recognition == RecognitionMode::Vision {
+        let settings = crate::recognition::settings(app).await?;
+        app.db.delete("vision_validated", &workflow.key()).await?;
+        crate::vision::validate_samples(app, workflow).await?;
+        anyhow::ensure!(
+            crate::recognition::settings(app).await? == settings,
+            "模型设置已变化，请重新验证样本"
+        );
+        app.db
+            .put("vision_validated", &workflow.key(), &settings)
+            .await?;
+    }
+    Ok(())
+}
+async fn inspect_vision(
+    State(app): State<Arc<App>>,
+    Json(request): Json<crate::vision::Inspect>,
+) -> Result<Json<crate::vision::Inspection>> {
+    Ok(Json(crate::vision::inspect(&app, request).await?))
+}
+async fn vision_sample(State(app): State<Arc<App>>, Path(name): Path<String>) -> Result<Response> {
+    let frame = crate::vision::sample_frame(&app, &name).await?;
+    Ok(([(header::CONTENT_TYPE, "image/png")], frame.png).into_response())
 }

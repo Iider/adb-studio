@@ -7,3 +7,7 @@
 /.DS_Store
 *.log
 __pycache__/
+
+/dist/
+/deploy/.env
+/deploy/storage/

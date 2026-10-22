@@ -19,6 +19,7 @@
     Moon,
   } from "@lucide/svelte";
   import Button from "$lib/components/ui/button/button.svelte";
+  import VisionInspector from "$lib/components/VisionInspector.svelte";
   import DeviceManager from "$lib/components/DeviceManager.svelte";
   import TaskList from "$lib/components/TaskList.svelte";
   import ScheduleManager from "$lib/components/ScheduleManager.svelte";
@@ -143,7 +144,21 @@
           ? `当前任务：${runLabel(launchRun)}。停止后可开始新任务。`
           : flow?.id === "point-click" && !launchDevice.tap_point
             ? "请先标注这台手机的点击位置。"
-            : "",
+            : settings &&
+                !settings.local_ocr &&
+                flow?.nodes.some((n) =>
+                  [
+                    "tap_text",
+                    "tap_point",
+                    "key",
+                    "branch",
+                    "tap_loop",
+                    "qishui_navigate",
+                    "qishui_loop",
+                  ].includes(n.type),
+                )
+              ? "此任务需要本地文字识别，当前平台未安装。请使用已适配的纯视觉任务。"
+              : "",
   );
   $effect(() => {
     if (flow && flow.devices.length && !flow.devices.includes(targetDevice))
@@ -475,7 +490,9 @@
         await session();
         await load();
         if (!alive) return;
-        socket = new WebSocket(`ws://${location.host}/api/ws`);
+        socket = new WebSocket(
+          `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/ws`,
+        );
         socket.onmessage = () => void load();
         socket.onclose = () => {
           connected = false;
@@ -739,6 +756,12 @@
                 >{flow.active ? "已启用" : "待试跑"}</Badge
               >
             </div>
+            <p class="hint">
+              识别方式：{flow.recognition === "vision" ? "纯视觉" : "本地优先"} ·
+              模型上限：{flow.model_limit} 次。{flow.recognition === "vision"
+                ? "截图发送到模型服务；定位、复查、结果检查和重试均计入次数。"
+                : "无需识别的动作直接执行。"}
+            </p>
             <form
               class="task-launch"
               onsubmit={(event) => {
@@ -841,7 +864,10 @@
                   disabled={!!working || !!launchBlocked}
                   type="submit"
                   name="mode"
-                  value="trial"><Play size={16} />试跑此版本</Button
+                  value="trial"
+                  ><Play size={16} />{flow.recognition === "vision"
+                    ? "验证样本并试跑"
+                    : "试跑此版本"}</Button
                 >{#if flow.active}<Button
                     variant="outline"
                     disabled={!!working || !!launchBlocked}
@@ -866,6 +892,9 @@
                   {launchBlocked}
                 </p>{/if}
               <p class="hint">
+                {flow.recognition === "vision"
+                  ? `试跑前还需 ${flow.tests?.length || 0} 次样本识别，不计入运行预算。`
+                  : ""}
                 试跑通过后自动启用。Agent 修改步骤；你查看流程、管理运行和定时。
               </p>
             </form>
@@ -1151,12 +1180,12 @@
                 <dd>{settings?.host || "127.0.0.1:17841"}</dd>
               </div>
               <div>
-                <dt>登录自启</dt>
+                <dt>后台自启</dt>
                 <dd>{settings?.autostart ? "已安装" : "尚未安装"}</dd>
               </div>
               <div>
-                <dt>Mac 防休眠</dt>
-                <dd>使用你的系统设置</dd>
+                <dt>运行平台</dt>
+                <dd>{settings?.platform || "未知"} · {settings?.arch || ""}</dd>
               </div>
               <div>
                 <dt>时间</dt>
@@ -1182,9 +1211,11 @@
               );
             }}
           >
-            <h2>辅助识别模型</h2>
+            <h2>识别模型</h2>
             <p class="hint">
-              先使用页面控件、文字和图片规则；无法判断时调用模型。
+              本地优先任务用模型辅助判断；纯视觉任务直接看图。本地文字识别：{settings?.local_ocr
+                ? "可用"
+                : "未安装"}。
             </p>
             <label>模型名称<input required bind:value={model.model} /></label
             ><label
@@ -1208,6 +1239,7 @@
               >保存模型设置</Button
             >
           </form>
+          <VisionInspector {devices} {connected} />
         </div>
       {/if}
     </section>

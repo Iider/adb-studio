@@ -63,6 +63,15 @@ pub struct Workflow {
     pub sample_validated: bool,
     #[serde(default)]
     pub tests: Vec<SampleCase>,
+    #[serde(default)]
+    pub recognition: RecognitionMode,
+}
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum RecognitionMode {
+    #[default]
+    Local,
+    Vision,
 }
 fn ten() -> u32 {
     10
@@ -84,6 +93,17 @@ pub struct Node {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
+    VisionCheck {
+        package: String,
+        condition: String,
+    },
+    VisionTap {
+        package: String,
+        guard: String,
+        target: String,
+        region: [f64; 4],
+        verify: String,
+    },
     Wait {
         seconds: f64,
     },
@@ -157,8 +177,15 @@ pub struct Branch {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SampleCase {
     pub node: String,
+    #[serde(default)]
     pub text: String,
     pub expected: String,
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub after: bool,
+    #[serde(default)]
+    pub target_region: Option<[f64; 4]>,
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Run {
@@ -181,6 +208,8 @@ pub struct Run {
     pub resume_app: Option<String>,
     #[serde(default)]
     pub resume_size: Option<[u32; 2]>,
+    #[serde(default)]
+    pub model_settings: Option<ModelSettings>,
 }
 impl Run {
     pub fn busy(&self) -> bool {
@@ -248,7 +277,7 @@ pub enum ScheduleRule {
     Weekly { time: String, days: Vec<u32> },
     Interval { minutes: u32 },
 }
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct ModelSettings {
     pub endpoint: String,
     pub model: String,

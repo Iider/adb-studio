@@ -58,6 +58,18 @@ pub fn validate(w: &Workflow) -> Result<()> {
             refs.push(next.as_str());
         }
         match &n.action {
+            Action::VisionCheck { package, .. } | Action::VisionTap { package, .. } => {
+                if w.recognition != RecognitionMode::Vision
+                    || !package.contains('.')
+                    || !package
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "._".contains(c))
+                {
+                    bail!("视觉步骤需要纯视觉模式与有效应用编号")
+                }
+                crate::vision::query(&n.action, false)?.validate()?;
+                crate::vision::query(&n.action, true)?.validate()?;
+            }
             Action::FixedTapLoop {
                 x,
                 y,
@@ -195,6 +207,37 @@ pub fn validate(w: &Workflow) -> Result<()> {
             bail!("步骤缺少下一步")
         }
     }
+    if w.recognition == RecognitionMode::Vision {
+        if w.model_limit == 0 || w.tests.len() > 40 {
+            bail!("纯视觉任务需要 1 到 100 次模型预算，最多 40 张样本")
+        }
+        if w.nodes.iter().any(|n| {
+            matches!(
+                n.action,
+                Action::TapText { .. }
+                    | Action::TapPoint { .. }
+                    | Action::Key { .. }
+                    | Action::Branch { .. }
+                    | Action::TapLoop { .. }
+                    | Action::QishuiNavigate
+                    | Action::QishuiLoop { .. }
+            )
+        }) {
+            bail!("此步骤尚未适配纯视觉模式；高频任务需单独适配")
+        }
+        let minimum = w
+            .nodes
+            .iter()
+            .map(|n| match n.action {
+                Action::VisionTap { .. } => 3,
+                Action::VisionCheck { .. } => 1,
+                _ => 0,
+            })
+            .sum::<u32>();
+        if w.model_limit < minimum {
+            bail!("模型预算不足，单次经过各视觉步骤至少需要 {minimum} 次")
+        }
+    }
     if refs.iter().any(|s| !ids.contains(s)) {
         bail!("下一步不存在")
     }
@@ -252,6 +295,12 @@ pub fn samples(w: &Workflow) -> Result<()> {
             .find(|n| n.id == t.node)
             .context("样本步骤不存在")?;
         let actual = match &n.action {
+            Action::VisionCheck { .. } | Action::VisionTap { .. } => {
+                if t.image.is_none() || !["confirmed", "unknown"].contains(&t.expected.as_str()) {
+                    bail!("视觉样本需要 image 和 confirmed／unknown 预期结果")
+                }
+                continue;
+            }
             Action::Branch {
                 cases,
                 otherwise,
@@ -315,12 +364,34 @@ pub async fn active(app: &App, id: &str) -> Result<Workflow> {
         .context("工作流版本不存在")
 }
 pub async fn activate(app: &App, w: &Workflow, automatic: bool) -> Result<bool> {
+    if w.recognition == RecognitionMode::Vision {
+        let current = recognition::settings(app).await?;
+        let validated = app
+            .db
+            .get::<ModelSettings>("vision_validated", &w.key())
+            .await?;
+        if validated.as_ref() != Some(&current) {
+            bail!("当前模型尚未通过此版本的截图样本验证")
+        }
+    }
+    let validated_model = if w.recognition == RecognitionMode::Vision {
+        app.db
+            .get::<ModelSettings>("vision_validated", &w.key())
+            .await?
+    } else {
+        None
+    };
     let successful = app
         .db
         .list::<Run>("runs")
         .await?
         .into_iter()
-        .filter(|r| r.trial && r.state == "succeeded" && r.workflow.key() == w.key())
+        .filter(|r| {
+            r.trial
+                && r.state == "succeeded"
+                && r.workflow.key() == w.key()
+                && (w.recognition != RecognitionMode::Vision || r.model_settings == validated_model)
+        })
         .collect::<Vec<_>>();
     let tested = if w.devices.is_empty() {
         !successful.is_empty()
@@ -414,6 +485,43 @@ pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow, trial: bool)
     let _gate = app.run_gate.lock().await;
     crate::mirror::ensure_automatic(&app, device_id).await?;
     validate(&w)?;
+    let needs_ocr = w.nodes.iter().any(|n| {
+        matches!(
+            n.action,
+            Action::TapText { .. }
+                | Action::TapPoint { .. }
+                | Action::Key { .. }
+                | Action::Branch { .. }
+                | Action::TapLoop { .. }
+                | Action::QishuiNavigate
+                | Action::QishuiLoop { .. }
+        )
+    });
+    if needs_ocr && !crate::platform::has_local_ocr(&app.root, &app.data) {
+        bail!("此任务需要本地文字识别，当前平台未安装；请使用已适配的纯视觉任务")
+    }
+    let model_settings = Some(recognition::settings(&app).await?);
+    if w.recognition == RecognitionMode::Vision {
+        recognition::ensure_key(&app, model_settings.as_ref().context("缺少模型快照")?)?;
+        let validated = app
+            .db
+            .get::<ModelSettings>("vision_validated", &w.key())
+            .await?;
+        if validated != model_settings {
+            bail!("当前模型尚未通过此版本的截图样本验证，请重新验证")
+        }
+        if !trial
+            && !app.db.list::<Run>("runs").await?.iter().any(|r| {
+                r.trial
+                    && r.state == "succeeded"
+                    && r.workflow.key() == w.key()
+                    && r.model_settings == model_settings
+                    && r.device_id == device_id
+            })
+        {
+            bail!("当前模型尚未在这台手机试跑通过")
+        }
+    }
     let d = app
         .db
         .get::<Device>("devices", device_id)
@@ -469,6 +577,7 @@ pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow, trial: bool)
         error_detail: None,
         resume_app: None,
         resume_size,
+        model_settings,
     };
     app.db.put("runs", &r.id, &r).await?;
     app.event(&r, "开始执行").await?;
@@ -519,7 +628,10 @@ pub async fn resume(app: Arc<App>, id: &str) -> Result<Run> {
     if r.pending.is_some()
         && matches!(
             node.action,
-            Action::FixedTapLoop { .. } | Action::TapLoop { .. } | Action::Swipe { .. }
+            Action::FixedTapLoop { .. }
+                | Action::TapLoop { .. }
+                | Action::Swipe { .. }
+                | Action::VisionTap { .. }
         )
     {
         bail!("上次动作结果未确认，保持暂停以避免重复操作。请停止任务，核对页面后重新开始。")
@@ -672,7 +784,7 @@ async fn execute(app: Arc<App>, mut r: Run, control: Arc<RunControl>) {
                 r.reason = e.to_string();
             }
             if r.state != "paused" && !fixed_click_workflow(&r.workflow) {
-                if let Ok(f) = recognition::frame(&app, &r.device_id).await {
+                if let Ok(f) = recognition::capture(&app, &r.device_id).await {
                     let _ = shot(&app, &mut r, &f, "error").await;
                 }
             }
@@ -734,11 +846,103 @@ async fn run_steps(app: &App, r: &mut Run) -> Result<&'static str> {
         save(app, r).await?;
     }
 }
+async fn vision_frame(app: &App, r: &mut Run, label: &str) -> Result<Frame> {
+    let clock = tokio::time::Instant::now();
+    let frame = recognition::capture(app, &r.device_id).await?;
+    let capture_ms = clock.elapsed().as_millis();
+    shot(app, r, &frame, label).await?;
+    app.event(
+        r,
+        &format!(
+            "截图：{capture_ms} 毫秒；{} × {}；ADB 原图",
+            frame.image.width(),
+            frame.image.height()
+        ),
+    )
+    .await?;
+    Ok(frame)
+}
+async fn vision_app(app: &App, r: &Run, package: &str) -> Result<()> {
+    check_pause(app, r).await?;
+    app.adb.check_unlocked(&r.device_id).await?;
+    if foreground_package(&app.adb.foreground(&r.device_id).await?).as_deref() != Some(package) {
+        bail!("当前应用与视觉步骤不符")
+    }
+    Ok(())
+}
+async fn vision_tap(
+    app: &App,
+    r: &mut Run,
+    node: &Node,
+    package: &str,
+    region: [f64; 4],
+) -> Result<()> {
+    vision_app(app, r, package).await?;
+    if r.pending.is_some() {
+        bail!("上次点击结果未确认，请停止任务并核对页面")
+    }
+    // 预留定位、操作前复查、操作后验证，预算不足时不发出点击。
+    if r.workflow.model_limit.saturating_sub(r.model_calls) < 3 {
+        bail!("剩余模型预算不足以完成点击和结果检查")
+    }
+    let before = vision_frame(app, r, "vision-before").await?;
+    let query = crate::vision::query(&node.action, false)?;
+    let first = crate::vision::run_query(app, r, &before, &query).await?;
+    vision_app(app, r, package).await?;
+    let fresh = vision_frame(app, r, "vision-recheck").await?;
+    if before.image.dimensions() != fresh.image.dimensions() {
+        bail!("屏幕尺寸已变化，请重新观察")
+    }
+    let second = crate::vision::run_query(app, r, &fresh, &query).await?;
+    let [x, y] = second.target.context("模型没有返回点击位置")?;
+    let [old_x, old_y] = first.target.context("模型没有返回点击位置")?;
+    if x.abs_diff(old_x) > 12 || y.abs_diff(old_y) > 12 {
+        bail!("两次定位不一致，请核对页面")
+    }
+    vision_app(app, r, package).await?;
+    let current = vision_frame(app, r, "vision-current").await?;
+    if current.image.dimensions() != fresh.image.dimensions()
+        || recognition::difference(
+            &fresh.signature(region, false),
+            &current.signature(region, false),
+        ) > 8.
+    {
+        bail!("目标区域已变化，取消本次点击")
+    }
+    if r.model_calls >= r.workflow.model_limit {
+        bail!("没有足够预算检查点击结果")
+    }
+    vision_app(app, r, package).await?;
+    r.pending = Some("vision_tap".into());
+    save(app, r).await?;
+    check_pause(app, r).await?;
+    app.adb.tap(&r.device_id, x, y).await?;
+    pause(app, r, 1.).await?;
+    vision_app(app, r, package).await?;
+    let after = vision_frame(app, r, "vision-after").await?;
+    crate::vision::run_query(app, r, &after, &crate::vision::query(&node.action, true)?).await?;
+    check_pause(app, r).await?;
+    Ok(())
+}
 async fn step(app: &App, r: &mut Run, n: &Node) -> Result<Option<&'static str>> {
     match &n.action {
+        Action::VisionCheck { package, .. } => {
+            vision_app(app, r, package).await?;
+            let f = vision_frame(app, r, "vision-check").await?;
+            let query = crate::vision::query(&n.action, false)?;
+            crate::vision::run_query(app, r, &f, &query).await?;
+            check_pause(app, r).await?;
+            vision_app(app, r, package).await?;
+        }
+        Action::VisionTap {
+            package, region, ..
+        } => {
+            vision_tap(app, r, n, package, *region).await?;
+        }
+
         Action::End { result } => {
             if !fixed_click_workflow(&r.workflow) {
-                if let Ok(f) = recognition::frame(app, &r.device_id).await {
+                if let Ok(f) = recognition::capture(app, &r.device_id).await {
                     shot(app, r, &f, "finish").await?;
                 }
             }

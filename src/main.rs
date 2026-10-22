@@ -1,12 +1,15 @@
+mod access;
 mod adb;
 mod api;
 mod db;
 mod engine;
 mod mirror;
+mod platform;
 mod recognition;
 mod run_control;
 mod schedule;
 mod types;
+mod vision;
 
 use anyhow::Result;
 use std::{path::PathBuf, sync::Arc};
@@ -29,6 +32,9 @@ pub struct App {
     stop: CancellationToken,
     controls: Mutex<std::collections::HashMap<String, Arc<run_control::RunControl>>>,
     workers: tokio_util::task::TaskTracker,
+    vision_checks: tokio::sync::Semaphore,
+    access: access::Policy,
+    model_client: reqwest::Client,
 }
 
 impl App {
@@ -47,9 +53,7 @@ impl App {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt().init();
-    let root = std::env::var_os("ADB_STUDIO_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+    let root = platform::root();
     let data = std::env::var_os("ADB_STUDIO_DATA")
         .map(PathBuf::from)
         .unwrap_or(root.join("data"));
@@ -74,11 +78,7 @@ async fn main() -> Result<()> {
     let (events, _) = broadcast::channel(128);
     let app = Arc::new(App {
         db: db::Store::open(&data.join("data.sqlite")).await?,
-        adb: adb::Adb::new(
-            std::env::var_os("ADB_STUDIO_ADB")
-                .map(PathBuf::from)
-                .unwrap_or(root.join("../platform-tools/adb")),
-        ),
+        adb: adb::Adb::new(platform::adb(&root)),
         root,
         data,
         token,
@@ -91,17 +91,16 @@ async fn main() -> Result<()> {
         stop: CancellationToken::new(),
         controls: Mutex::new(Default::default()),
         workers: tokio_util::task::TaskTracker::new(),
+        vision_checks: tokio::sync::Semaphore::new(1),
+        model_client: reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()?,
+        access: access::Policy::new(
+            &std::env::var("ADB_STUDIO_ORIGINS").unwrap_or_default(),
+            std::env::var("ADB_STUDIO_HOST").as_deref() == Ok("0.0.0.0"),
+        )?,
     });
-    for (id, name, model) in [
-        ("3430131496001EB", "iQOO", "V2171A"),
-        ("BGR6R20610013719", "荣耀", "ASK-AL00x"),
-    ] {
-        if app.db.get::<Device>("devices", id).await?.is_none() {
-            app.db
-                .put("devices", id, &Device::new(id, name, model))
-                .await?;
-        }
-    }
     for mut d in app.db.list::<Device>("devices").await? {
         d.online = false;
         d.endpoints.clear();

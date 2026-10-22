@@ -1,0 +1,72 @@
+name: Build and release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install Rust
+        run: rustup toolchain install 1.96.0 --profile minimal && rustup default 1.96.0
+      - name: Install Linux ADB
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y adb
+      - name: Install Mac ADB
+        if: runner.os == 'macOS'
+        run: brew install android-platform-tools
+      - run: cargo test --locked && cargo build --locked
+      - run: python3 scripts/check-integration.py
+      - run: python3 scripts/check-platform.py
+      - run: python3 scripts/check-vision.py
+      - run: python3 scripts/check-mirror.py
+      - name: Build Linux release on Debian 12
+        if: runner.os == 'Linux'
+        run: |
+          cd web
+          npm ci
+          npm run check
+          npm run build
+          cd ..
+          docker build --target backend -t adb-studio-release .
+          mkdir -p target/release
+          release_container=$(docker create adb-studio-release)
+          docker cp "$release_container:/out/adb-studio" target/release/adb-studio
+          docker rm "$release_container"
+          python3 scripts/package-release.py --skip-build
+      - name: Build Mac release
+        if: runner.os == 'macOS'
+        run: python3 scripts/package-release.py
+      - name: Check release archive
+        run: python3 scripts/check-release.py dist/*.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adb-studio-${{ runner.os }}-${{ runner.arch }}
+          path: dist/*
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --draft --title "$GITHUB_REF_NAME" --notes 'macOS 与 Linux 发行包，安装说明见包内 docs/deployment.md。'

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "vision-settings-wlan",
+  "version": 1,
+  "name": "视觉点击 · WLAN 入口",
+  "description": "示例：仅打开设置中的 WLAN 页面，不切换网络。使用前按目标手机补齐样本和按钮区域。",
+  "devices": [],
+  "recognition": "vision",
+  "entry": "open",
+  "model_limit": 6,
+  "nodes": [
+    {"id": "open", "label": "打开系统设置", "type": "launch", "package": "com.android.settings", "next": "wlan"},
+    {
+      "id": "wlan", "label": "打开 WLAN 页面", "type": "vision_tap",
+      "package": "com.android.settings", "guard": "系统设置首页，能看到唯一且未遮挡的 WLAN 入口",
+      "target": "WLAN 入口的文字中心", "region": [0.05, 0.1, 0.95, 0.6],
+      "verify": "WLAN 详情页，能看到无线网络开关或网络列表；不是设置首页",
+      "next": "end"
+    },
+    {"id": "end", "label": "检查完成", "type": "end", "result": "succeeded"}
+  ],
+  "tests": []
+}

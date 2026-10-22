@@ -202,7 +202,7 @@ impl Adb {
         cleanup: tokio_util::task::TaskTracker,
     ) -> Result<VideoConnection> {
         if !server.is_file() {
-            bail!("投屏组件尚未安装，请运行 python3 scripts/setup-mirror.py 后更新服务")
+            bail!("投屏组件尚未安装，请安装投屏组件并更新服务（见实时投屏说明）")
         }
         let target = self.target(id).await?;
         let power = self

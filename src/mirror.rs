@@ -184,7 +184,12 @@ async fn stream(app: &App, id: &str, socket: &mut WebSocket) -> Result<()> {
     let _permit = slot
         .try_acquire_owned()
         .context("这台手机已在其他页面投屏，请先关闭原投屏")?;
-    let server = app.data.join("bin/scrcpy-server-v3.1");
+    let installed = app.data.join("bin/scrcpy-server-v3.1");
+    let server = if installed.is_file() {
+        installed
+    } else {
+        app.root.join("bin/scrcpy-server-v3.1")
+    };
     let mut connection = tokio::select! {
         result = app.adb.video(id, &server, app.workers.clone()) => result?,
         _ = app.stop.cancelled() => return Ok(()),

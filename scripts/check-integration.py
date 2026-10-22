@@ -96,6 +96,9 @@ def main():
         (data / "bin").mkdir()
         if (ROOT / "data/bin/ocr").exists():
             shutil.copy2(ROOT / "data/bin/ocr", data / "bin/ocr")
+        else:
+            (data / "bin/ocr").write_text('#!/usr/bin/env python3\nimport sys\nsys.stdin.buffer.read()\nprint("[]")\n')
+            (data / "bin/ocr").chmod(0o755)
         env = {
             **os.environ,
             "ADB_STUDIO_ROOT": str(ROOT),

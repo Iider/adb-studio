@@ -20,6 +20,6 @@ export function resumeBlocked(run: import("./api").Run) {
   return (
     !!run.pending &&
     !!node &&
-    ["fixed_tap_loop", "tap_loop", "swipe"].includes(node.type)
+    ["fixed_tap_loop", "tap_loop", "swipe", "vision_tap"].includes(node.type)
   );
 }

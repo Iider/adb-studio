@@ -1,0 +1,14 @@
+services:
+  studio:
+    build:
+      context: ..
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      ADB_STUDIO_PORT: "17841"
+      ADB_STUDIO_ORIGINS: ${ADB_STUDIO_ORIGINS:?请在部署 .env 中设置允许访问的网址}
+      MODEL_KEY: ${MODEL_KEY:?请在部署 .env 中设置模型密钥}
+    volumes:
+      - ${ADB_STUDIO_STORAGE:-./storage}:/data
+    stop_grace_period: 30s
+    # 只使用无线手机时不需要 USB 映射。
