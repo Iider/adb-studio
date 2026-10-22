@@ -28,6 +28,10 @@
     capturing,
     run,
     onCapture,
+    dimensions = $bindable(""),
+    controlled = $bindable(false),
+    screenOff = $bindable(false),
+    powerPending = $bindable(false),
   }: {
     id: string;
     name: string;
@@ -36,15 +40,17 @@
     capturing: boolean;
     run?: Run;
     onCapture: () => void;
+    dimensions?: string;
+    controlled?: boolean;
+    screenOff?: boolean;
+    powerPending?: boolean;
   } = $props();
   let canvas: HTMLCanvasElement;
   let stage: HTMLDivElement;
   let viewState = $state<"idle" | "connecting" | "live" | "error">("idle");
   let error = $state("");
-  let dimensions = $state("");
   let supported = $state(false);
   let canFullscreen = $state(false);
-  let controlled = $state(false);
   let requesting = $state(false);
   let waitingPause = $state(false);
   let gesture = $state(false);
@@ -54,6 +60,7 @@
   let moveFrame = 0;
   let gestureVersion = 0;
   let connection: ReturnType<typeof startMirror> | undefined;
+  let pendingPower: boolean | undefined;
 
   function cancelTouch() {
     gestureVersion++;
@@ -68,7 +75,25 @@
     if (captured !== undefined && canvas.hasPointerCapture(captured))
       canvas.releasePointerCapture(captured);
   }
+  export function setDisplayPower(enabled: boolean) {
+    if (powerPending || !online) return;
+    if (!supported) {
+      error =
+        "屏幕开关需要投屏通道，请使用本机地址或 HTTPS，并使用支持投屏的浏览器";
+      return;
+    }
+    if (viewState === "idle" || viewState === "error") start();
+    cancelTouch();
+    powerPending = true;
+    if (controlled) connection?.setDisplayPower(enabled);
+    else {
+      pendingPower = enabled;
+      if (viewState === "live" && !requesting) void requestControl();
+    }
+  }
   function endControl() {
+    pendingPower = undefined;
+    powerPending = false;
     waitingPause = false;
     requesting = false;
     cancelTouch();
@@ -81,6 +106,8 @@
     connection = undefined;
     viewState = "idle";
     dimensions = "";
+    screenOff = false;
+    powerPending = false;
   }
   function start() {
     stop();
@@ -90,18 +117,32 @@
       id,
       canvas,
       (width, height) => {
+        const firstFrame = viewState === "connecting";
         viewState = "live";
         dimensions = `${width} × ${height}`;
+        if (firstFrame) void requestControl();
       },
       (message) => {
         viewState = "error";
         error = message;
+        dimensions = "";
+        screenOff = false;
+        pendingPower = undefined;
+        powerPending = false;
         connection = undefined;
       },
       (enabled, message) => {
         controlled = enabled;
         requesting = false;
+        if (enabled && pendingPower !== undefined) {
+          const target = pendingPower;
+          pendingPower = undefined;
+          connection?.setDisplayPower(target);
+        }
         if (!enabled) {
+          pendingPower = undefined;
+          screenOff = false;
+          powerPending = false;
           cancelTouch();
           waitingPause = false;
         }
@@ -122,6 +163,10 @@
           error = "画面尺寸已变化，已结束操作，请核对画面后重新开启";
         }
       },
+      (enabled) => {
+        screenOff = !enabled;
+        powerPending = false;
+      },
     );
   }
   async function requestControl() {
@@ -134,6 +179,8 @@
       } catch (e) {
         waitingPause = false;
         requesting = false;
+        pendingPower = undefined;
+        powerPending = false;
         error = e instanceof Error ? e.message : "暂停失败";
       }
     } else connection?.setControl(true);
@@ -263,16 +310,13 @@
     supported = window.isSecureContext && "VideoDecoder" in window;
     canFullscreen = document.fullscreenEnabled;
     const visibility = () => {
-      if (document.hidden) stop();
-    };
-    const blur = () => {
-      if (controlled || requesting) endControl();
+      if (document.hidden) cancelTouch();
     };
     document.addEventListener("visibilitychange", visibility);
-    window.addEventListener("blur", blur);
+    window.addEventListener("blur", cancelTouch);
     return () => {
       document.removeEventListener("visibilitychange", visibility);
-      window.removeEventListener("blur", blur);
+      window.removeEventListener("blur", cancelTouch);
       stop();
     };
   });
@@ -410,9 +454,7 @@
     实时投屏需支持视频解码的浏览器。本机请使用 localhost 或
     127.0.0.1；其他设备需 HTTPS。
   </p>
-{:else if viewState === "live"}<p class="hint">
-    {dimensions} · {controlled ? "操作手机" : "仅观看"}
-  </p>{/if}
+{/if}
 <div class="live-actions">
   {#if viewState === "live" || viewState === "connecting"}<Button
       variant="outline"
@@ -441,5 +483,5 @@
   >
 </div>
 <p class="hint live-footnote">
-  离开设备页或切到后台后停止投屏；切换窗口后结束手机操作。
+  切换页签或窗口保留投屏与操作模式，并松开触点；离开设备页后停止投屏。
 </p>

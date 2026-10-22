@@ -143,4 +143,4 @@ docker build --target checks -t adb-studio-check .
 docker build -t adb-studio .
 ```
 
-真实手机连接、TLS 证书、目标 NAS 权限及不同平台架构的实际表现，仍需各平台验收。各平台的实测范围应在发行说明中标明。
+飞牛 Debian 12 x86_64 的原生升级、HTTPS 投屏与实体屏幕开关记录见 [飞牛原生部署](feiniu-native.md)。真实手机连接、TLS 证书、目标 NAS 权限及其他平台架构的实际表现，仍需分别验收。各平台的实测范围应在发行说明中标明。

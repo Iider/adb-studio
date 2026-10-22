@@ -24,4 +24,6 @@ for (const keyCode of [3, 4, 187]) {
     assert.equal(new DataView(key.buffer, key.byteOffset).getUint32(2), keyCode);
   }
 }
+assert.deepEqual([...serializer.setDisplayPower(0)], [10, 0]);
+assert.deepEqual([...serializer.setDisplayPower(2)], [10, 2]);
 console.log('通过：横竖画面映射、留白拒绝、越界收敛及底层库触控／三键协议');

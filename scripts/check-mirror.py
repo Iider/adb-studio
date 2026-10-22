@@ -177,10 +177,17 @@ def main():
                 wait(lambda: len(records()) == 9)
                 assert [record[1] for record in records()[:3]] == [0,2,1]
                 assert [int.from_bytes(record[2:6],"big") for record in records()[3::2]] == [3,4,187]
+                for mode in [0,2,0]:
+                    send(manual,2,bytes([10,mode]))
+                    opcode, payload = frame(manual)
+                    assert opcode == 1 and json.loads(payload) == {"type":"display_power","enabled":mode == 2}
+                wait(lambda: len(records()) == 12)
+                assert records()[-3:] == [bytes([10,0]),bytes([10,2]),bytes([10,0])]
                 send(manual,2,touch(0))
-                wait(lambda: len(records()) == 10)
+                wait(lambda: len(records()) == 13)
                 assert not control_message(manual,False)["enabled"]
-                wait(lambda: records()[-1][1] == 3)
+                wait(lambda: records()[-1] == bytes([10,2]))
+                assert records()[-2][1] == 3
                 run = call("/runs",body)
                 assert "任务仍在运行" in control_message(manual,True)["error"]
                 call(f"/runs/{run['id']}/pause",{})

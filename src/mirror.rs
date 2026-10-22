@@ -41,6 +41,7 @@ enum Request {
 struct Control {
     enabled: bool,
     poisoned: bool,
+    screen_off: bool,
     touch: Option<Vec<u8>>,
     key_up: Option<Vec<u8>>,
 }
@@ -48,6 +49,13 @@ impl Control {
     fn validate(&self, data: &[u8]) -> Result<()> {
         ensure!(self.enabled, "请先开启操作手机");
         match data.len() {
+            2 => {
+                ensure!(
+                    data[0] == 10 && [0, 2].contains(&data[1]),
+                    "屏幕电源消息无效"
+                );
+                ensure!(self.touch.is_none(), "请先松开触点，再切换手机屏幕");
+            }
             32 => {
                 ensure!(data[0] == 2 && data[2..10] == [0; 8], "只支持单指触控");
                 let action = data[1];
@@ -100,6 +108,9 @@ impl Control {
             self.key_up = Some(data[14..].to_vec());
         }
         self.send(stream, data).await?;
+        if data.len() == 2 {
+            self.screen_off = data[1] == 0;
+        }
         if data.len() == 32 && [1, 3].contains(&data[1]) {
             self.touch = None;
         }
@@ -126,6 +137,10 @@ impl Control {
         if let Some(up) = self.key_up.clone() {
             self.send(stream, &up).await?;
             self.key_up = None;
+        }
+        if self.screen_off {
+            self.send(stream, &[10, 2]).await?;
+            self.screen_off = false;
         }
         self.enabled = false;
         Ok(())
@@ -264,6 +279,11 @@ async fn relay(
                     rate += 1;
                     ensure!(rate <= 240, "操作过于频繁，请重新开启操作");
                     state.inject(control,&data).await?;
+                    if data.len() == 2 {
+                        tokio::time::timeout(Duration::from_secs(2), socket.send(Message::Text(
+                            json!({"type":"display_power","enabled":data[1] == 2}).to_string().into()
+                        ))).await??;
+                    }
                 },
                 Some(Ok(Message::Ping(_))) => {},
             },
@@ -311,6 +331,19 @@ mod tests {
         other[9] = 1;
         assert!(state.validate(&other).is_err());
         assert!(state.validate(&touch(4)).is_err());
+    }
+    #[test]
+    fn display_power_requires_control_and_valid_modes() {
+        let mut state = Control::default();
+        assert!(state.validate(&[10, 0]).is_err());
+        state.enabled = true;
+        for mode in [0, 2] {
+            assert!(state.validate(&[10, mode]).is_ok());
+        }
+        assert!(state.validate(&[10, 1]).is_err());
+        assert!(state.validate(&[11, 0]).is_err());
+        state.touch = Some(touch(0));
+        assert!(state.validate(&[10, 0]).is_err());
     }
     #[test]
     fn keys_are_paired_and_limited_to_navigation() {

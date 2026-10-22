@@ -66,7 +66,7 @@ ssh feiniu 'systemctl --user disable --now adb-studio-https.service'
 | --- | --- |
 | 程序、网页、模型配置 | `/home/weio/.local/share/adb-studio/` |
 | 数据库、截图、访问凭据 | `/home/weio/.local/share/adb-studio/data/` |
-| 发行包与安装脚本 | `/home/weio/.local/opt/adb-studio/releases/2026-10-22/adb-studio-linux-x86_64/` |
+| 发行包与安装脚本 | `/home/weio/.local/opt/adb-studio/releases/2026-10-23/adb-studio-linux-x86_64/` |
 | ADB 37.0.1 | `/home/weio/.local/opt/android/platform-tools/adb` |
 | 工作台日志 | `/home/weio/.local/state/adb-studio/service.log` |
 | ADB 日志 | `/home/weio/.local/state/adb-studio/adb.log` |
@@ -137,6 +137,24 @@ launchctl bootout gui/$(id -u)/local.adb-studio-feiniu-tunnel
 
 关闭转发不停止飞牛服务；要取消 Mac 下次登录时自启，还需移走上述转发配置文件。
 
+## 2026-10-23 更新
+
+Mac 与飞牛共用网页和控制协议，本次同步以下改动：
+
+- 切换浏览器页签或窗口保留投屏、操作状态，同时松开触点。
+- 移除设备页标签栏，型号、编号、投屏尺寸及操作模式集中在设备信息。
+- 投屏首帧出现后自动申请操作权；运行中的任务先暂停。
+- 设备下拉统一字号、高度、颜色，箭头右侧留 12px。
+- 实体屏幕开关使用一个按钮切换。未投屏时可直接点击，自动连接并取得操作权后息屏；息屏与手动操作可同时使用。
+
+Linux x86_64 后台使用 Rust 1.96.0、cargo-zigbuild 构建为静态 musl 程序，在飞牛 Debian 12 上运行检查；没有安装 Docker 或新增系统依赖。网页使用同一份 Svelte 构建。其他 Linux 架构仍按发布流程单独构建、验收。
+
+升级前备份：`/home/weio/.local/opt/adb-studio/backups/2026-10-23-000549/`。包含停服务后的完整安装目录、ADB 配对信息、服务及覆盖配置；备份含私密配置，仅保留在飞牛用户目录。升级后核对数据库中的运行、定时和模型设置，以及密钥文件、访问凭据的摘要，均保持一致。
+
+当前发行目录：`/home/weio/.local/opt/adb-studio/releases/2026-10-23/`，包名 `adb-studio-linux-x86_64.tar.gz`，旁边保存 SHA-256 文件。工作台、ADB 与 HTTPS 三个用户服务均为 active，原 HTTPS 证书与 Mac 转发继续使用。
+
+本次验证：飞牛执行 24 项 Rust 单元检查、模拟设备集成、纯视觉隔离、投屏控制、跨平台安装及发行包异地启动检查，全部通过。Mac 网页检查无错误、无警告，构建通过。浏览器经 Mac 转发和 HTTPS 两个入口连接 iQOO，显示 576×1280 实时画面并自动进入操作；实体屏幕关闭后仍显示操作中，导航键、滑动按钮保持可用，重新点亮及停止投屏后恢复亮屏。模拟控制检查覆盖息屏后继续触控与退出恢复。
+
 ## 实测范围
 
 - 原生服务启动、退出 SSH 后持续运行、重复安装与重启后保留配置。
@@ -147,4 +165,4 @@ launchctl bootout gui/$(id -u)/local.adb-studio-feiniu-tunnel
 - iQOO USB 连接、型号核对、真实截图；单次截图约 1.4 秒。
 - 经 Mac 转发收到 H.264 投屏流，576×1280；首次收到约 1.2 秒。
 
-浏览器内连续画面与手动操作仍需用户验收。没有重启整台飞牛验证开机过程；已核对服务启用状态与 `Linger=yes`。Mac 与飞牛操作同一手机前，先停止另一端的任务，避免两端同时控制。
+本次已补充浏览器实际投屏和实体屏幕开关验证；连续触控手感与长时间稳定性仍需用户验收。没有重启整台飞牛验证开机过程；已核对服务启用状态与 `Linger=yes`。Mac 与飞牛操作同一手机前，先停止另一端的任务，避免两端同时控制。

@@ -54,7 +54,7 @@ elif args[:1] in (["-s"], ["-t"]):
                         break
                     buffered += part
                     while buffered:
-                        size = 32 if buffered[0] == 2 else 14
+                        size = 32 if buffered[0] == 2 else 2 if buffered[0] == 10 else 14
                         if len(buffered) < size:
                             break
                         packet, buffered = buffered[:size], buffered[size:]

@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     LayoutGrid,
+    ChevronDown,
     X,
     Camera,
     ChevronRight,
@@ -11,6 +12,8 @@
     Square,
     Sun,
     Moon,
+    MonitorOff,
+    Monitor,
   } from "@lucide/svelte";
   import LiveScreen from "$lib/components/LiveScreen.svelte";
   import Button from "$lib/components/ui/button/button.svelte";
@@ -56,7 +59,11 @@
 
   let search = $state("");
   let deviceDialog = $state<HTMLDialogElement>();
-  let deviceTab = $state("status");
+  let screenDimensions = $state("");
+  let screenControlled = $state(false);
+  let screenOff = $state(false);
+  let powerPending = $state(false);
+  let liveScreen: LiveScreen | undefined = $state();
   const selectedDevice = $derived(
     devices.find((device) => device.id === selectedDeviceId),
   );
@@ -110,32 +117,31 @@
     <h1 class="visually-hidden">设备管理</h1>
     <div class="device-selector-row">
       <label class="visually-hidden" for="device-picker">切换手机</label>
-      <select
-        id="device-picker"
-        class="device-picker"
-        bind:value={selectedDeviceId}
-        disabled={!devices.length}
-      >
-        {#if !devices.length}<option value=""
-            >{loading ? "正在读取手机…" : "暂无手机"}</option
-          >{/if}
-        {#each devices as device (device.id)}<option value={device.id}
-            >{device.name} · {device.online
-              ? device.locked
-                ? "需要解锁"
-                : "在线"
-              : "离线"}</option
-          >{/each}
-      </select>
+      <div class="device-picker-field">
+        <select
+          id="device-picker"
+          class="device-picker"
+          bind:value={selectedDeviceId}
+          disabled={!devices.length}
+        >
+          {#if !devices.length}<option value=""
+              >{loading ? "正在读取手机…" : "暂无手机"}</option
+            >{/if}
+          {#each devices as device (device.id)}<option value={device.id}
+              >{device.name} · {device.online
+                ? device.locked
+                  ? "需要解锁"
+                  : "在线"
+                : "离线"}</option
+            >{/each}
+        </select>
+        <ChevronDown class="device-picker-chevron" aria-hidden="true" />
+      </div>
       <Button variant="outline" class="device-all-button" onclick={showDevices}
         ><LayoutGrid size={15} />查看全部</Button
       >
     </div>
-    <p class="intro">
-      {selectedDevice
-        ? `${selectedDevice.model} · ${selectedDevice.id}`
-        : "连接手机后，点击刷新设备。"}
-    </p>
+    {#if !selectedDevice}<p class="intro">连接手机后，点击刷新设备。</p>{/if}
   </div>
   <div class="page-actions">
     {#if activeRuns.length}<Button
@@ -164,26 +170,11 @@
 {#if selectedDevice}
   {@const device = selectedDevice}
   {@const activeRun = activeRuns.find((run) => run.device_id === device.id)}
-  <nav class="device-tabs" aria-label="设备详情">
-    <button
-      class:active={deviceTab === "status"}
-      aria-pressed={deviceTab === "status"}
-      onclick={() => (deviceTab = "status")}>设备状态</button
-    >
-    <button
-      class:active={deviceTab === "screen"}
-      aria-pressed={deviceTab === "screen"}
-      onclick={() => (deviceTab = "screen")}>屏幕预览</button
-    >
-    <button
-      disabled={!runs.some((run) => run.device_id === device.id)}
-      onclick={() => onViewRuns(device)}>执行记录</button
-    >
-  </nav>
-  <div class="device-detail-grid" class:screen-active={deviceTab === "screen"}>
+  <div class="device-detail-grid">
     <article class="panel device-screen">
       {#key device.id}
         <LiveScreen
+          bind:this={liveScreen}
           id={device.id}
           name={device.name}
           online={device.online}
@@ -191,6 +182,10 @@
           capturing={working === `photo-${device.id}`}
           run={activeRun}
           onCapture={() => onCapture(device)}
+          bind:dimensions={screenDimensions}
+          bind:controlled={screenControlled}
+          bind:screenOff
+          bind:powerPending
         />
       {/key}
     </article>
@@ -221,6 +216,10 @@
         <h2>设备信息</h2>
         <dl>
           <div>
+            <dt>手机型号</dt>
+            <dd>{device.model}</dd>
+          </div>
+          <div>
             <dt>手机编号</dt>
             <dd>{device.id}</dd>
           </div>
@@ -238,6 +237,20 @@
               {device.tap_point
                 ? `${device.tap_point.x}，${device.tap_point.y}`
                 : "尚未标注"}
+            </dd>
+          </div>
+          <div>
+            <dt>投屏尺寸</dt>
+            <dd>{screenDimensions || "未投屏"}</dd>
+          </div>
+          <div>
+            <dt>操作模式</dt>
+            <dd>
+              {screenDimensions
+                ? screenControlled
+                  ? "操作手机"
+                  : "仅观看"
+                : "未投屏"}
             </dd>
           </div>
         </dl>
@@ -266,10 +279,25 @@
           {activeRun
             ? activeRun.state === "paused"
               ? "任务已暂停，可以手动操作；完成后到执行记录继续。"
-              : "请先到执行记录暂停接管，再操作屏幕。"
+              : "开启投屏或关闭实体屏幕时，会先暂停当前任务。"
             : "需要密码时，请在手机上解锁。"}
         </p>
+        <p class="hint">关闭实体屏幕后仍可投屏操作；未投屏时会自动连接。</p>
         <div class="card-actions">
+          <Button
+            variant="outline"
+            disabled={!device.online || powerPending || !!working}
+            onclick={() => liveScreen?.setDisplayPower(screenOff)}
+          >
+            {#if powerPending}<LoaderCircle size={15} class="spin" />
+            {:else if screenOff}<Monitor size={15} />
+            {:else}<MonitorOff size={15} />{/if}
+            {powerPending
+              ? "正在切换…"
+              : screenOff
+                ? "点亮手机屏幕"
+                : "关闭手机屏幕"}
+          </Button>
           <Button
             variant="outline"
             disabled={!device.online ||

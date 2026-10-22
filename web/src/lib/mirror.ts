@@ -1,4 +1,5 @@
 import {
+  AndroidScreenPowerMode,
   ScrcpyOptions3_1,
   ScrcpyControlMessageSerializer,
 } from "@yume-chan/scrcpy";
@@ -12,6 +13,7 @@ export function startMirror(
   onError: (message: string) => void,
   onControl: (enabled: boolean, error?: string) => void,
   onResize: (width: number, height: number) => void,
+  onDisplayPower: (enabled: boolean) => void,
 ) {
   const socket = new WebSocket(
     `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/devices/${encodeURIComponent(id)}/mirror`,
@@ -128,6 +130,8 @@ export function startMirror(
           controlled = message.enabled && wantsControl;
           onControl(controlled, message.error || undefined);
           if (message.enabled && !wantsControl) setControl(false);
+        } else if (message.type === "display_power") {
+          onDisplayPower(message.enabled);
         } else fail(message.error || "投屏已结束");
       } catch {
         fail("投屏返回异常，请重新开启");
@@ -178,5 +182,12 @@ export function startMirror(
       );
     }
   })();
-  return { stop, setControl, touch, navigate };
+  function setDisplayPower(enabled: boolean) {
+    send(
+      serializer.setDisplayPower(
+        enabled ? AndroidScreenPowerMode.Normal : AndroidScreenPowerMode.Off,
+      ),
+    );
+  }
+  return { stop, setControl, touch, navigate, setDisplayPower };
 }
