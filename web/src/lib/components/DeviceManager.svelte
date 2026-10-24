@@ -12,6 +12,7 @@
     Monitor,
     Wifi,
   } from "@lucide/svelte";
+  import { notify } from "$lib/notifications";
   import LiveScreen from "$lib/components/LiveScreen.svelte";
   import Button from "$lib/components/ui/button/button.svelte";
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
@@ -63,8 +64,6 @@
   let pairAddress = $state("");
   let pairCode = $state("");
   let lanPending = $state(false);
-  let lanError = $state("");
-  let paired = $state(false);
   let lanScanning = $state(false);
   let scanAttempted = $state(false);
   let nearbyDevices = $state<NearbyDevice[]>([]);
@@ -112,14 +111,13 @@
   async function scanLan() {
     if (lanScanning || lanPending) return;
     lanScanning = true;
-    lanError = "";
 
     scanAttempted = false;
     try {
       nearbyDevices = await api<NearbyDevice[]>("/devices/discover");
       scanAttempted = true;
     } catch (error) {
-      lanError = error instanceof Error ? error.message : "扫描失败";
+      notify.error(error instanceof Error ? error.message : "扫描失败");
     } finally {
       lanScanning = false;
     }
@@ -133,21 +131,19 @@
     }
   }
   async function pairLan(event: SubmitEvent) {
-    paired = false;
     event.preventDefault();
     if (lanPending) return;
     lanPending = true;
-    lanError = "";
 
     try {
       await api("/devices/pair", "POST", {
         address: pairAddress.trim(),
         code: pairCode.trim(),
       });
-      paired = true;
+      notify.success("配对成功，请填写连接地址并连接手机。");
       pairCode = "";
     } catch (error) {
-      lanError = error instanceof Error ? error.message : "配对失败";
+      notify.error(error instanceof Error ? error.message : "配对失败");
     } finally {
       lanPending = false;
     }
@@ -156,7 +152,6 @@
     event.preventDefault();
     if (lanPending) return;
     lanPending = true;
-    lanError = "";
 
     try {
       const device = await api<Device>("/devices/connect", "POST", {
@@ -165,7 +160,7 @@
       onAdded(device);
       lanDialog?.close();
     } catch (error) {
-      lanError = error instanceof Error ? error.message : "连接失败";
+      notify.error(error instanceof Error ? error.message : "连接失败");
     } finally {
       lanPending = false;
     }
@@ -203,8 +198,7 @@
               disabled={!connected}
               onclick={() => {
                 close();
-                lanError = "";
-                paired = false;
+
                 nearbyDevices = [];
                 scanAttempted = false;
                 lanDialog?.showModal();
@@ -550,8 +544,4 @@
       >
     </form>
   </details>
-  {#if paired}<p class="lan-message" role="status">
-      配对成功。现在填写连接地址并连接手机。
-    </p>{/if}
-  {#if lanError}<p class="lan-error" role="alert">{lanError}</p>{/if}
 </dialog>

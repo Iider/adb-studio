@@ -1339,32 +1339,6 @@ summary {
 .settings-info dd {
   font-size: 16px;
 }
-.message {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  border-radius: 10px;
-  margin-bottom: 22px;
-  padding: 13px 17px;
-  font-size: 14px;
-}
-.message.error {
-  background: color-mix(in srgb, var(--red) 12%, var(--panel));
-  color: var(--red);
-  border: 1px solid color-mix(in srgb, var(--red) 12%, var(--panel));
-}
-.message.success {
-  background: var(--accentsoft);
-  color: var(--accent2);
-  border: 1px solid var(--accentsoft);
-}
-.message button {
-  margin-left: auto;
-  background: none;
-  border: 0;
-  font-size: 24px;
-  line-height: 1;
-}
 .modal::backdrop {
   background: #14223f55;
 }
@@ -1666,9 +1640,6 @@ summary {
   max-width: 100%;
   border: 0;
   border-radius: 8px 8px 18px 18px;
-}
-.live-error {
-  overflow-wrap: anywhere;
 }
 .live-footnote {
   margin-bottom: 0;
@@ -2153,10 +2124,78 @@ button.device-picker-add {
   }
 }
 
-.lan-message,
-.lan-error {
-  margin: 16px 0 0;
+.toast-viewport {
+  position: fixed;
+  inset: 86px 24px auto auto;
+  width: min(380px, calc(100vw - 32px));
+  max-height: calc(100dvh - 110px);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  overflow: visible;
+  pointer-events: none;
 }
-.lan-error {
+.toast-viewport:popover-open {
+  display: grid;
+  gap: 10px;
+}
+.toast-viewport::backdrop {
+  background: transparent;
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 10px 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  color: var(--text);
+  box-shadow: 0 8px 30px #0003;
+  pointer-events: auto;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.toast > svg {
+  flex: none;
+  color: var(--accent2);
+}
+.toast-error {
+  border-color: color-mix(in srgb, var(--red) 40%, var(--line));
+  background: color-mix(in srgb, var(--red) 8%, var(--panel));
+}
+.toast-error > svg {
   color: var(--red);
+}
+.toast > span {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.toast button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  min-height: 36px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dim);
+}
+.toast button:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+@media (max-width: 600px) {
+  .toast-viewport {
+    inset: 78px 16px auto auto;
+  }
+  .toast button {
+    width: 44px;
+    min-height: 44px;
+  }
 }

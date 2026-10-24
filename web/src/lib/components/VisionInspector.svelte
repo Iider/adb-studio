@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { LoaderCircle } from "@lucide/svelte";
+  import { notify } from "$lib/notifications";
   import Button from "$lib/components/ui/button/button.svelte";
   import { api, type Device, type VisionInspection } from "$lib/api";
 
@@ -13,7 +14,6 @@
   let target = $state("");
   let readNumber = $state(false);
   let pending = $state(false);
-  let error = $state("");
   let result = $state<VisionInspection | null>(null);
   let controller: AbortController | undefined;
   $effect(() => {
@@ -24,10 +24,9 @@
 
   async function check() {
     if (pending) return;
-    error = "";
     result = null;
     if (source === "file" && (!file || file.size > 8 * 1024 * 1024)) {
-      error = "请选择不超过 8 MiB 的 PNG 图片。";
+      notify.error("请选择不超过 8 MiB 的 PNG 图片。");
       return;
     }
     pending = true;
@@ -58,7 +57,8 @@
         controller.signal,
       );
     } catch (e) {
-      error = e instanceof Error ? e.message : "识别检查失败";
+      if (!controller?.signal.aborted)
+        notify.error(e instanceof Error ? e.message : "识别检查失败");
     } finally {
       pending = false;
     }
@@ -139,7 +139,7 @@
     </Button>
   </fieldset>
   <p class="hint vision-status" role="status">
-    {pending ? "正在取图和识别，请稍候。" : error}
+    {pending ? "正在取图和识别，请稍候。" : ""}
   </p>
   {#if result}
     <div class="vision-result" aria-live="polite">

@@ -13,7 +13,6 @@
     ArrowDown,
     ChevronDown,
     Download,
-    Check,
     LoaderCircle,
     Trash2,
     Sun,
@@ -26,6 +25,7 @@
   import ScheduleManager from "$lib/components/ScheduleManager.svelte";
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import RunFeedback from "$lib/components/RunFeedback.svelte";
+  import { notify } from "$lib/notifications";
   import { resumeBlocked } from "$lib/run-feedback";
   import { scheduleInput } from "$lib/schedules";
   import Badge from "$lib/components/ui/badge/badge.svelte";
@@ -95,8 +95,7 @@
   let connected = $state(false);
   let loading = $state(true);
   let working = $state("");
-  let error = $state("");
-  let notice = $state("");
+  let loadError = "";
   let renameDialog = $state<HTMLDialogElement>();
   let editDevice = $state<Device | null>(null);
   let rename = $state("");
@@ -203,7 +202,6 @@
     const current = deviceRun;
     if (tab !== "devices" || deviceDetailTab !== "task" || !current) return;
     const controller = new AbortController();
-    deviceEventsError = "";
     void api<Event[]>(
       `/runs/${current.id}/events`,
       "GET",
@@ -212,13 +210,15 @@
     )
       .then((items) => {
         if (controller.signal.aborted) return;
+        deviceEventsError = "";
         deviceEventsId = current.id;
         deviceEvents = items;
       })
       .catch((e) => {
-        if (!controller.signal.aborted)
-          deviceEventsError =
-            e instanceof Error ? e.message : "读取执行记录失败";
+        if (controller.signal.aborted) return;
+        const message = e instanceof Error ? e.message : "读取执行记录失败";
+        if (deviceEventsError !== message) notify.error(message);
+        deviceEventsError = message;
       });
     return () => controller.abort();
   });
@@ -303,12 +303,15 @@
         schedules = s;
         settings = config;
         connected = true;
+        loadError = "";
         if (!model.endpoint) model = { ...config.model };
         if (selectedRun) await loadRunEvents(selectedRun);
       } while (dirty && alive);
     } catch (e) {
+      const message = e instanceof Error ? e.message : "连接失败";
+      if (message !== loadError) notify.error(message);
+      loadError = message;
       connected = false;
-      error = e instanceof Error ? e.message : "连接失败";
     } finally {
       loading = false;
       reloadBusy = false;
@@ -321,16 +324,14 @@
   ) {
     if (working) return false;
     working = key;
-    error = "";
-    notice = "";
 
     try {
       await fn();
-      notice = message;
+      notify.success(message);
       await load();
       return true;
     } catch (e) {
-      error = e instanceof Error ? e.message : "操作失败";
+      notify.error(e instanceof Error ? e.message : "操作失败");
       return false;
     } finally {
       working = "";
@@ -361,7 +362,7 @@
       },
       "",
     );
-    if (message) notice = message;
+    if (message) notify.success(message);
   }
   async function markPoint(d: Device) {
     pointOrigin = tab;
@@ -489,7 +490,7 @@
       await loadRunEvents(id);
     } catch (e) {
       if (selectedRun === id)
-        error = e instanceof Error ? e.message : "读取记录失败";
+        notify.error(e instanceof Error ? e.message : "读取记录失败");
     }
   }
   async function requestClear(target?: Run) {
@@ -509,8 +510,6 @@
     if (!clearRequest || working) return;
     const ids = [...clearRequest.ids];
     working = "clear-runs";
-    error = "";
-    notice = "";
 
     const cleared = new Set<string>();
     let failed = 0;
@@ -528,8 +527,8 @@
       runs = runs.filter((r) => !cleared.has(r.id));
       reconcileRunSelection();
       clearDialog?.close();
-      if (cleared.size) notice = `已清理 ${cleared.size} 条记录`;
-      if (failed) error = `有 ${failed} 条未清理：${failure}`;
+      if (cleared.size) notify.success(`已清理 ${cleared.size} 条记录`);
+      if (failed) notify.error(`有 ${failed} 条未清理：${failure}`);
       await load();
       await tick();
       if (cleared.size)
@@ -965,9 +964,6 @@
       device.name,
       true,
     )}
-    {#if deviceEventsError}<p class="error" role="alert">
-        {deviceEventsError}
-      </p>{/if}
   {:else}
     <article class="panel device-task-empty">
       <History size={24} />
@@ -1053,17 +1049,6 @@
       </div>
     </header>
     <section class="content" bind:this={contentElement}>
-      {#if error}<div class="message error" role="alert">
-          {error}<button aria-label="关闭提示" onclick={() => (error = "")}
-            >×</button
-          >
-        </div>{/if}
-      {#if notice}<div class="message success" role="status">
-          <Check size={18} />{notice}<button
-            aria-label="关闭提示"
-            onclick={() => (notice = "")}>×</button
-          >
-        </div>{/if}
       {#if tab === "runs" || tab === "settings"}<div class="page-heading">
           <div>
             <p class="eyebrow">手机自动化 · 本地托管</p>
@@ -1102,7 +1087,7 @@
               device,
             ];
             selectedDeviceId = device.id;
-            notice = `已连接 ${device.name}`;
+            notify.success(`已连接 ${device.name}`);
             void load();
           }}
           onCapture={(device) => {
@@ -1266,7 +1251,6 @@
           {loading}
           {connected}
           {working}
-          {error}
           activeCount={activeRuns.length}
           onStopAll={stopAllRuns}
           onSave={(id, input) =>

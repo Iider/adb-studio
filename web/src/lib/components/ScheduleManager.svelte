@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { notify } from "$lib/notifications";
   import { tick } from "svelte";
   import {
     CalendarClock,
@@ -30,7 +31,6 @@
     loading,
     connected,
     working,
-    error,
     activeCount,
     onStopAll,
     onSave,
@@ -44,7 +44,6 @@
     loading: boolean;
     connected: boolean;
     working: string;
-    error: string;
     activeCount: number;
     onStopAll: () => void;
     onSave: (id: string, input: ScheduleInput) => Promise<boolean>;
@@ -58,12 +57,9 @@
   let editor = $state<HTMLDialogElement>();
   let deleteDialog = $state<HTMLDialogElement>();
   let nameInput = $state<HTMLInputElement>();
-  let editorError = $state<HTMLParagraphElement>();
-  let deleteError = $state<HTMLParagraphElement>();
   let newButton = $state<HTMLElement | null>(null);
   let editingId = $state("");
   let deleting = $state<Schedule | null>(null);
-  let formError = $state("");
   let scheduleName = $state("");
   let deviceId = $state("");
   let workflowId = $state("");
@@ -173,7 +169,7 @@
     tapInterval = schedule?.tap?.interval ?? 5;
     swipeMinutes = schedule?.swipe?.minutes ?? 15;
     swipeInterval = schedule?.swipe?.interval ?? 25;
-    formError = "";
+
     await tick();
     if (!schedule) chooseDevice();
     editor?.showModal();
@@ -186,9 +182,10 @@
     if (kind === "once") {
       const at = new Date(`${date}:00+08:00`);
       if (!Number.isFinite(at.getTime()) || at.getTime() <= Date.now()) {
-        formError = "单次执行时间已过去，请选择未来的上海时间。";
-        await tick();
-        editorError?.focus();
+        notify.error("单次执行时间已过去，请选择未来的上海时间。");
+        editor
+          ?.querySelector<HTMLInputElement>('input[type="datetime-local"]')
+          ?.focus();
         return;
       }
       rule = { kind: "once", at: at.toISOString() };
@@ -197,7 +194,7 @@
     else if (kind === "weekly")
       rule = { kind: "weekly", time, days: [...days].sort((a, b) => a - b) };
     else rule = { kind: "daily", time };
-    formError = "";
+
     const saved = await onSave(editingId, {
       name: scheduleName.trim(),
       device_id: deviceId,
@@ -213,15 +210,10 @@
           : null,
     });
     if (saved) editor?.close();
-    else {
-      formError = error || "保存失败，请重试。";
-      await tick();
-      editorError?.focus();
-    }
   }
   function requestDelete(schedule: Schedule) {
     deleting = schedule;
-    formError = "";
+
     deleteDialog?.showModal();
   }
   async function remove() {
@@ -231,10 +223,6 @@
       deleteDialog?.close();
       deleting = null;
       newButton?.focus();
-    } else {
-      formError = error || "删除失败，请重试。";
-      await tick();
-      deleteError?.focus();
     }
   }
 </script>
@@ -590,14 +578,6 @@
       >
     </fieldset>
     {#if blocked}<p class="schedule-validation" role="status">{blocked}</p>{/if}
-    {#if formError}<p
-        class="schedule-validation"
-        role="alert"
-        tabindex="-1"
-        bind:this={editorError}
-      >
-        {formError}
-      </p>{/if}
     {#if !connected}<p class="schedule-validation" role="status">
         后台未连接，连接恢复后可保存。
       </p>{/if}
@@ -630,14 +610,6 @@
   <h2 id="schedule-delete-title">删除这条定时？</h2>
   <p class="schedule-delete-name">{deleting?.name}</p>
   <p class="hint">删除后不再触发。已经开始的任务与执行记录保留。</p>
-  {#if formError}<p
-      class="schedule-validation"
-      role="alert"
-      tabindex="-1"
-      bind:this={deleteError}
-    >
-      {formError}
-    </p>{/if}
   <div class="schedule-dialog-actions">
     <Button
       variant="outline"

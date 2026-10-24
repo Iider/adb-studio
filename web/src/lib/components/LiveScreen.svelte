@@ -14,6 +14,7 @@
     Minimize,
   } from "@lucide/svelte";
   import Button from "$lib/components/ui/button/button.svelte";
+  import { notify } from "$lib/notifications";
   import { startMirror } from "$lib/mirror";
   import { screenPoint, type ScreenPoint } from "$lib/touch";
 
@@ -39,7 +40,6 @@
   let canvas: HTMLCanvasElement;
   let stage: HTMLDivElement;
   let viewState = $state<"idle" | "connecting" | "live" | "error">("idle");
-  let error = $state("");
   let supported = $state(false);
   let canFullscreen = $state(false);
   let isFullscreen = $state(false);
@@ -69,7 +69,9 @@
   export function setDisplayPower(enabled: boolean) {
     if (powerPending || !online) return;
     if (!supported) {
-      error = "屏幕开关需要投屏通道，请使用本机地址或 HTTPS，并使用支持投屏的浏览器";
+      notify.error(
+        "屏幕开关需要投屏通道，请使用本机地址或 HTTPS，并使用支持投屏的浏览器",
+      );
       return;
     }
     if (viewState === "idle" || viewState === "error") start();
@@ -99,7 +101,6 @@
   }
   function start() {
     stop();
-    error = "";
     viewState = "connecting";
     connection = startMirror(
       id,
@@ -112,7 +113,7 @@
       },
       (message) => {
         viewState = "error";
-        error = message;
+        notify.error(message);
         dimensions = "";
         pendingPower = undefined;
         powerPending = false;
@@ -131,7 +132,7 @@
           powerPending = false;
           cancelTouch();
         }
-        if (message) error = message;
+        if (message) notify.error(message);
       },
       (width, height) => {
         if (lastPoint)
@@ -154,7 +155,6 @@
     );
   }
   function requestControl() {
-    error = "";
     requesting = true;
     connection?.setControl(true);
   }
@@ -163,7 +163,7 @@
       void document.exitFullscreen();
     } else {
       stage.requestFullscreen().catch(() => {
-        error = "暂时无法全屏，请在浏览器中重试";
+        notify.error("暂时无法全屏，请在浏览器中重试");
       });
     }
   }
@@ -463,7 +463,6 @@
     </div>
   {/if}
 </div>
-{#if error}<p class="error live-error" role="alert">{error}</p>{/if}
 {#if !supported}<p class="hint">
     实时投屏需支持视频解码的浏览器。本机请使用 localhost 或
     127.0.0.1；其他设备需 HTTPS。
