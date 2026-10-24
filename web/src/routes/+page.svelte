@@ -11,6 +11,7 @@
     Square,
     ArrowLeft,
     ArrowDown,
+    ChevronDown,
     Download,
     Check,
     LoaderCircle,
@@ -23,6 +24,7 @@
   import DeviceManager from "$lib/components/DeviceManager.svelte";
   import TaskList from "$lib/components/TaskList.svelte";
   import ScheduleManager from "$lib/components/ScheduleManager.svelte";
+  import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import RunFeedback from "$lib/components/RunFeedback.svelte";
   import { resumeBlocked } from "$lib/run-feedback";
   import { scheduleInput } from "$lib/schedules";
@@ -52,6 +54,13 @@
   ];
   let tab = $state("devices");
   let selectedDeviceId = $state("");
+  let deviceDetailTab = $state<"parameters" | "task">("parameters");
+  let taskSetupDevice = $state("");
+  let taskSettingsExpanded = $state(true);
+  let taskSettingsContext = $state("");
+  let deviceEvents = $state<Event[]>([]);
+  let deviceEventsId = $state("");
+  let deviceEventsError = $state("");
   let workflowOpen = $state(false);
   let contentElement = $state<HTMLElement>();
   $effect(() => {
@@ -88,7 +97,6 @@
   let working = $state("");
   let error = $state("");
   let notice = $state("");
-  let lastUpdated = $state<string | null>(null);
   let renameDialog = $state<HTMLDialogElement>();
   let editDevice = $state<Device | null>(null);
   let rename = $state("");
@@ -98,6 +106,7 @@
   let targetDevice = $state("3430131496001EB");
   let pointDialog = $state<HTMLDialogElement>();
   let pointDevice = $state<Device | null>(null);
+  let pointOrigin = $state("workflows");
   let pointImage = $state("");
   let pendingPoint = $state<TapPoint | null>(null);
   let pointWidth = $state(0);
@@ -123,12 +132,96 @@
   const activeRuns = $derived(runs.filter(busy));
   const finishedRuns = $derived(runs.filter((r) => !busy(r)));
   const flow = $derived(
-    workflows.find(
-      (w) =>
-        w.id === selectedWorkflow &&
-        (selectedVersion === 0 || w.version === selectedVersion),
-    ),
+    tab === "devices"
+      ? workflows.find((w) => w.id === selectedWorkflow && w.active) ||
+          workflows.find((w) => w.id === selectedWorkflow)
+      : workflows.find(
+          (w) =>
+            w.id === selectedWorkflow &&
+            (selectedVersion === 0 || w.version === selectedVersion),
+        ),
   );
+  const deviceRun = $derived(
+    runs.find((r) => r.device_id === selectedDeviceId && busy(r)) ||
+      runs.find((r) => r.device_id === selectedDeviceId),
+  );
+  const selectedPhone = $derived(
+    devices.find((device) => device.id === selectedDeviceId),
+  );
+  const pageTitle = $derived(
+    selectedPhone
+      ? `${selectedPhone.name} · ${deviceRun && busy(deviceRun) ? deviceRun.workflow.name : "空闲"}`
+      : "手机自动化",
+  );
+  $effect(() => {
+    if (!selectedDeviceId) return;
+    const running = !!deviceRun && busy(deviceRun);
+    const context = `${selectedDeviceId}:${running ? deviceRun!.id : "idle"}`;
+    if (context !== taskSettingsContext) {
+      taskSettingsContext = context;
+      taskSettingsExpanded = !running;
+    }
+  });
+  const taskChoices = $derived(
+    workflows
+      .filter(
+        (w, index) => workflows.findIndex((item) => item.id === w.id) === index,
+      )
+      .map((latest) => {
+        const current =
+          workflows.find((w) => w.id === latest.id && w.active) || latest;
+        return {
+          value: current.id,
+          label: current.name,
+          description: current.active ? "已启用" : "需试跑验证",
+        };
+      }),
+  );
+  $effect(() => {
+    if (
+      tab !== "devices" ||
+      !selectedDeviceId ||
+      taskSetupDevice === selectedDeviceId
+    )
+      return;
+    taskSetupDevice = selectedDeviceId;
+    const previous = deviceRun;
+    selectedWorkflow = previous?.workflow.id || "swipe";
+    selectedVersion = previous?.workflow.version || 0;
+    const swipe = previous?.workflow.nodes.find(
+      (node) => node.type === "swipe_loop",
+    );
+    if (typeof swipe?.minutes === "number") swipeMinutes = swipe.minutes;
+    if (typeof swipe?.interval === "number") swipeInterval = swipe.interval;
+    const tap = previous?.workflow.nodes.find((node) =>
+      ["fixed_tap_loop", "tap_loop"].includes(node.type),
+    );
+    if (typeof tap?.count === "number") tapCount = tap.count;
+    if (typeof tap?.interval === "number") tapInterval = tap.interval;
+  });
+  $effect(() => {
+    const current = deviceRun;
+    if (tab !== "devices" || deviceDetailTab !== "task" || !current) return;
+    const controller = new AbortController();
+    deviceEventsError = "";
+    void api<Event[]>(
+      `/runs/${current.id}/events`,
+      "GET",
+      undefined,
+      controller.signal,
+    )
+      .then((items) => {
+        if (controller.signal.aborted) return;
+        deviceEventsId = current.id;
+        deviceEvents = items;
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted)
+          deviceEventsError =
+            e instanceof Error ? e.message : "读取执行记录失败";
+      });
+    return () => controller.abort();
+  });
   const launchDevice = $derived(
     devices.find((device) => device.id === targetDevice),
   );
@@ -136,32 +229,45 @@
     activeRuns.find((run) => run.device_id === targetDevice),
   );
   const launchBlocked = $derived(
-    !launchDevice?.online
-      ? "手机离线，连接后可开始。"
-      : launchDevice.locked
-        ? "请先在设备详情中唤醒并解锁手机。"
-        : launchRun
-          ? `当前任务：${runLabel(launchRun)}。停止后可开始新任务。`
-          : flow?.id === "point-click" && !launchDevice.tap_point
-            ? "请先标注这台手机的点击位置。"
-            : settings &&
-                !settings.local_ocr &&
-                flow?.nodes.some((n) =>
-                  [
-                    "tap_text",
-                    "tap_point",
-                    "key",
-                    "branch",
-                    "tap_loop",
-                    "qishui_navigate",
-                    "qishui_loop",
-                  ].includes(n.type),
-                )
-              ? "此任务需要本地文字识别，当前平台未安装。请使用已适配的纯视觉任务。"
-              : "",
+    !connected
+      ? "后台未连接，请稍后重试。"
+      : tab === "devices" && flow && !flow.active
+        ? "任务尚未启用，请先到自动化任务页试跑并启用。"
+        : flow?.devices.length &&
+            launchDevice &&
+            !flow.devices.includes(launchDevice.id)
+          ? "此任务尚未适配当前手机，请选择其他任务。"
+          : !launchDevice?.online
+            ? "手机离线，连接后可开始。"
+            : launchDevice.locked
+              ? "请先在设备详情中唤醒并解锁手机。"
+              : launchRun
+                ? `当前任务：${runLabel(launchRun)}。停止后可开始新任务。`
+                : flow?.id === "point-click" && !launchDevice.tap_point
+                  ? "请先标注这台手机的点击位置。"
+                  : settings &&
+                      !settings.local_ocr &&
+                      flow?.nodes.some((n) =>
+                        [
+                          "tap_text",
+                          "tap_point",
+                          "key",
+                          "branch",
+                          "tap_loop",
+                          "qishui_navigate",
+                          "qishui_loop",
+                        ].includes(n.type),
+                      )
+                    ? "此任务需要本地文字识别，当前平台未安装。请使用已适配的纯视觉任务。"
+                    : "",
   );
   $effect(() => {
-    if (flow && flow.devices.length && !flow.devices.includes(targetDevice))
+    if (tab === "devices") targetDevice = selectedDeviceId;
+    else if (
+      flow &&
+      flow.devices.length &&
+      !flow.devices.includes(targetDevice)
+    )
       targetDevice = flow.devices[0];
   });
   const run = $derived(runs.find((r) => r.id === selectedRun));
@@ -197,7 +303,6 @@
         schedules = s;
         settings = config;
         connected = true;
-        lastUpdated = new Date().toISOString();
         if (!model.endpoint) model = { ...config.model };
         if (selectedRun) await loadRunEvents(selectedRun);
       } while (dirty && alive);
@@ -218,6 +323,7 @@
     working = key;
     error = "";
     notice = "";
+
     try {
       await fn();
       notice = message;
@@ -258,6 +364,7 @@
     if (message) notice = message;
   }
   async function markPoint(d: Device) {
+    pointOrigin = tab;
     await action(
       "mark-point",
       async () => {
@@ -307,8 +414,13 @@
         targetDevice = deviceId;
         selectedWorkflow = "point-click";
         selectedVersion = 0;
-        workflowOpen = true;
-        tab = "workflows";
+        if (pointOrigin === "devices") {
+          selectedDeviceId = deviceId;
+          deviceDetailTab = "task";
+        } else {
+          workflowOpen = true;
+          tab = "workflows";
+        }
         pointDialog?.close();
       },
       "点击位置已保存；可设置次数和间隔",
@@ -324,7 +436,7 @@
       "已请求停止全部任务",
     );
   }
-  async function startFlow(trial: boolean) {
+  async function startFlow(trial: boolean, embedded = false) {
     if (!flow || working || launchBlocked) return;
     if (flow.id === "swipe") {
       localStorage.setItem(
@@ -338,7 +450,7 @@
         const r = await api<Run>("/runs", "POST", {
           device_id: targetDevice,
           workflow_id: flow.id,
-          version: flow.version,
+          version: embedded && !trial ? undefined : flow.version,
           trial,
           tap: flow.nodes.some((n) =>
             ["tap_loop", "fixed_tap_loop"].includes(n.type),
@@ -354,7 +466,8 @@
               : null,
         });
         selectedRun = r.id;
-        tab = "runs";
+        if (embedded) deviceDetailTab = "task";
+        else tab = "runs";
       },
       trial ? "试跑已开始；通过后自动启用" : "任务已开始",
     );
@@ -398,6 +511,7 @@
     working = "clear-runs";
     error = "";
     notice = "";
+
     const cleared = new Set<string>();
     let failed = 0;
     let failure = "";
@@ -444,6 +558,11 @@
         URL.revokeObjectURL(url);
       },
       "记录已导出",
+    );
+  }
+  function resumeOccupied(target: Run) {
+    return activeRuns.some(
+      (other) => other.id !== target.id && other.device_id === target.device_id,
     );
   }
   function stepTitle(workflow: Workflow, id: string) {
@@ -518,8 +637,348 @@
   });
 </script>
 
+{#snippet taskLaunch(embedded: boolean)}
+  {#if flow}
+    <form
+      class="task-launch"
+      onsubmit={(event) => {
+        event.preventDefault();
+        void startFlow(
+          embedded
+            ? false
+            : (event.submitter as HTMLButtonElement | null)?.value !== "run",
+          embedded,
+        );
+      }}
+    >
+      {#if flow.id === "point-click"}
+        <div class="card-actions">
+          <Button
+            variant="outline"
+            disabled={!!working ||
+              !devices.find((d) => d.id === targetDevice)?.online}
+            onclick={() => {
+              const d = devices.find((d) => d.id === targetDevice);
+              if (d) void markPoint(d);
+            }}>标注点击位置</Button
+          >
+        </div>
+        <p class="hint">
+          {devices.find((d) => d.id === targetDevice)?.tap_point
+            ? `已保存位置：${devices.find((d) => d.id === targetDevice)?.tap_point?.x}，${devices.find((d) => d.id === targetDevice)?.tap_point?.y}`
+            : "请选择手机并标注位置"}
+        </p>
+      {/if}
+      {#if flow.nodes.some( (n) => ["tap_loop", "fixed_tap_loop"].includes(n.type) )}<div
+          class="flow-controls"
+        >
+          <label
+            >点击次数<input
+              type="number"
+              min="1"
+              max="10000"
+              step="1"
+              required
+              bind:value={tapCount}
+            /></label
+          >
+          <label
+            >点击间隔（秒）<input
+              type="number"
+              min="1"
+              max="86400"
+              step="any"
+              required
+              bind:value={tapInterval}
+            /></label
+          >
+        </div>
+        <p class="hint">
+          从当前页面开始；先点击，再等待间隔。按已确认的位置直接点击，不识别或校验画面。请保持所标注屏幕及当前页面。
+        </p>{/if}
+      {#if flow.id === "swipe"}<div class="flow-controls">
+          <label
+            >总时长（分钟）<input
+              type="number"
+              min="0.01"
+              max="10080"
+              step="any"
+              required
+              bind:value={swipeMinutes}
+            /></label
+          >
+          <label
+            >滑动间隔（秒）<input
+              type="number"
+              min="0.01"
+              max="86400"
+              step="any"
+              required
+              bind:value={swipeInterval}
+            /></label
+          >
+        </div>
+        <p class="hint">
+          先等待，再滑动；到达总时长自动结束。{embedded &&
+          deviceRun &&
+          busy(deviceRun)
+            ? "以上设置用于下一次启动。"
+            : "以上设置用于本次运行。"}
+        </p>{/if}
+      {#if embedded}
+        <div class="card-actions device-task-start">
+          <Button disabled={!!working || !!launchBlocked} type="submit"
+            ><Play size={16} />直接运行</Button
+          >
+        </div>
+      {:else}
+        <div class="flow-controls">
+          <label
+            >版本<Dropdown
+              items={workflows
+                .filter((w) => w.id === flow.id)
+                .map((w) => ({
+                  value: String(w.version),
+                  label: `第 ${w.version} 版${w.active ? " · 已启用" : ""}`,
+                }))}
+              value={String(flow.version)}
+              label="任务版本"
+              onchange={(value) => (selectedVersion = Number(value))}
+            /></label
+          ><label
+            >执行手机<Dropdown
+              items={devices
+                .filter(
+                  (d) => !flow.devices.length || flow.devices.includes(d.id),
+                )
+                .map((d) => ({
+                  value: d.id,
+                  label: `${d.name} · ${d.online ? "在线" : "离线"}`,
+                }))}
+              bind:value={targetDevice}
+              label="执行手机"
+            /></label
+          ><Button
+            disabled={!!working || !!launchBlocked}
+            type="submit"
+            name="mode"
+            value="trial"
+            ><Play size={16} />{flow.recognition === "vision"
+              ? "验证样本并试跑"
+              : "试跑此版本"}</Button
+          >{#if flow.active}<Button
+              variant="outline"
+              disabled={!!working || !!launchBlocked}
+              type="submit"
+              name="mode"
+              value="run">直接运行</Button
+            >{/if}{#if !flow.active && runs.some((r) => r.trial && r.state === "succeeded" && r.workflow.id === flow.id && r.workflow.version === flow.version)}<Button
+              variant="outline"
+              onclick={() =>
+                action(
+                  "publish",
+                  () =>
+                    api(
+                      `/workflows/${flow.id}@${flow.version}/publish`,
+                      "POST",
+                    ),
+                  "此版本已启用",
+                )}>启用 / 回退到此版</Button
+            >{/if}
+        </div>
+      {/if}
+      {#if launchBlocked}<p class="hint" role="status">
+          {launchBlocked}
+        </p>{/if}
+      {#if !embedded}<p class="hint">
+          {flow.recognition === "vision"
+            ? `试跑前还需 ${flow.tests?.length || 0} 次样本识别，不计入运行预算。`
+            : ""}
+          试跑通过后自动启用。Agent 修改步骤；你查看流程、管理运行和定时。
+        </p>{/if}
+    </form>
+  {/if}
+{/snippet}
+
+{#snippet runDetails(
+  run: Run,
+  events: Event[],
+  deviceName: string,
+  compact: boolean,
+)}
+  <article class="panel">
+    <div class="panel-heading">
+      <div>
+        <h2>{run.workflow.name}</h2>
+        <p>
+          {deviceName} · 第 {run.workflow.version} 版{run.trial
+            ? " · 试跑"
+            : ""}
+        </p>
+      </div>
+      <Badge variant={run.state === "needs_help" ? "destructive" : "default"}
+        >{runLabel(run)}</Badge
+      >
+    </div>
+    <div class="card-actions run-actions">
+      {#if run.state === "paused" || run.state === "cancelled"}
+        <Button
+          disabled={!!working ||
+            !connected ||
+            resumeBlocked(run) ||
+            resumeOccupied(run)}
+          onclick={() =>
+            action(
+              "resume-run",
+              () => api(`/runs/${run.id}/resume`, "POST"),
+              "已请求继续，正在检查当前步骤",
+            )}><Play size={16} aria-hidden="true" />继续任务</Button
+        >
+      {:else if busy(run)}
+        <Button
+          variant="outline"
+          disabled={!!working || !connected || run.pause_requested}
+          onclick={() =>
+            action(
+              "pause-run",
+              () => api(`/runs/${run.id}/pause`, "POST"),
+              "已请求暂停；显示“已暂停”后再操作手机",
+            )}
+        >
+          {#if run.pause_requested}<LoaderCircle
+              size={16}
+              class="spin"
+              aria-hidden="true"
+            />正在暂停{:else}<Hand size={16} aria-hidden="true" />人工接管{/if}
+        </Button>
+      {/if}
+      {#if busy(run)}<Button
+          variant="destructive"
+          disabled={!!working}
+          onclick={() =>
+            action(
+              "stop",
+              () => api(`/runs/${run.id}/stop`, "POST"),
+              "已请求停止",
+            )}><Square size={16} />停止任务</Button
+        >{/if}<Button
+        variant="outline"
+        disabled={!!working}
+        onclick={() => exportRun(run.id)}><Download size={17} />导出记录</Button
+      >
+      {#if !busy(run)}<Button
+          variant="outline"
+          disabled={!!working || !connected}
+          onclick={() => requestClear(run)}
+          ><Trash2 size={17} aria-hidden="true" />清理这条记录</Button
+        >{/if}
+    </div>
+    {#if !compact || run.state !== "running" || run.error_detail}
+      <div
+        class="run-reason"
+        class:run-paused={run.state === "paused"}
+        aria-live="polite"
+      >
+        <RunFeedback message={run.reason} detail={run.error_detail} />
+      </div>
+    {/if}
+    {#if run.state === "paused" || run.state === "cancelled"}<p
+        class="run-resume-hint"
+      >
+        {resumeBlocked(run)
+          ? "上次动作结果未确认，不能继续。请核对页面后重新开始，避免重复操作。"
+          : resumeOccupied(run)
+            ? "这台手机已有其他任务，请先停止该任务再继续。"
+            : "保留原参数和已完成进度继续执行。请先确认手机在原应用的目标页面，再点击“继续任务”。"}
+      </p>{/if}
+    <div class="run-meta">
+      <span>当前步骤：{stepTitle(run.workflow, run.node)}</span><span
+        >模型：{run.model_calls} / {run.workflow.model_limit} 次</span
+      >
+    </div>
+    {#if run.checkpoint.coin !== undefined}<p class="hint">
+        金币：{String(run.checkpoint.coin ?? "待识别")} · 连续无增长：{String(
+          run.checkpoint.idle ?? 0,
+        )} 秒 · 已复查：{String(run.checkpoint.failed_swipes ?? 0)} 次
+      </p>{:else if run.checkpoint.done !== undefined}<p class="hint">
+        {run.workflow.nodes.some((node) =>
+          ["fixed_tap_loop", "tap_loop"].includes(node.type),
+        )
+          ? "已点击"
+          : "已尝试滑动"}
+        {String(run.checkpoint.done)} 次
+        {#if Number(run.checkpoint.uncertain_swipes || 0) || run.pending === "swipe"}（含
+          {Number(run.checkpoint.uncertain_swipes || 0) +
+            (run.pending === "swipe" ? 1 : 0)} 次结果未确认）{/if}
+      </p>{/if}
+    <h3 class="event-heading">判断与行动</h3>
+    <ol class="event-list">
+      {#each events as ev (ev.id)}<li>
+          <time>{time(ev.at, true)}</time>
+          <div>
+            <small>步骤 {stepNumber(run.workflow, ev.node)}</small>
+            <RunFeedback message={ev.message} />
+          </div>
+        </li>{/each}
+    </ol>
+    {#if run.last_shot}<details open>
+        <summary>最近关键画面</summary><img
+          class="preview"
+          src={`/api/shots/${run.last_shot}`}
+          alt="任务最近关键画面"
+        />
+      </details>{/if}
+  </article>
+{/snippet}
+
+{#snippet taskPanel(device: Device)}
+  <details class="panel device-task-settings" bind:open={taskSettingsExpanded}>
+    <summary class="device-task-settings-heading">
+      <span>任务设置</span><ChevronDown
+        size={16}
+        class="device-task-settings-chevron"
+        aria-hidden="true"
+      />
+    </summary>
+    <div class="device-task-settings-content">
+      <label
+        >自动化任务
+        <Dropdown
+          items={taskChoices}
+          bind:value={selectedWorkflow}
+          label="选择自动化任务"
+          placeholder="暂无可用任务"
+          onchange={() => (selectedVersion = 0)}
+        />
+      </label>
+      {#if deviceRun && busy(deviceRun)}<p class="hint">
+          当前任务按原参数执行；下方设置用于下一次启动。
+        </p>{/if}
+      {@render taskLaunch(true)}
+      {#if !flow}<p class="hint">请选择一个可用任务。</p>{/if}
+    </div>
+  </details>
+  {#if deviceRun}
+    {@render runDetails(
+      deviceRun,
+      deviceEventsId === deviceRun.id ? deviceEvents : [],
+      device.name,
+      true,
+    )}
+    {#if deviceEventsError}<p class="error" role="alert">
+        {deviceEventsError}
+      </p>{/if}
+  {:else}
+    <article class="panel device-task-empty">
+      <History size={24} />
+      <h2>暂无执行记录</h2>
+      <p class="hint">设置任务并开始后，进度与执行记录会显示在这里。</p>
+    </article>
+  {/if}
+{/snippet}
+
 <svelte:head
-  ><title>ADB 工作台 · 手机自动化</title><meta
+  ><title>{pageTitle}</title><meta
     name="description"
     content="手机、工作流与定时任务的本地控制台"
   /></svelte:head
@@ -543,8 +1002,6 @@
           onclick={() => {
             tab = item.id;
             workflowOpen = false;
-            notice = "";
-            error = "";
           }}
           aria-current={tab === item.id ? "page" : undefined}
           ><item.icon size={21} /><span>{item.label}</span
@@ -638,14 +1095,15 @@
           {working}
           {loading}
           {connected}
-          {lastUpdated}
           bind:selectedDeviceId
-          onRefresh={() => {
-            void action(
-              "refresh",
-              () => api("/devices/refresh", "POST"),
-              "已刷新手机状态",
-            );
+          onAdded={(device) => {
+            devices = [
+              ...devices.filter((item) => item.id !== device.id),
+              device,
+            ];
+            selectedDeviceId = device.id;
+            notice = `已连接 ${device.name}`;
+            void load();
           }}
           onCapture={(device) => {
             void capture(device);
@@ -665,23 +1123,8 @@
               "常亮设置已保存",
             );
           }}
-          onMarkPoint={(device) => {
-            void markPoint(device);
-          }}
-          onChooseTask={(device) => {
-            targetDevice = device.id;
-            selectedWorkflow = "swipe";
-            selectedVersion = 0;
-            workflowOpen = true;
-            tab = "workflows";
-          }}
-          onViewRuns={(device) => {
-            const latest = runs.find((run) => run.device_id === device.id);
-            selectedRun = latest?.id || "";
-            tab = "runs";
-            if (latest) void selectRun(latest.id);
-          }}
-          onStopAll={stopAllRuns}
+          bind:detailTab={deviceDetailTab}
+          {taskPanel}
         />
       {:else if tab === "workflows"}
         <div hidden={workflowOpen && !!flow}>
@@ -697,8 +1140,6 @@
               selectedWorkflow = workflow.id;
               selectedVersion = workflow.version;
               workflowOpen = true;
-              notice = "";
-              error = "";
             }}
             onRefresh={() => {
               void action("refresh-tasks", load, "任务已刷新");
@@ -734,8 +1175,6 @@
                 variant="outline"
                 onclick={() => {
                   workflowOpen = false;
-                  notice = "";
-                  error = "";
                 }}><ArrowLeft size={14} />返回任务</Button
               >
             </div>
@@ -762,142 +1201,7 @@
                 ? "截图发送到模型服务；定位、复查、结果检查和重试均计入次数。"
                 : "无需识别的动作直接执行。"}
             </p>
-            <form
-              class="task-launch"
-              onsubmit={(event) => {
-                event.preventDefault();
-                void startFlow(
-                  (event.submitter as HTMLButtonElement | null)?.value !==
-                    "run",
-                );
-              }}
-            >
-              {#if flow.id === "point-click"}
-                <div class="card-actions">
-                  <Button
-                    variant="outline"
-                    disabled={!!working ||
-                      !devices.find((d) => d.id === targetDevice)?.online}
-                    onclick={() => {
-                      const d = devices.find((d) => d.id === targetDevice);
-                      if (d) void markPoint(d);
-                    }}>标注点击位置</Button
-                  >
-                </div>
-                <p class="hint">
-                  {devices.find((d) => d.id === targetDevice)?.tap_point
-                    ? `已保存位置：${devices.find((d) => d.id === targetDevice)?.tap_point?.x}，${devices.find((d) => d.id === targetDevice)?.tap_point?.y}`
-                    : "请选择手机并标注位置"}
-                </p>
-              {/if}
-              {#if flow.nodes.some( (n) => ["tap_loop", "fixed_tap_loop"].includes(n.type) )}<div
-                  class="flow-controls"
-                >
-                  <label
-                    >点击次数<input
-                      type="number"
-                      min="1"
-                      max="10000"
-                      step="1"
-                      required
-                      bind:value={tapCount}
-                    /></label
-                  >
-                  <label
-                    >点击间隔（秒）<input
-                      type="number"
-                      min="1"
-                      max="86400"
-                      step="any"
-                      required
-                      bind:value={tapInterval}
-                    /></label
-                  >
-                </div>
-                <p class="hint">
-                  从当前页面开始；先点击，再等待间隔。按已确认的位置直接点击，不识别或校验画面。请保持所标注屏幕及当前页面。
-                </p>{/if}
-              {#if flow.id === "swipe"}<div class="flow-controls">
-                  <label
-                    >总时长（分钟）<input
-                      type="number"
-                      min="0.01"
-                      max="10080"
-                      step="any"
-                      required
-                      bind:value={swipeMinutes}
-                    /></label
-                  >
-                  <label
-                    >滑动间隔（秒）<input
-                      type="number"
-                      min="0.01"
-                      max="86400"
-                      step="any"
-                      required
-                      bind:value={swipeInterval}
-                    /></label
-                  >
-                </div>
-                <p class="hint">
-                  先等待，再滑动；到达总时长自动结束。以上设置用于本次运行。
-                </p>{/if}
-              <div class="flow-controls">
-                <label
-                  >版本<select
-                    value={flow.version}
-                    onchange={(e) =>
-                      (selectedVersion = Number(e.currentTarget.value))}
-                    >{#each workflows.filter((w) => w.id === flow.id) as w}<option
-                        value={w.version}
-                        >第 {w.version} 版{w.active ? " · 已启用" : ""}</option
-                      >{/each}</select
-                  ></label
-                ><label
-                  >执行手机<select bind:value={targetDevice}
-                    >{#each devices.filter((d) => !flow.devices.length || flow.devices.includes(d.id)) as d}<option
-                        value={d.id}
-                        >{d.name} · {d.online ? "在线" : "离线"}</option
-                      >{/each}</select
-                  ></label
-                ><Button
-                  disabled={!!working || !!launchBlocked}
-                  type="submit"
-                  name="mode"
-                  value="trial"
-                  ><Play size={16} />{flow.recognition === "vision"
-                    ? "验证样本并试跑"
-                    : "试跑此版本"}</Button
-                >{#if flow.active}<Button
-                    variant="outline"
-                    disabled={!!working || !!launchBlocked}
-                    type="submit"
-                    name="mode"
-                    value="run">直接运行</Button
-                  >{/if}{#if !flow.active && runs.some((r) => r.trial && r.state === "succeeded" && r.workflow.id === flow.id && r.workflow.version === flow.version)}<Button
-                    variant="outline"
-                    onclick={() =>
-                      action(
-                        "publish",
-                        () =>
-                          api(
-                            `/workflows/${flow.id}@${flow.version}/publish`,
-                            "POST",
-                          ),
-                        "此版本已启用",
-                      )}>启用 / 回退到此版</Button
-                  >{/if}
-              </div>
-              {#if launchBlocked}<p class="hint" role="status">
-                  {launchBlocked}
-                </p>{/if}
-              <p class="hint">
-                {flow.recognition === "vision"
-                  ? `试跑前还需 ${flow.tests?.length || 0} 次样本识别，不计入运行预算。`
-                  : ""}
-                试跑通过后自动启用。Agent 修改步骤；你查看流程、管理运行和定时。
-              </p>
-            </form>
+            {@render taskLaunch(false)}
             <ol class="flow-nodes">
               {#each flow.nodes as n, i}
                 {@const nodeRun =
@@ -1043,132 +1347,12 @@
                   ></button
                 >{/each}
             </div>
-            {#if run}<article class="panel">
-                <div class="panel-heading">
-                  <div>
-                    <h2>{run.workflow.name}</h2>
-                    <p>
-                      {name(run.device_id)} · 第 {run.workflow.version} 版{run.trial
-                        ? " · 试跑"
-                        : ""}
-                    </p>
-                  </div>
-                  <Badge
-                    variant={run.state === "needs_help"
-                      ? "destructive"
-                      : "default"}>{runLabel(run)}</Badge
-                  >
-                </div>
-                <div class="card-actions run-actions">
-                  {#if run.state === "paused"}
-                    <Button
-                      disabled={!!working || !connected || resumeBlocked(run)}
-                      onclick={() =>
-                        action(
-                          "resume-run",
-                          () => api(`/runs/${run.id}/resume`, "POST"),
-                          "已请求继续，正在检查当前步骤",
-                        )}><Play size={16} aria-hidden="true" />继续任务</Button
-                    >
-                  {:else if busy(run)}
-                    <Button
-                      variant="outline"
-                      disabled={!!working || !connected || run.pause_requested}
-                      onclick={() =>
-                        action(
-                          "pause-run",
-                          () => api(`/runs/${run.id}/pause`, "POST"),
-                          "已请求暂停；显示“已暂停”后再操作手机",
-                        )}
-                    >
-                      {#if run.pause_requested}<LoaderCircle
-                          size={16}
-                          class="spin"
-                          aria-hidden="true"
-                        />正在暂停{:else}<Hand
-                          size={16}
-                          aria-hidden="true"
-                        />人工接管{/if}
-                    </Button>
-                  {/if}
-                  {#if busy(run)}<Button
-                      variant="destructive"
-                      disabled={!!working}
-                      onclick={() =>
-                        action(
-                          "stop",
-                          () => api(`/runs/${run.id}/stop`, "POST"),
-                          "已请求停止",
-                        )}><Square size={16} />停止任务</Button
-                    >{/if}<Button
-                    variant="outline"
-                    disabled={!!working}
-                    onclick={() => exportRun(run.id)}
-                    ><Download size={17} />导出记录</Button
-                  >
-                  {#if !busy(run)}<Button
-                      variant="outline"
-                      disabled={!!working || !connected}
-                      onclick={() => requestClear(run)}
-                      ><Trash2
-                        size={17}
-                        aria-hidden="true"
-                      />清理这条记录</Button
-                    >{/if}
-                </div>
-                <div
-                  class="run-reason"
-                  class:run-paused={run.state === "paused"}
-                  aria-live="polite"
-                >
-                  <RunFeedback message={run.reason} detail={run.error_detail} />
-                </div>
-                {#if run.state === "paused"}<p class="run-resume-hint">
-                    {resumeBlocked(run)
-                      ? "上次动作结果未确认，暂不能继续。请停止任务，核对页面后重新开始，避免重复操作。"
-                      : "操作完成后，请回到原应用的目标页面，再点击“继续任务”。应用内的具体页面需要你确认；暂停期间仍可停止任务。"}
-                  </p>{/if}
-                <div class="run-meta">
-                  <span>当前步骤：{stepTitle(run.workflow, run.node)}</span
-                  ><span
-                    >模型：{run.model_calls} / {run.workflow.model_limit} 次</span
-                  >
-                </div>
-                {#if run.checkpoint.coin !== undefined}<p class="hint">
-                    金币：{String(run.checkpoint.coin ?? "待识别")} · 连续无增长：{String(
-                      run.checkpoint.idle ?? 0,
-                    )} 秒 · 已复查：{String(run.checkpoint.failed_swipes ?? 0)} 次
-                  </p>{:else if run.checkpoint.done !== undefined}<p
-                    class="hint"
-                  >
-                    {run.workflow.nodes.some((node) =>
-                      ["fixed_tap_loop", "tap_loop"].includes(node.type),
-                    )
-                      ? "已点击"
-                      : "已尝试滑动"}
-                    {String(run.checkpoint.done)} 次
-                    {#if Number(run.checkpoint.uncertain_swipes || 0) || run.pending === "swipe"}（含
-                      {Number(run.checkpoint.uncertain_swipes || 0) +
-                        (run.pending === "swipe" ? 1 : 0)} 次结果未确认）{/if}
-                  </p>{/if}
-                <h3 class="event-heading">判断与行动</h3>
-                <ol class="event-list">
-                  {#each events as ev (ev.id)}<li>
-                      <time>{time(ev.at, true)}</time>
-                      <div>
-                        <small>步骤 {stepNumber(run.workflow, ev.node)}</small>
-                        <RunFeedback message={ev.message} />
-                      </div>
-                    </li>{/each}
-                </ol>
-                {#if run.last_shot}<details open>
-                    <summary>最近关键画面</summary><img
-                      class="preview"
-                      src={`/api/shots/${run.last_shot}`}
-                      alt="任务最近关键画面"
-                    />
-                  </details>{/if}
-              </article>{/if}
+            {#if run}{@render runDetails(
+                run,
+                events,
+                name(run.device_id),
+                false,
+              )}{/if}
           </div>{/if}
       {:else if tab === "settings"}
         <div class="settings-layout">
