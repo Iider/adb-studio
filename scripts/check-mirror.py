@@ -173,12 +173,18 @@ def main():
                     initial_power(stream, not next(row for row in call("/devices") if row["id"] == "mock-phone")["display_off"])
                     assert frame(stream) == (2,b"studio-video-test")
                     return stream
-                def paused(run):
-                    return next(row for row in call("/runs") if row["id"] == run["id"])["state"] == "paused"
-                body={"device_id":"mock-phone","workflow_id":"swipe","version":1,"trial":True}
+                def state(run):
+                    return next(row for row in call("/runs") if row["id"] == run["id"])["state"]
+                def swipes():
+                    return len((fake / "swipes").read_text().splitlines()) if (fake / "swipes").exists() else 0
+                fixture = runpy.run_path(str(ROOT / "scripts/check-integration.py"))["workflow"]
+                call("/workflows",fixture("mirror-parallel",count=100,interval=0.3))
+                body={"device_id":"mock-phone","workflow_id":"mirror-parallel","version":1,"trial":True}
                 manual=viewer()
                 assert control_message(manual,True)["enabled"]
-                assert "手动操作" in call("/runs",body,400)["error"]
+                run = call("/runs",body)
+                wait(lambda: swipes() > 0)
+                assert "已有任务" in call("/runs",body,400)["error"]
                 assert "手动操作" in call("/devices/mock-phone/screen",{"action":"lock"},400)["error"]
                 for action in [0,2,1]: send(manual,2,touch(action))
                 for key in [3,4,187]: send(manual,2,keys(key))
@@ -201,21 +207,43 @@ def main():
                 call("/devices/mock-phone", {"keep_awake": True}, method="PUT")
                 call("/devices/refresh", {})
                 assert sum("KEYCODE_WAKEUP" in command for command in (fake / "commands").read_text().splitlines()) == wakeups
-                call("/devices/mock-phone", {"keep_awake": False}, method="PUT")
-                run = call("/runs",body)
-                assert "任务仍在运行" in control_message(manual,True)["error"]
-                call(f"/runs/{run['id']}/pause",{})
-                wait(lambda: paused(run))
+                manual.close()
+                wait(lambda: not list(fake.glob("localabstract-scrcpy_*")))
+                (fake / "asleep").touch()
+                manual = viewer()
                 assert control_message(manual,True)["enabled"]
-                assert "手动操作" in call(f"/runs/{run['id']}/resume",{},400)["error"]
+                (fake / "asleep").unlink()
+                send(manual,2,bytes([10,2]))
+                assert json.loads(frame(manual)[1]) == {"type":"display_power","enabled":True}
+                assert not next(row for row in call("/devices") if row["id"] == "mock-phone")["display_off"]
+                call("/devices/mock-phone", {"keep_awake": False}, method="PUT")
+                count = swipes()
+                wait(lambda: swipes() > count)
+                assert state(run) == "running"
+                assert control_message(manual,True)["enabled"]
+                count = swipes()
+                wait(lambda: swipes() > count)
+                assert state(run) == "running"
+                call(f"/runs/{run['id']}/pause",{})
+                wait(lambda: state(run) == "paused")
+                assert not control_message(manual,False)["enabled"]
+                assert state(run) == "paused"
+                assert control_message(manual,True)["enabled"]
+                assert state(run) == "paused"
+                call(f"/runs/{run['id']}/resume",{})
+                count = swipes()
+                wait(lambda: swipes() > count)
+                assert state(run) == "running"
                 count=len(records());send(manual,2,touch(0))
                 wait(lambda: len(records())>count)
                 manual.close()
                 wait(lambda: not list(fake.glob("localabstract-scrcpy_*")))
                 assert records()[-1][1] == 3
-                call(f"/runs/{run['id']}/resume",{})
+                count = swipes()
+                wait(lambda: swipes() > count)
+                assert state(run) == "running"
                 call(f"/runs/{run['id']}/pause",{})
-                wait(lambda: paused(run))
+                wait(lambda: state(run) == "paused")
                 denied=viewer()
                 assert control_message(denied,True)["enabled"]
                 (fake / "reject-control").touch()
@@ -252,9 +280,9 @@ def main():
                 restored.close()
                 wait(lambda: not list(fake.glob("localabstract-scrcpy_*")))
                 commands = [json.loads(line) for line in (fake / "commands").read_text().splitlines()]
-                assert not any("input" in command for command in commands)
+                assert all(command[2:5] == ["shell","input","swipe"] for command in commands if "input" in command)
                 assert any("control=true" in command and "power_on=false" in command and "cleanup=false" in command for command in commands)
-                print("通过：投屏回归、单指点按拖动、三键成对发送、任务互斥、暂停后操作、操作中禁止继续、退出仍暂停、断开取消触点、权限拒绝、越界拦截与退出清理")
+                print("通过：投屏与触控、任务并行、同机互斥、息屏后断开与重连、保持常亮不误唤醒、重启恢复状态、权限与清理")
             finally:
                 if process.poll() is None:
                     process.terminate()

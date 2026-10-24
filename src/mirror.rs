@@ -1,4 +1,4 @@
-use crate::{App, types::Run};
+use crate::App;
 use anyhow::{Context, Result, bail, ensure};
 use axum::extract::ws::{Message, WebSocket};
 use serde::Deserialize;
@@ -9,7 +9,7 @@ use tokio::{
     net::TcpStream,
 };
 
-pub async fn ensure_automatic(app: &App, id: &str) -> Result<()> {
+pub async fn ensure_screen_available(app: &App, id: &str) -> Result<()> {
     ensure!(
         !app.manual_devices.lock().await.contains(id),
         "这台手机正在手动操作，请先在投屏中结束操作"
@@ -162,14 +162,6 @@ async fn control_status(
 }
 async fn acquire(app: &App, id: &str) -> Result<()> {
     let _gate = app.run_gate.lock().await;
-    for run in app.db.list::<Run>("runs").await? {
-        if run.device_id == id && run.busy() {
-            ensure!(
-                run.state == "paused" && !app.controls.lock().await.contains_key(&run.id),
-                "任务仍在运行，请先暂停接管，等待暂停完成"
-            );
-        }
-    }
     let display_off = app
         .db
         .get::<crate::types::Device>("devices", id)

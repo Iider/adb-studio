@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
-    Camera,
     LoaderCircle,
     Maximize,
     Monitor,
@@ -23,8 +22,6 @@
     name,
     online,
     picture,
-    capturing,
-    onCapture,
     dimensions = $bindable(""),
     controlled = $bindable(false),
     screenOff = $bindable(false),
@@ -34,8 +31,6 @@
     name: string;
     online: boolean;
     picture?: string;
-    capturing: boolean;
-    onCapture: () => void;
     dimensions?: string;
     controlled?: boolean;
     screenOff?: boolean;
@@ -74,8 +69,7 @@
   export function setDisplayPower(enabled: boolean) {
     if (powerPending || !online) return;
     if (!supported) {
-      error =
-        "屏幕开关需要投屏通道，请使用本机地址或 HTTPS，并使用支持投屏的浏览器";
+      error = "屏幕开关需要投屏通道，请使用本机地址或 HTTPS，并使用支持投屏的浏览器";
       return;
     }
     if (viewState === "idle" || viewState === "error") start();
@@ -364,7 +358,10 @@
   </div>
   <div class="live-heading-actions">
     {#if viewState === "live" && !isFullscreen}{@render swipeControls()}{/if}
-    <span class="device-status" class:offline={viewState !== "live"} role="status"
+    <span
+      class="device-status"
+      class:offline={viewState !== "live"}
+      role="status"
       ><span class="status-dot" aria-hidden="true"></span>{viewState === "live"
         ? controlled
           ? "操作中"
@@ -378,22 +375,6 @@
 <div class="live-stage" bind:this={stage}>
   <div class="device-screen-body">
     <div class="live-device" class:visible={viewState === "live"}>
-      <canvas
-      bind:this={canvas}
-      class="device-screenshot live-canvas"
-      class:visible={viewState === "live"}
-      class:controllable={controlled}
-      aria-label={`${name}实时屏幕${controlled ? "，可点按拖动，方向键滑动" : "，仅观看"}`}
-      tabindex={controlled ? 0 : -1}
-      onpointerdown={down}
-      onpointermove={move}
-      onpointerup={up}
-      onpointercancel={cancelTouch}
-      onlostpointercapture={() => {
-        if (pointer !== undefined) cancelTouch();
-      }}
-      onkeydown={keyboard}
-      ></canvas>
       {#if viewState === "live"}
         <nav class="live-navigation" aria-label="手机导航键">
           <Button
@@ -432,6 +413,22 @@
             >{/if}
         </nav>
       {/if}
+      <canvas
+        bind:this={canvas}
+        class="device-screenshot live-canvas"
+        class:visible={viewState === "live"}
+        class:controllable={controlled}
+        aria-label={`${name}实时屏幕${controlled ? "，可点按拖动，方向键滑动" : "，仅观看"}`}
+        tabindex={controlled ? 0 : -1}
+        onpointerdown={down}
+        onpointermove={move}
+        onpointerup={up}
+        onpointercancel={cancelTouch}
+        onlostpointercapture={() => {
+          if (pointer !== undefined) cancelTouch();
+        }}
+        onkeydown={keyboard}
+      ></canvas>
     </div>
     {#if viewState === "connecting"}<div class="device-screen-placeholder">
         <LoaderCircle size={32} class="spin" /><strong>正在连接手机…</strong
@@ -472,13 +469,6 @@
     127.0.0.1；其他设备需 HTTPS。
   </p>
 {/if}
-<div class="live-actions">
-  <Button variant="outline" disabled={!online || capturing} onclick={onCapture}
-    >{#if capturing}<LoaderCircle size={15} class="spin" />获取中…{:else}<Camera
-        size={15}
-      />原图截图{/if}</Button
-  >
-</div>
 <p class="hint live-footnote">
   切换页签或窗口保留投屏与操作模式，并松开触点；离开设备页后停止投屏。
 </p>

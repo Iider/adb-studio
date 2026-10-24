@@ -483,7 +483,6 @@ pub fn with_swipe_settings(mut w: Workflow, settings: Option<&SwipeSettings>) ->
 
 pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow, trial: bool) -> Result<Run> {
     let _gate = app.run_gate.lock().await;
-    crate::mirror::ensure_automatic(&app, device_id).await?;
     validate(&w)?;
     let needs_ocr = w.nodes.iter().any(|n| {
         matches!(
@@ -612,12 +611,20 @@ pub async fn request_pause(app: &App, id: &str) -> Result<()> {
 pub async fn resume(app: Arc<App>, id: &str) -> Result<Run> {
     let _gate = app.run_gate.lock().await;
     let mut r = app.db.get::<Run>("runs", id).await?.context("任务不存在")?;
-    crate::mirror::ensure_automatic(&app, &r.device_id).await?;
-    if r.state != "paused" {
-        bail!("只有已暂停的任务可以继续")
+    if !matches!(r.state.as_str(), "paused" | "cancelled") {
+        bail!("只有已暂停或已停止的任务可以继续")
     }
     if app.controls.lock().await.contains_key(id) {
-        bail!("任务正在完成暂停，请稍后再试")
+        bail!("任务正在完成暂停或停止，请稍后再试")
+    }
+    if app
+        .db
+        .list::<Run>("runs")
+        .await?
+        .iter()
+        .any(|other| other.id != r.id && other.device_id == r.device_id && other.busy())
+    {
+        bail!("这台手机已有其他任务，请先停止该任务再继续")
     }
     let node = r
         .workflow
@@ -634,16 +641,17 @@ pub async fn resume(app: Arc<App>, id: &str) -> Result<Run> {
                 | Action::VisionTap { .. }
         )
     {
-        bail!("上次动作结果未确认，保持暂停以避免重复操作。请停止任务，核对页面后重新开始。")
+        bail!("上次动作结果未确认，不能继续。请核对页面后重新开始，避免重复操作。")
     }
     app.adb.check_unlocked(&r.device_id).await?;
     let expected = r
         .resume_app
         .as_deref()
-        .context("暂停时未能确认原应用，请停止任务并在目标页面重新开始")?;
+        .or_else(|| r.checkpoint["foreground"].as_str())
+        .context("暂停或停止时未能确认原应用，请在目标页面重新开始")?;
     let current = foreground_package(&app.adb.foreground(&r.device_id).await?);
     if current.as_deref() != Some(expected) {
-        bail!("请先回到暂停前的应用和目标页面，再点击继续")
+        bail!("请先回到暂停或停止前的应用和目标页面，再点击继续")
     }
     if let Some([width, height]) = r.resume_size {
         if app.adb.size(&r.device_id).await? != (width, height) {
@@ -651,6 +659,7 @@ pub async fn resume(app: Arc<App>, id: &str) -> Result<Run> {
         }
     }
     r.state = "recovering".into();
+    r.ended_at = None;
     r.reason = "已请求继续，重新检查当前步骤".into();
     r.error_detail = None;
     save(&app, &r).await?;
@@ -768,17 +777,6 @@ async fn execute(app: Arc<App>, mut r: Run, control: Arc<RunControl>) {
                 r.error_detail = e
                     .downcast_ref::<crate::adb::AdbIssue>()
                     .map(|_| e.to_string());
-                r.resume_app = r.checkpoint["foreground"].as_str().map(str::to_owned);
-                if r.resume_app.is_none() {
-                    r.resume_app = tokio::time::timeout(
-                        Duration::from_secs(3),
-                        app.adb.foreground(&r.device_id),
-                    )
-                    .await
-                    .ok()
-                    .and_then(Result::ok)
-                    .and_then(|activity| foreground_package(&activity));
-                }
             } else {
                 r.state = "needs_help".into();
                 r.reason = e.to_string();
@@ -788,6 +786,17 @@ async fn execute(app: Arc<App>, mut r: Run, control: Arc<RunControl>) {
                     let _ = shot(&app, &mut r, &f, "error").await;
                 }
             }
+        }
+    }
+    if matches!(r.state.as_str(), "paused" | "cancelled") {
+        r.resume_app = r.checkpoint["foreground"].as_str().map(str::to_owned);
+        if r.resume_app.is_none() {
+            r.resume_app =
+                tokio::time::timeout(Duration::from_secs(3), app.adb.foreground(&r.device_id))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .and_then(|activity| foreground_package(&activity));
         }
     }
     if !r.busy() {

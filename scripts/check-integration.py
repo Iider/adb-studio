@@ -442,6 +442,42 @@ def main():
                 return wait(lambda: record(id) if record(id)["state"] == "paused" else None)
 
             before = count()
+            stopped = begin(workflow("stopped-resume", count=8, interval=0.4))
+            wait(lambda: record(stopped["id"])["checkpoint"].get("done", 0) >= 1 and record(stopped["id"])["pending"] is None)
+            call(f"/runs/{stopped['id']}/stop", "POST")
+            held = done(stopped["id"])
+            progress = held["checkpoint"].copy()
+            assert held["state"] == "cancelled" and held["ended_at"] and held["resume_app"] == "com.luna.music"
+            assert count() - before == progress["done"] < 8
+            other = begin(workflow("stopped-contender", count=100, interval=0.4))
+            assert "已有其他任务" in call(f"/runs/{stopped['id']}/resume", "POST", expected=400)["error"]
+            assert record(stopped["id"])["ended_at"] == held["ended_at"]
+            call(f"/runs/{other['id']}/stop", "POST")
+            done(other["id"])
+            call("/devices/mock-phone/screen", "POST", {"action":"lock"})
+            call(f"/runs/{stopped['id']}/resume", "POST", expected=400)
+            call("/devices/mock-phone/screen", "POST", {"action":"wake"})
+            (fake / "foreground").write_text("com.example.other")
+            call(f"/runs/{stopped['id']}/resume", "POST", expected=400)
+            (fake / "foreground").unlink()
+            (fake / "online").unlink()
+            call(f"/runs/{stopped['id']}/resume", "POST", expected=400)
+            (fake / "online").touch()
+            process.terminate()
+            process.wait(timeout=15)
+            process = boot()
+            assert record(stopped["id"])["state"] == "cancelled"
+            assert record(stopped["id"])["checkpoint"] == progress
+            continued_at = count()
+            resumed = call(f"/runs/{stopped['id']}/resume", "POST")
+            assert resumed["id"] == stopped["id"] and resumed["ended_at"] is None
+            assert resumed["started_at"] == stopped["started_at"] and resumed["checkpoint"] == progress
+            assert done(stopped["id"])["state"] == "succeeded"
+            assert count() - continued_at == 8 - progress["done"]
+            call(f"/runs/{stopped['id']}/resume", "POST", expected=400)
+            print("通过：停止后原记录保留进度续跑、停止不自动恢复、同机互斥、锁屏/离线/换应用拒绝继续、已完成不可继续", flush=True)
+
+            before = count()
             r = begin(workflow("handoff", count=6, interval=0.4))
             wait(lambda: count() > before)
             call(f"/runs/{r['id']}/pause", "POST")
@@ -548,7 +584,7 @@ def main():
             call(f"/runs/{r['id']}/stop","POST")
             assert done(r["id"])["state"]=="cancelled"
             call(f"/runs/{r['id']}/resume","POST",expected=400)
-            print("通过：不重发未确认点击、暂停可停止、已停止不可继续",flush=True)
+            print("通过：不重发未确认点击、暂停可停止、停止后的未确认点击也不可继续",flush=True)
 
             class ModelHandler(http.server.BaseHTTPRequestHandler):
                 choice = "outside-allowed-branches"
