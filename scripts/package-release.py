@@ -50,7 +50,7 @@ def main():
         shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", folder / "THIRD_PARTY_NOTICES.md")
         (folder / "README.md").write_text("# ADB 工作台\n\n进入解压目录运行 `./adb-studio`，打开 http://127.0.0.1:17841 。\n\n安装、自启、环境变量与迁移见 [部署说明](docs/deployment.md)。\n\n[纯视觉识别](docs/vision-recognition.md) · [投屏与操作](docs/realtime-screen.md) · [工作流接口](docs/workflows.md)\n")
         (folder / "docs").mkdir()
-        for file in ["deployment.md", "feiniu-native.md", "vision-recognition.md", "realtime-screen.md", "workflows.md", "screenshot-performance.md"]:
+        for file in ["deployment.md", "feiniu-native.md", "vision-recognition.md", "realtime-screen.md", "workflows.md", "screenshot-performance.md", "ui-components.md"]:
             shutil.copy2(ROOT / "docs" / file, folder / "docs" / file)
         shutil.copytree(ROOT / "licenses", folder / "licenses")
         shutil.copytree(ROOT / "examples", folder / "examples")

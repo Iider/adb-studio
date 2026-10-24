@@ -10,7 +10,7 @@ macOS、Linux 共用 Rust 后台与静态网页。Mac 可使用苹果文字识�
 | Linux | x86_64、aarch64 | 原生发行包，systemd 用户服务；或 Docker |
 | 飞牛 | 按机器实际架构选择 | 原生 systemd 用户服务；或 Docker |
 
-Linux 原生包需与构建环境兼容的 glibc、ADB；安装脚本需 Python 3.10+ 与 systemd 用户会话。官方 Linux 发行文件在 Debian 12 环境编译，要求 glibc 2.36 或更新版本；更旧 Linux 需另行构建。Docker 已包含运行依赖。macOS 原生包包含 ADB 与当前架构的文字识别程序；源码构建需 Xcode 命令行工具。
+Linux 原生运行需要 ADB；安装脚本需 Python 3.10+ 与 systemd 用户会话。已验证的飞牛 x86_64 发行包使用 musl 静态构建，不依赖特定 glibc 版本；自行使用 GNU 目标构建时，需匹配目标机器的 glibc。Docker 已包含运行依赖。macOS 原生包包含 ADB 与当前架构的文字识别程序；源码构建需 Xcode 命令行工具。
 
 已验证的飞牛静态 x86_64 部署包已保存在仓库 [releases/linux-x86_64/2026-10-23](../releases/linux-x86_64/2026-10-23/README.md)，不依赖特定 glibc 版本；使用说明及实测范围见该目录。
 
@@ -121,6 +121,10 @@ ADB_STUDIO_ORIGINS=https://studio.example.com
 投屏服务端优先读取 `data/bin/scrcpy-server-v3.1`，再读取发行包 `bin/`。本地文字识别优先读取 `data/bin/ocr`、包内 `bin/ocr`；仅 Mac 可以回退 Swift。Linux 可自行提供相同 PNG 标准输入、JSON 标准输出协议的程序，但不随包安装文字识别引擎。
 
 ## 更新、备份与回退
+
+只更新网页时，先备份 `web/build`，复制新资源，最后用临时文件原子替换 `index.html`。保留旧哈希资源供已打开的页面使用；无需重启后台，新界面刷新后生效。
+
+后台更新前记录当前任务编号、参数与进度。在线执行中的任务先请求人工接管，确认暂停后备份并更新，再显式继续原任务；原本已暂停的任务保持暂停。离线等待中的任务保留原记录，重启后继续等待连接。
 
 迁移前先停止旧后台的调度，妥善处理运行及暂停任务。备份完整数据、模型密钥及 ADB 配对信息；运行中的 SQLite 数据库应用备份接口导出，或停服务后复制，不能只复制正在写入的主数据库文件。
 

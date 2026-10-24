@@ -66,7 +66,7 @@ ssh feiniu 'systemctl --user disable --now adb-studio-https.service'
 | --- | --- |
 | 程序、网页、模型配置 | `/home/weio/.local/share/adb-studio/` |
 | 数据库、截图、访问凭据 | `/home/weio/.local/share/adb-studio/data/` |
-| 发行包与安装脚本 | `/home/weio/.local/opt/adb-studio/releases/2026-10-23/adb-studio-linux-x86_64/` |
+| 发行包与安装脚本 | `/home/weio/.local/opt/adb-studio/releases/2026-10-25-device-ui/adb-studio-linux-x86_64/` |
 | ADB 37.0.1 | `/home/weio/.local/opt/android/platform-tools/adb` |
 | 工作台日志 | `/home/weio/.local/state/adb-studio/service.log` |
 | ADB 日志 | `/home/weio/.local/state/adb-studio/adb.log` |
@@ -76,7 +76,7 @@ ssh feiniu 'systemctl --user disable --now adb-studio-https.service'
 
 ADB 官方下载地址：`https://dl.google.com/android/repository/platform-tools-latest-linux.zip`。本次文件 SHA-256 为 `d230f13842f60f782a8645f9c813f8f845bf36089ea7289f28c48f17979313f1`；该网址会更新版本，后续下载需重新核对版本与校验值。
 
-飞牛模型配置与 Mac 相同，密钥保存在飞牛安装目录 `.env`，权限为 `600`。访问凭据独立生成；Mac 的工作流、执行记录、计划任务没有迁入。Linux 使用视觉模型识别，未安装苹果本地文字识别组件。
+飞牛模型配置保存在安装目录，密钥在 `.env` 中，权限为 `600`。访问凭据独立生成；Mac 的工作流、执行记录、计划任务没有迁入。2026-10-24 每日签到任务选用 `doubao-seed-2-0-mini-260428` 的纯视觉识别。飞牛仍装有 Tesseract 中文识别程序供其他任务使用，但每日签到任务不调用它。
 
 ## 手机与 USB 权限
 
@@ -114,7 +114,9 @@ ssh feiniu 'tail -n 50 ~/.local/state/adb-studio/service.log'
 
 当前飞牛用户不能读取系统日志，因此两个服务写入上表中的日志文件。服务设置了失败重启；ADB 服务只监听 `127.0.0.1:5038`，工作台监听 `0.0.0.0:17841`，允许网址为 `http://192.168.2.25:17841`、`https://192.168.2.25:17842` 及本机 HTTP。
 
-更新前先妥善停止任务，并备份完整安装目录及 `~/.android/` 配对信息。替换新发行包后，在飞牛的解压目录执行：
+只更新网页时，备份 `web/build`，先复制资源，最后原子替换 `index.html`，无需重启后台。
+
+后台更新时，在线执行中的任务先暂停，更新后继续同一条记录；原本已暂停的任务保持暂停，离线等待中的任务保留记录并继续等待连接。停止工作台后，备份完整安装目录、用户服务配置及 `~/.android/` 配对信息。替换新发行包后，在飞牛的解压目录执行：
 
 ```sh
 python3 scripts/install-service.py install --adb /home/weio/.local/opt/android/platform-tools/adb
@@ -137,23 +139,33 @@ launchctl bootout gui/$(id -u)/local.adb-studio-feiniu-tunnel
 
 关闭转发不停止飞牛服务；要取消 Mac 下次登录时自启，还需移走上述转发配置文件。
 
-## 2026-10-23 更新
+## 当前发行与构建
 
-Mac 与飞牛共用网页和控制协议，本次同步以下改动：
+发行目录：`/home/weio/.local/opt/adb-studio/releases/2026-10-25-device-ui/`。包含 `adb-studio-linux-x86_64.tar.gz`、SHA-256 校验文件与解压后的安装目录。
 
-- 切换浏览器页签或窗口保留投屏、操作状态，同时松开触点。
-- 移除设备页标签栏，型号、编号、投屏尺寸及操作模式集中在设备信息。
-- 投屏首帧出现后自动申请操作权；运行中的任务先暂停。
-- 设备下拉统一字号、高度、颜色，箭头右侧留 12px。
-- 实体屏幕开关使用一个按钮切换。未投屏时可直接点击，自动连接并取得操作权后息屏；息屏与手动操作可同时使用。
+- 设备下拉支持改名与添加局域网设备；屏幕开关、唤醒、锁屏、截图位于下拉框右侧。
+- “设备参数 / 任务详情”只切换右栏；任务详情可设置参数、查看记录、暂停、继续和停止任务。使用已启用版本，启动后任务设置自动折叠。
+- 已停止任务可按原编号、版本、参数和进度继续；保留手机核验、同机互斥和动作结果检查。
+- 投屏操作与任务并行；浏览器标题显示所选手机及当前任务。操作通知在右上角出现，停留 3 秒后消失。
 
-Linux x86_64 后台使用 Rust 1.96.0、cargo-zigbuild 构建为静态 musl 程序，在飞牛 Debian 12 上运行检查；没有安装 Docker 或新增系统依赖。网页使用同一份 Svelte 构建。其他 Linux 架构仍按发布流程单独构建、验收。
+Linux x86_64 后台使用 Rust 1.96.0、cargo-zigbuild 和 Zig 构建为静态 musl 程序。Mac 安装了 Homebrew 与 rustup 两套 Rust 时，需明确使用已安装 Linux 目标的编译器：
 
-升级前备份：`/home/weio/.local/opt/adb-studio/backups/2026-10-23-000549/`。包含停服务后的完整安装目录、ADB 配对信息、服务及覆盖配置；备份含私密配置，仅保留在飞牛用户目录。升级后核对数据库中的运行、定时和模型设置，以及密钥文件、访问凭据的摘要，均保持一致。
+```sh
+RUSTC="$(rustup which --toolchain 1.96.0 rustc)" \
+  cargo zigbuild --locked --release --target x86_64-unknown-linux-musl
+```
 
-当前发行目录：`/home/weio/.local/opt/adb-studio/releases/2026-10-23/`，包名 `adb-studio-linux-x86_64.tar.gz`，旁边保存 SHA-256 文件。工作台、ADB 与 HTTPS 三个用户服务均为 active，原 HTTPS 证书与 Mac 转发继续使用。
+网页使用同一份 Svelte 构建。其他 Linux 架构仍需单独构建与验收。
 
-本次验证：飞牛执行 24 项 Rust 单元检查、模拟设备集成、纯视觉隔离、投屏控制、跨平台安装及发行包异地启动检查，全部通过。Mac 网页检查无错误、无警告，构建通过。浏览器经 Mac 转发和 HTTPS 两个入口连接 iQOO，显示 576×1280 实时画面并自动进入操作；实体屏幕关闭后仍显示操作中，导航键、滑动按钮保持可用，重新点亮及停止投屏后恢复亮屏。模拟控制检查覆盖息屏后继续触控与退出恢复。
+历史备份保存在 `/home/weio/.local/opt/adb-studio/backups/`；`2026-10-23-000549/` 为首次升级备份，`2026-10-23-224501-mirror-parallel/` 为投屏并行更新前备份。旧发行包保留在 `releases/2026-10-23/` 与 `releases/2026-10-23-mirror-parallel/`。备份含私密配置，仅保留在飞牛用户目录。
+
+## 2026-10-25 部署核对
+
+更新前备份：`/home/weio/.local/opt/adb-studio/backups/2026-10-25-011144-device-ui/`。包含完整安装目录、ADB 配对信息、用户服务及覆盖配置；`before.json` 和 `deployment.json` 保存更新核对记录。
+
+更新后工作台、ADB、HTTPS 三个服务均为 active。保留 17 个工作流版本、1 条执行记录、0 条定时，以及模型设置、密钥、访问凭据、HTTPS 证书和服务覆盖配置。iQOO 更新前后均离线；同一条滑动任务保持等待连接，119 次尝试进度保留，其中 1 次动作结果未确认，恢复时不补发。
+
+验证：Mac 通过 26 项 Rust 检查、任务集成、投屏控制、触控协议和网页检查／构建；Linux 安装包在飞牛通过包完整性、异地启动、模拟设备集成与投屏控制检查。HTTPS 证书验证通过，首页及 9 个引用资源与本次构建一致；浏览器核对设备右栏、折叠设置、手机与任务标题、等待状态及 119 次进度，无网页运行错误。
 
 ## 实测范围
 
@@ -165,4 +177,4 @@ Linux x86_64 后台使用 Rust 1.96.0、cargo-zigbuild 构建为静态 musl 程�
 - iQOO USB 连接、型号核对、真实截图；单次截图约 1.4 秒。
 - 经 Mac 转发收到 H.264 投屏流，576×1280；首次收到约 1.2 秒。
 
-本次已补充浏览器实际投屏和实体屏幕开关验证；连续触控手感与长时间稳定性仍需用户验收。没有重启整台飞牛验证开机过程；已核对服务启用状态与 `Linger=yes`。Mac 与飞牛操作同一手机前，先停止另一端的任务，避免两端同时控制。
+设备页、投屏并行、任务继续与通知效果已由用户验收。没有重启整台飞牛验证开机过程；已核对服务启用状态与 `Linger=yes`。Mac 与飞牛操作同一手机前，先停止另一端的任务，避免两端同时控制。
