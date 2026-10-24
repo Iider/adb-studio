@@ -35,6 +35,9 @@ type Result<T> = std::result::Result<T, Error>;
 pub fn router(app: Arc<App>) -> Router {
     let secured = Router::new()
         .route("/devices", get(devices))
+        .route("/devices/connect", post(connect_device))
+        .route("/devices/discover", get(discover_devices))
+        .route("/devices/pair", post(pair_device))
         .route("/devices/refresh", post(refresh))
         .route("/devices/{id}", put(update_device))
         .route("/devices/{id}/screenshot", get(screenshot))
@@ -128,8 +131,37 @@ async fn session(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
 async fn devices(State(app): State<Arc<App>>) -> Result<Json<Vec<Device>>> {
     Ok(Json(app.db.list("devices").await?))
 }
+async fn discover_devices(
+    State(app): State<Arc<App>>,
+) -> Result<Json<Vec<crate::adb::NearbyDevice>>> {
+    Ok(Json(crate::adb::discover(&app).await?))
+}
 async fn refresh(State(app): State<Arc<App>>) -> Result<Json<Value>> {
     crate::adb::refresh(&app).await?;
+    Ok(Json(json!({"ok":true})))
+}
+#[derive(Deserialize)]
+struct DeviceConnect {
+    address: String,
+}
+async fn connect_device(
+    State(app): State<Arc<App>>,
+    Json(input): Json<DeviceConnect>,
+) -> Result<Json<Device>> {
+    Ok(Json(
+        crate::adb::connect_manual(&app, &input.address).await?,
+    ))
+}
+#[derive(Deserialize)]
+struct DevicePair {
+    address: String,
+    code: String,
+}
+async fn pair_device(
+    State(app): State<Arc<App>>,
+    Json(input): Json<DevicePair>,
+) -> Result<Json<Value>> {
+    crate::adb::pair_manual(&app, &input.address, &input.code).await?;
     Ok(Json(json!({"ok":true})))
 }
 #[derive(Deserialize)]

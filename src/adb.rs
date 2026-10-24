@@ -4,7 +4,9 @@ use image::{
     ImageEncoder,
     codecs::png::{CompressionType, FilterType, PngEncoder},
 };
+use serde::Serialize;
 use std::{
+    net::SocketAddr,
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -732,6 +734,136 @@ mod tests {
         assert_eq!(screen_size(&png).unwrap(), (2400, 1080));
         assert!(screen_size(b"not png").is_err());
     }
+    #[test]
+    fn manual_connection_accepts_only_local_addresses() {
+        for value in ["192.168.1.20:37123", "10.0.0.2:5555", "[fd00::2]:5555"] {
+            assert!(local_address(value).is_ok(), "{value}");
+        }
+        for value in [
+            "8.8.8.8:5555",
+            "example.com:5555",
+            "192.168.1.20:0",
+            "192.168.1.20",
+        ] {
+            assert!(local_address(value).is_err(), "{value}");
+        }
+    }
+    #[test]
+    fn discovery_lists_local_wireless_debugging_services() {
+        let listing = "List of discovered mdns services\nadb-phone._adb-tls-connect._tcp. _adb-tls-connect._tcp. 192.168.1.20:37123\nadb-phone._adb-tls-pairing._tcp. _adb-tls-pairing._tcp. 192.168.1.20:41234\nadb-legacy._adb._tcp. _adb._tcp. 192.168.1.30:5555\nadb-public._adb-tls-connect._tcp. _adb-tls-connect._tcp. 8.8.8.8:5555\n";
+        let services = parse_mdns_services(listing);
+        assert_eq!(services.len(), 3);
+        assert_eq!(services[0].kind, "connect");
+        assert_eq!(services[0].address, "192.168.1.20:37123");
+        assert_eq!(services[1].kind, "pair");
+        assert_eq!(services[2].address, "192.168.1.30:5555");
+    }
+}
+
+fn local_address(value: &str) -> Result<String> {
+    let address: SocketAddr = value
+        .trim()
+        .parse()
+        .context("请输入手机的 IP:端口；IPv6 地址用方括号包住")?;
+    let local = match address.ip() {
+        std::net::IpAddr::V4(ip) => ip.is_private() || ip.is_link_local() || ip.is_loopback(),
+        std::net::IpAddr::V6(ip) => {
+            ip.is_unique_local() || ip.is_unicast_link_local() || ip.is_loopback()
+        }
+    };
+    if !local || address.port() == 0 {
+        bail!("只支持局域网 IP 和有效端口");
+    }
+    Ok(address.to_string())
+}
+
+#[derive(Serialize, Debug)]
+pub struct NearbyDevice {
+    pub name: String,
+    pub address: String,
+    pub kind: String,
+}
+
+fn parse_mdns_services(listing: &str) -> Vec<NearbyDevice> {
+    let mut devices = Vec::new();
+    for line in listing.lines() {
+        let parts: Vec<_> = line.split_whitespace().collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        let kind =
+            if parts[1].contains("_adb-tls-connect._tcp") || parts[1].starts_with("_adb._tcp") {
+                "connect"
+            } else if parts[1].contains("_adb-tls-pairing._tcp") {
+                "pair"
+            } else {
+                continue;
+            };
+        let Ok(address) = local_address(parts[parts.len() - 1]) else {
+            continue;
+        };
+        if devices
+            .iter()
+            .any(|device: &NearbyDevice| device.address == address && device.kind == kind)
+        {
+            continue;
+        }
+        devices.push(NearbyDevice {
+            name: parts[0].trim_end_matches('.').to_owned(),
+            address,
+            kind: kind.into(),
+        });
+    }
+    devices.sort_by(|a, b| a.address.cmp(&b.address).then(a.kind.cmp(&b.kind)));
+    devices
+}
+
+pub async fn discover(app: &App) -> Result<Vec<NearbyDevice>> {
+    Ok(parse_mdns_services(
+        &app.adb.text(&["mdns", "services"]).await?,
+    ))
+}
+
+pub async fn pair_manual(app: &App, address: &str, code: &str) -> Result<()> {
+    let address = local_address(address)?;
+    let code = code.trim();
+    if code.len() != 6 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+        bail!("请输入手机显示的 6 位配对码");
+    }
+    let result = app.adb.text(&["pair", &address, code]).await?;
+    if !result.contains("Successfully paired") {
+        bail!("配对失败，请检查配对地址、端口和配对码");
+    }
+    Ok(())
+}
+
+pub async fn connect_manual(app: &App, address: &str) -> Result<Device> {
+    let address = local_address(address)?;
+    app.adb
+        .text(&["connect", &address])
+        .await
+        .context("无法连接手机，请确认无线调试已开启，并检查连接地址和端口")?;
+    let id = app
+        .adb
+        .text(&["-s", &address, "shell", "getprop", "ro.serialno"])
+        .await
+        .context("无法读取手机编号，请确认无线调试已开启并已完成配对")?;
+    if id.is_empty() {
+        bail!("手机没有返回编号，请检查无线调试授权");
+    }
+    refresh(app).await?;
+    let _gate = app.device_gate.lock().await;
+    let mut device = app
+        .db
+        .get::<Device>("devices", &id)
+        .await?
+        .context("手机已连接，但尚未通过设备核验，请刷新后重试")?;
+    if !device.online || !device.endpoints.iter().any(|endpoint| endpoint == &address) {
+        bail!("手机已连接，但地址未通过设备核验，请刷新后重试");
+    }
+    device.manual_endpoints = vec![address];
+    app.db.put("devices", &id, &device).await?;
+    Ok(device)
 }
 
 pub async fn refresh(app: &App) -> Result<()> {
@@ -900,6 +1032,27 @@ pub async fn monitor(app: Arc<App>) {
         }
         ticks += 1;
         if ticks.is_multiple_of(5) {
+            if let Ok(devices) = app.db.list::<Device>("devices").await {
+                for device in devices.iter().filter(|device| !device.online) {
+                    for address in &device.manual_endpoints {
+                        if devices.iter().any(|other| {
+                            other.online
+                                && other.endpoints.iter().any(|endpoint| endpoint == address)
+                        }) {
+                            continue;
+                        }
+                        if app.adb.text(&["connect", address]).await.is_ok() {
+                            let identity = app
+                                .adb
+                                .text(&["-s", address, "shell", "getprop", "ro.serialno"])
+                                .await;
+                            if identity.as_deref().ok() != Some(device.id.as_str()) {
+                                let _ = app.adb.text(&["disconnect", address]).await;
+                            }
+                        }
+                    }
+                }
+            }
             if let (Ok(services), Ok(devices)) = (
                 app.adb.text(&["mdns", "services"]).await,
                 app.db.list::<Device>("devices").await,

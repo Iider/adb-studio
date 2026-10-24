@@ -13,6 +13,8 @@ pub struct Device {
     pub model: String,
     pub online: bool,
     pub endpoints: Vec<String>,
+    #[serde(default)]
+    pub manual_endpoints: Vec<String>,
     pub last_seen: Option<String>,
     pub connection: String,
     pub keep_awake: bool,
@@ -34,6 +36,7 @@ impl Device {
             model: model.into(),
             online: false,
             endpoints: vec![],
+            manual_endpoints: vec![],
             last_seen: None,
             connection: "未连接".into(),
             keep_awake: false,

@@ -25,6 +25,27 @@ if args == ["devices", "-l"]:
             print("mock-usb device usb:1-1 model:Test transport_id:1\n127.0.0.1:5555 device model:Test transport_id:2")
 elif args == ["mdns", "services"]:
     print("List of discovered mdns services")
+    if (root / "mdns-visible").exists():
+        print("adb-mock-phone._adb-tls-connect._tcp. _adb-tls-connect._tcp. 127.0.0.1:5555")
+        print("adb-mock-phone._adb-tls-pairing._tcp. _adb-tls-pairing._tcp. 127.0.0.1:41234")
+        print("adb-outside._adb-tls-connect._tcp. _adb-tls-connect._tcp. 8.8.8.8:5555")
+elif args[:1] == ["pair"]:
+    if args == ["pair", "127.0.0.1:41234", "123456"]:
+        print("Successfully paired to 127.0.0.1:41234")
+    else:
+        print("pairing failed", file=sys.stderr)
+        sys.exit(1)
+elif args == ["connect", "127.0.0.1:5555"]:
+    if (root / "auto-connect").exists():
+        (root / "online").touch()
+    if online or (root / "auto-connect").exists():
+        print("connected to 127.0.0.1:5555")
+    else:
+        print("connection refused", file=sys.stderr)
+        sys.exit(1)
+elif args == ["disconnect", "127.0.0.1:5555"]:
+    (root / "online").unlink(missing_ok=True)
+    print("disconnected 127.0.0.1:5555")
 elif args[:1] in (["-s"], ["-t"]):
     if not online or (args[:2] == ["-t", "1"] and (root / "transport-gone").exists()):
         print("device offline", file=sys.stderr)

@@ -80,6 +80,9 @@ python3 scripts/studio.py request POST /workflows/编号@版本/publish
 | --- | --- |
 | GET `/devices` | 设备、连接方式和常亮状态 |
 | POST `/devices/refresh` | 重新发现设备 |
+| GET `/devices/discover` | 列出局域网中广播的无线调试连接、配对地址；仅返回局域网 IP，不自动连接 |
+| POST `/devices/pair` | 用 `{"address":"手机IP:配对端口","code":"6位配对码"}` 配对无线调试；配对码不保存 |
+| POST `/devices/connect` | 用 `{"address":"手机IP:连接端口"}` 连接局域网手机；核验自身编号后登记，保存地址供断线重连 |
 | PUT `/devices/{id}` | `name` 或 `keep_awake` |
 | GET `/devices/{id}/screenshot` | 当前截图 PNG |
 | GET / POST `/workflows` | 查询版本 / 提交新版 |

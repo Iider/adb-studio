@@ -57,6 +57,11 @@ export interface Device {
   note: string;
   endpoints: string[];
 }
+export interface NearbyDevice {
+  name: string;
+  address: string;
+  kind: "connect" | "pair";
+}
 export interface Node {
   id: string;
   label: string;

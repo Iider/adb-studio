@@ -724,6 +724,27 @@ def main():
             finally:
                 model_server.shutdown()
                 model_server.server_close()
+            call("/devices/pair", "POST", {"address": "8.8.8.8:41234", "code": "123456"}, 400)
+            call("/devices/pair", "POST", {"address": "127.0.0.1:41234", "code": "12345"}, 400)
+            assert call("/devices/pair", "POST", {"address": "127.0.0.1:41234", "code": "123456"})["ok"]
+            call("/devices/connect", "POST", {"address": "8.8.8.8:5555"}, 400)
+            connected = call("/devices/connect", "POST", {"address": "127.0.0.1:5555"})
+            assert connected["id"] == "mock-phone" and "127.0.0.1:5555" in connected["manual_endpoints"]
+            (fake / "mdns-visible").touch()
+            nearby = call("/devices/discover")
+            assert {(device["kind"], device["address"]) for device in nearby} == {
+                ("connect", "127.0.0.1:5555"),
+                ("pair", "127.0.0.1:41234"),
+            }
+            (fake / "mdns-visible").unlink()
+            (fake / "wireless-only").touch()
+            (fake / "online").unlink()
+            call("/devices/refresh", "POST")
+            assert not next(d for d in call("/devices") if d["id"] == "mock-phone")["online"]
+            (fake / "auto-connect").touch()
+            wait(lambda: next(d for d in call("/devices") if d["id"] == "mock-phone")["online"], timeout=25)
+            assert any(cmd == ["connect", "127.0.0.1:5555"] for cmd in map(json.loads, (fake / "commands").read_text().splitlines()))
+            print("通过：局域网配对、手动连接、地址校验与断线重连", flush=True)
         finally:
             if process and process.poll() is None:
                 process.terminate()
