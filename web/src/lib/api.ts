@@ -50,6 +50,7 @@ export interface Device {
   connection: string;
   last_seen: string | null;
   keep_awake: boolean;
+  display_off: boolean;
   awake_applied: boolean;
   restore_pending: boolean;
   locked: boolean;

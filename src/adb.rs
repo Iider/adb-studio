@@ -200,6 +200,7 @@ impl Adb {
         id: &str,
         server: &std::path::Path,
         cleanup: tokio_util::task::TaskTracker,
+        display_off: bool,
     ) -> Result<VideoConnection> {
         if !server.is_file() {
             bail!("投屏组件尚未安装，请安装投屏组件并更新服务（见实时投屏说明）")
@@ -208,7 +209,7 @@ impl Adb {
         let power = self
             .at_target(&target, &["shell", "dumpsys", "power"])
             .await?;
-        if !String::from_utf8_lossy(&power).contains("mWakefulness=Awake") {
+        if !display_off && !String::from_utf8_lossy(&power).contains("mWakefulness=Awake") {
             bail!("手机已息屏，请先唤醒并解锁，再开启投屏")
         }
         let scid = format!(
@@ -258,7 +259,9 @@ impl Adb {
                 "control=true",
                 "clipboard_autosync=false",
                 "power_on=false",
-                "cleanup=true",
+                // scrcpy 的退出清理会把控制指令关闭的实体屏幕重新点亮。
+                // 本工作台自行清理 reverse 通道与临时文件。
+                "cleanup=false",
                 "video_codec=h264",
                 "max_size=1280",
                 "max_fps=30",
@@ -441,6 +444,9 @@ impl Adb {
             .join(" "))
     }
     pub async fn check_unlocked(&self, id: &str) -> Result<()> {
+        self.check_unlocked_for_mirror(id, false).await
+    }
+    pub async fn check_unlocked_for_mirror(&self, id: &str, display_off: bool) -> Result<()> {
         let policy = self
             .phone_text(id, &["shell", "dumpsys", "window", "policy"])
             .await?;
@@ -448,7 +454,9 @@ impl Adb {
             bail!("请先在手机上解锁，再点击继续")
         }
         let power = self.phone_text(id, &["shell", "dumpsys", "power"]).await?;
-        if power.contains("mWakefulness=Asleep") || power.contains("mInteractive=false") {
+        if !display_off
+            && (power.contains("mWakefulness=Asleep") || power.contains("mInteractive=false"))
+        {
             bail!("请先唤醒手机并回到目标页面，再点击继续")
         }
         Ok(())
@@ -876,7 +884,7 @@ pub async fn apply_awake(app: &App, d: &mut Device) -> Result<()> {
         d.restore_pending = false;
         d.note = "已恢复原来的息屏设置".into();
     }
-    if d.keep_awake && !d.locked {
+    if d.keep_awake && !d.locked && !d.display_off {
         app.adb
             .phone(&d.id, &["shell", "input", "keyevent", "KEYCODE_WAKEUP"])
             .await?;

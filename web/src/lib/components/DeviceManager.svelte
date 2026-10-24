@@ -67,6 +67,9 @@
   const selectedDevice = $derived(
     devices.find((device) => device.id === selectedDeviceId),
   );
+  $effect(() => {
+    screenOff = selectedDevice?.display_off ?? false;
+  });
   const activeRuns = $derived(runs.filter(busy));
   const filteredDevices = $derived(
     devices.filter((device) =>

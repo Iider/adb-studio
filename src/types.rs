@@ -16,6 +16,8 @@ pub struct Device {
     pub last_seen: Option<String>,
     pub connection: String,
     pub keep_awake: bool,
+    #[serde(default)]
+    pub display_off: bool,
     pub original_awake: Option<String>,
     pub original_timeout: Option<String>,
     pub awake_applied: bool,
@@ -35,6 +37,7 @@ impl Device {
             last_seen: None,
             connection: "未连接".into(),
             keep_awake: false,
+            display_off: false,
             original_awake: None,
             original_timeout: None,
             awake_applied: false,

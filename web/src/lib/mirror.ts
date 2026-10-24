@@ -13,7 +13,7 @@ export function startMirror(
   onError: (message: string) => void,
   onControl: (enabled: boolean, error?: string) => void,
   onResize: (width: number, height: number) => void,
-  onDisplayPower: (enabled: boolean) => void,
+  onDisplayPower: (enabled: boolean, initial: boolean) => void,
 ) {
   const socket = new WebSocket(
     `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/devices/${encodeURIComponent(id)}/mirror`,
@@ -131,7 +131,7 @@ export function startMirror(
           onControl(controlled, message.error || undefined);
           if (message.enabled && !wantsControl) setControl(false);
         } else if (message.type === "display_power") {
-          onDisplayPower(message.enabled);
+          onDisplayPower(message.enabled, message.initial === true);
         } else fail(message.error || "投屏已结束");
       } catch {
         fail("投屏返回异常，请重新开启");

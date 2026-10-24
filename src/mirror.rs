@@ -41,7 +41,6 @@ enum Request {
 struct Control {
     enabled: bool,
     poisoned: bool,
-    screen_off: bool,
     touch: Option<Vec<u8>>,
     key_up: Option<Vec<u8>>,
 }
@@ -108,9 +107,6 @@ impl Control {
             self.key_up = Some(data[14..].to_vec());
         }
         self.send(stream, data).await?;
-        if data.len() == 2 {
-            self.screen_off = data[1] == 0;
-        }
         if data.len() == 32 && [1, 3].contains(&data[1]) {
             self.touch = None;
         }
@@ -137,10 +133,6 @@ impl Control {
         if let Some(up) = self.key_up.clone() {
             self.send(stream, &up).await?;
             self.key_up = None;
-        }
-        if self.screen_off {
-            self.send(stream, &[10, 2]).await?;
-            self.screen_off = false;
         }
         self.enabled = false;
         Ok(())
@@ -178,7 +170,13 @@ async fn acquire(app: &App, id: &str) -> Result<()> {
             );
         }
     }
-    app.adb.check_unlocked(id).await?;
+    let display_off = app
+        .db
+        .get::<crate::types::Device>("devices", id)
+        .await?
+        .context("手机未登记")?
+        .display_off;
+    app.adb.check_unlocked_for_mirror(id, display_off).await?;
     app.manual_devices.lock().await.insert(id.to_owned());
     let _ = app.events.send(json!({"type":"changed"}));
     Ok(())
@@ -205,8 +203,14 @@ async fn stream(app: &App, id: &str, socket: &mut WebSocket) -> Result<()> {
     } else {
         app.root.join("bin/scrcpy-server-v3.1")
     };
+    let display_off = app
+        .db
+        .get::<crate::types::Device>("devices", id)
+        .await?
+        .context("手机未登记")?
+        .display_off;
     let mut connection = tokio::select! {
-        result = app.adb.video(id, &server, app.workers.clone()) => result?,
+        result = app.adb.video(id, &server, app.workers.clone(), display_off) => result?,
         _ = app.stop.cancelled() => return Ok(()),
         _ = socket.recv() => return Ok(()),
     };
@@ -237,6 +241,21 @@ async fn relay(
     let mut rate_window = tokio::time::Instant::now();
     let mut rate = 0u32;
     let mut disabled = false;
+    let display_off = app
+        .db
+        .get::<crate::types::Device>("devices", id)
+        .await?
+        .context("手机未登记")?
+        .display_off;
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        socket.send(Message::Text(
+            json!({"type":"display_power","enabled":!display_off,"initial":true})
+                .to_string()
+                .into(),
+        )),
+    )
+    .await??;
     loop {
         tokio::select! {
             _ = app.stop.cancelled() => return Ok(()),
@@ -278,11 +297,19 @@ async fn relay(
                     if rate_window.elapsed() >= Duration::from_secs(1) { rate_window = tokio::time::Instant::now(); rate = 0; }
                     rate += 1;
                     ensure!(rate <= 240, "操作过于频繁，请重新开启操作");
-                    state.inject(control,&data).await?;
                     if data.len() == 2 {
+                        let _gate = app.device_gate.lock().await;
+                        state.inject(control,&data).await?;
+                        let mut device = app.db.get::<crate::types::Device>("devices", id).await?
+                            .context("手机未登记")?;
+                        device.display_off = data[1] == 0;
+                        app.db.put("devices", id, &device).await?;
+                        let _ = app.events.send(json!({"type":"changed"}));
                         tokio::time::timeout(Duration::from_secs(2), socket.send(Message::Text(
                             json!({"type":"display_power","enabled":data[1] == 2}).to_string().into()
                         ))).await??;
+                    } else {
+                        state.inject(control,&data).await?;
                     }
                 },
                 Some(Ok(Message::Ping(_))) => {},

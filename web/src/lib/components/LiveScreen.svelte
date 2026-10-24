@@ -106,7 +106,6 @@
     connection = undefined;
     viewState = "idle";
     dimensions = "";
-    screenOff = false;
     powerPending = false;
   }
   function start() {
@@ -126,7 +125,6 @@
         viewState = "error";
         error = message;
         dimensions = "";
-        screenOff = false;
         pendingPower = undefined;
         powerPending = false;
         connection = undefined;
@@ -141,7 +139,6 @@
         }
         if (!enabled) {
           pendingPower = undefined;
-          screenOff = false;
           powerPending = false;
           cancelTouch();
           waitingPause = false;
@@ -163,9 +160,9 @@
           error = "画面尺寸已变化，已结束操作，请核对画面后重新开启";
         }
       },
-      (enabled) => {
+      (enabled, initial) => {
         screenOff = !enabled;
-        powerPending = false;
+        if (!initial) powerPending = false;
       },
     );
   }

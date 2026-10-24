@@ -83,6 +83,10 @@ def touch(action, x=100):
 def keys(key):
     return struct.pack(">BBIII",0,0,key,0,0)+struct.pack(">BBIII",0,1,key,0,0)
 
+def initial_power(stream, enabled):
+    opcode, payload = frame(stream)
+    assert opcode == 1 and json.loads(payload) == {"type":"display_power","enabled":enabled,"initial":True}
+
 
 def main():
     with tempfile.TemporaryDirectory(prefix="adb-mirror-check-") as directory:
@@ -107,6 +111,7 @@ def main():
                 connect(token, origin="https://example.com", expected=401).close()
                 connect(token, device="unknown", expected=400).close()
                 first = connect(token)
+                initial_power(first, True)
                 assert frame(first) == (2, b"studio-video-test")
                 duplicate = connect(token)
                 assert "其他页面" in json.loads(frame(duplicate)[1])["error"]
@@ -116,10 +121,12 @@ def main():
                 first.close()
                 wait(lambda: not list(fake.glob("localabstract-scrcpy_*")))
                 again = connect(token)
+                initial_power(again, True)
                 assert frame(again) == (2, b"studio-video-test")
                 again.close()
                 wait(lambda: not list(fake.glob("localabstract-scrcpy_*")))
                 interrupted = connect(token)
+                initial_power(interrupted, True)
                 assert frame(interrupted) == (2, b"studio-video-test")
                 (fake / "end-mirror").touch()
                 assert "已结束" in json.loads(frame(interrupted)[1])["error"]
@@ -143,10 +150,10 @@ def main():
                 assert "手机未连接或未授权" in json.loads(frame(wrong)[1])["error"]
                 wrong.close()
                 (fake / "identity").unlink()
-                def call(path, body=None, expected=200):
+                def call(path, body=None, expected=200, method=None):
                     request = urllib.request.Request(f"http://127.0.0.1:{PORT}/api" + path,
                         headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
-                        data=json.dumps(body).encode() if body is not None else None)
+                        data=json.dumps(body).encode() if body is not None else None, method=method)
                     try:
                         with urllib.request.urlopen(request, timeout=20) as response:
                             status, result = response.status, json.load(response)
@@ -163,6 +170,7 @@ def main():
                     return json.loads(data)
                 def viewer():
                     stream=connect(token)
+                    initial_power(stream, not next(row for row in call("/devices") if row["id"] == "mock-phone")["display_off"])
                     assert frame(stream) == (2,b"studio-video-test")
                     return stream
                 def paused(run):
@@ -186,8 +194,14 @@ def main():
                 send(manual,2,touch(0))
                 wait(lambda: len(records()) == 13)
                 assert not control_message(manual,False)["enabled"]
-                wait(lambda: records()[-1] == bytes([10,2]))
-                assert records()[-2][1] == 3
+                wait(lambda: records()[-1][1] == 3)
+                assert records()[-3] == bytes([10,0])
+                assert next(row for row in call("/devices") if row["id"] == "mock-phone")["display_off"]
+                wakeups = sum("KEYCODE_WAKEUP" in command for command in (fake / "commands").read_text().splitlines())
+                call("/devices/mock-phone", {"keep_awake": True}, method="PUT")
+                call("/devices/refresh", {})
+                assert sum("KEYCODE_WAKEUP" in command for command in (fake / "commands").read_text().splitlines()) == wakeups
+                call("/devices/mock-phone", {"keep_awake": False}, method="PUT")
                 run = call("/runs",body)
                 assert "任务仍在运行" in control_message(manual,True)["error"]
                 call(f"/runs/{run['id']}/pause",{})
@@ -222,13 +236,24 @@ def main():
                 assert control_message(active,True)["enabled"]
                 count=len(records());send(active,2,touch(0))
                 wait(lambda: len(records())>count)
+                send(active,2,touch(3))
+                send(active,2,bytes([10,0]))
+                assert json.loads(frame(active)[1]) == {"type":"display_power","enabled":False}
                 process.terminate()
                 process.wait(timeout=10)
                 active.close()
                 assert not list(fake.glob("localabstract-scrcpy_*"))
+                process = subprocess.Popen([str(ROOT / "target/debug/adb-studio")], env=environment, stdout=log, stderr=log)
+                wait(lambda: urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/session"))
+                restored = viewer()
+                assert control_message(restored,True)["enabled"]
+                send(restored,2,bytes([10,2]))
+                assert json.loads(frame(restored)[1]) == {"type":"display_power","enabled":True}
+                restored.close()
+                wait(lambda: not list(fake.glob("localabstract-scrcpy_*")))
                 commands = [json.loads(line) for line in (fake / "commands").read_text().splitlines()]
                 assert not any("input" in command for command in commands)
-                assert any("control=true" in command and "power_on=false" in command for command in commands)
+                assert any("control=true" in command and "power_on=false" in command and "cleanup=false" in command for command in commands)
                 print("通过：投屏回归、单指点按拖动、三键成对发送、任务互斥、暂停后操作、操作中禁止继续、退出仍暂停、断开取消触点、权限拒绝、越界拦截与退出清理")
             finally:
                 if process.poll() is None:

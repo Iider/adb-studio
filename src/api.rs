@@ -212,7 +212,13 @@ async fn screen_control(
         {
             return Err(anyhow::anyhow!("请先暂停接管或停止这台手机的任务，再操作屏幕").into());
         }
-        app.adb.screen_control(&id, wake).await?
+        let message = app.adb.screen_control(&id, wake).await?;
+        let _gate = app.device_gate.lock().await;
+        if let Some(mut device) = app.db.get::<Device>("devices", &id).await? {
+            device.display_off = false;
+            app.db.put("devices", &id, &device).await?;
+        }
+        message
     };
     crate::adb::refresh(&app).await?;
     Ok(Json(json!({"message":message})))
