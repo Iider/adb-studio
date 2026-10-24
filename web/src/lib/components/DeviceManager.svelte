@@ -183,7 +183,6 @@
           online={device.online}
           picture={pictures[device.id]}
           capturing={working === `photo-${device.id}`}
-          run={activeRun}
           onCapture={() => onCapture(device)}
           bind:dimensions={screenDimensions}
           bind:controlled={screenControlled}

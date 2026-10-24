@@ -6,7 +6,6 @@
     Maximize,
     Monitor,
     Square,
-    MousePointer2,
     ArrowLeft,
     Circle,
     PanelsTopLeft,
@@ -18,7 +17,6 @@
   import Button from "$lib/components/ui/button/button.svelte";
   import { startMirror } from "$lib/mirror";
   import { screenPoint, type ScreenPoint } from "$lib/touch";
-  import { api, type Run } from "$lib/api";
 
   let {
     id,
@@ -26,7 +24,6 @@
     online,
     picture,
     capturing,
-    run,
     onCapture,
     dimensions = $bindable(""),
     controlled = $bindable(false),
@@ -38,7 +35,6 @@
     online: boolean;
     picture?: string;
     capturing: boolean;
-    run?: Run;
     onCapture: () => void;
     dimensions?: string;
     controlled?: boolean;
@@ -51,8 +47,8 @@
   let error = $state("");
   let supported = $state(false);
   let canFullscreen = $state(false);
+  let isFullscreen = $state(false);
   let requesting = $state(false);
-  let waitingPause = $state(false);
   let gesture = $state(false);
   let pointer = $state<number | undefined>();
   let lastPoint: ScreenPoint | undefined;
@@ -88,13 +84,12 @@
     if (controlled) connection?.setDisplayPower(enabled);
     else {
       pendingPower = enabled;
-      if (viewState === "live" && !requesting) void requestControl();
+      if (viewState === "live" && !requesting) requestControl();
     }
   }
   function endControl() {
     pendingPower = undefined;
     powerPending = false;
-    waitingPause = false;
     requesting = false;
     cancelTouch();
     controlled = false;
@@ -119,7 +114,7 @@
         const firstFrame = viewState === "connecting";
         viewState = "live";
         dimensions = `${width} × ${height}`;
-        if (firstFrame) void requestControl();
+        if (firstFrame) requestControl();
       },
       (message) => {
         viewState = "error";
@@ -141,7 +136,6 @@
           pendingPower = undefined;
           powerPending = false;
           cancelTouch();
-          waitingPause = false;
         }
         if (message) error = message;
       },
@@ -155,9 +149,8 @@
           };
         if (controlled || requesting) {
           // 旋转后的新尺寸用于取消旧触点，避免继续按旧坐标操作。
-          cancelTouch();
           endControl();
-          error = "画面尺寸已变化，已结束操作，请核对画面后重新开启";
+          requestControl();
         }
       },
       (enabled, initial) => {
@@ -166,31 +159,20 @@
       },
     );
   }
-  async function requestControl() {
+  function requestControl() {
     error = "";
     requesting = true;
-    if (run && run.state !== "paused") {
-      waitingPause = true;
-      try {
-        await api(`/runs/${run.id}/pause`, "POST");
-      } catch (e) {
-        waitingPause = false;
-        requesting = false;
-        pendingPower = undefined;
-        powerPending = false;
-        error = e instanceof Error ? e.message : "暂停失败";
-      }
-    } else connection?.setControl(true);
+    connection?.setControl(true);
   }
-  $effect(() => {
-    if (
-      waitingPause &&
-      (!run || (run.state === "paused" && !run.pause_requested))
-    ) {
-      waitingPause = false;
-      connection?.setControl(true);
+  function toggleFullscreen() {
+    if (isFullscreen) {
+      void document.exitFullscreen();
+    } else {
+      stage.requestFullscreen().catch(() => {
+        error = "暂时无法全屏，请在浏览器中重试";
+      });
     }
-  });
+  }
   function point(event: PointerEvent, clamp = false) {
     const rect = canvas.getBoundingClientRect();
     return screenPoint(
@@ -309,10 +291,15 @@
     const visibility = () => {
       if (document.hidden) cancelTouch();
     };
+    const fullscreenChanged = () => {
+      isFullscreen = document.fullscreenElement === stage;
+    };
     document.addEventListener("visibilitychange", visibility);
+    document.addEventListener("fullscreenchange", fullscreenChanged);
     window.addEventListener("blur", cancelTouch);
     return () => {
       document.removeEventListener("visibilitychange", visibility);
+      document.removeEventListener("fullscreenchange", fullscreenChanged);
       window.removeEventListener("blur", cancelTouch);
       stop();
     };
@@ -322,21 +309,76 @@
   });
 </script>
 
+{#snippet swipeControls()}
+  <div class="live-swipes" role="group" aria-label="手机滑动">
+    <Button
+      variant="outline"
+      size="icon"
+      aria-label="上滑"
+      title="上滑"
+      disabled={!controlled || gesture || pointer !== undefined}
+      onclick={() => swipe("up")}><ArrowUp size={20} /></Button
+    >
+    <Button
+      variant="outline"
+      size="icon"
+      aria-label="下滑"
+      title="下滑"
+      disabled={!controlled || gesture || pointer !== undefined}
+      onclick={() => swipe("down")}><ArrowDown size={20} /></Button
+    >
+    <Button
+      variant="outline"
+      size="icon"
+      aria-label="左滑"
+      title="左滑"
+      disabled={!controlled || gesture || pointer !== undefined}
+      onclick={() => swipe("left")}><ArrowLeft size={20} /></Button
+    >
+    <Button
+      variant="outline"
+      size="icon"
+      aria-label="右滑"
+      title="右滑"
+      disabled={!controlled || gesture || pointer !== undefined}
+      onclick={() => swipe("right")}><ArrowRight size={20} /></Button
+    >
+  </div>
+{/snippet}
+
 <div class="device-row">
-  <h2>手机屏幕</h2>
-  <span class="device-status" class:offline={viewState !== "live"} role="status"
-    ><span class="status-dot" aria-hidden="true"></span>{viewState === "live"
-      ? controlled
-        ? "操作中"
-        : "实时画面"
-      : viewState === "connecting"
-        ? "连接中"
-        : "未投屏"}</span
-  >
+  <div class="live-heading">
+    <h2>手机屏幕</h2>
+    {#if viewState === "live" || viewState === "connecting"}<Button
+        variant="outline"
+        onclick={stop}
+        ><Square size={15} />{viewState === "connecting"
+          ? "取消连接"
+          : "停止投屏"}</Button
+      >
+    {:else}<Button disabled={!online || !supported} onclick={start}
+        ><Monitor size={15} />{viewState === "error"
+          ? "重新投屏"
+          : "开启投屏"}</Button
+      >{/if}
+  </div>
+  <div class="live-heading-actions">
+    {#if viewState === "live" && !isFullscreen}{@render swipeControls()}{/if}
+    <span class="device-status" class:offline={viewState !== "live"} role="status"
+      ><span class="status-dot" aria-hidden="true"></span>{viewState === "live"
+        ? controlled
+          ? "操作中"
+          : "实时画面"
+        : viewState === "connecting"
+          ? "连接中"
+          : "未投屏"}</span
+    >
+  </div>
 </div>
-<div class="live-stage" class:ready={viewState === "live"} bind:this={stage}>
+<div class="live-stage" bind:this={stage}>
   <div class="device-screen-body">
-    <canvas
+    <div class="live-device" class:visible={viewState === "live"}>
+      <canvas
       bind:this={canvas}
       class="device-screenshot live-canvas"
       class:visible={viewState === "live"}
@@ -351,7 +393,46 @@
         if (pointer !== undefined) cancelTouch();
       }}
       onkeydown={keyboard}
-    ></canvas>
+      ></canvas>
+      {#if viewState === "live"}
+        <nav class="live-navigation" aria-label="手机导航键">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="返回"
+            title="返回"
+            disabled={!controlled || gesture || pointer !== undefined}
+            onclick={() => navigate(4)}><ArrowLeft size={20} /></Button
+          >
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="主页"
+            title="主页"
+            disabled={!controlled || gesture || pointer !== undefined}
+            onclick={() => navigate(3)}><Circle size={20} /></Button
+          >
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="最近任务"
+            title="最近任务"
+            disabled={!controlled || gesture || pointer !== undefined}
+            onclick={() => navigate(187)}><PanelsTopLeft size={20} /></Button
+          >
+          {#if canFullscreen}<Button
+              variant="ghost"
+              size="icon"
+              aria-label={isFullscreen ? "退出全屏" : "全屏观看"}
+              title={isFullscreen ? "退出全屏" : "全屏观看"}
+              onclick={toggleFullscreen}
+              >{#if isFullscreen}<Minimize size={20} />{:else}<Maximize
+                  size={20}
+                />{/if}</Button
+            >{/if}
+        </nav>
+      {/if}
+    </div>
     {#if viewState === "connecting"}<div class="device-screen-placeholder">
         <LoaderCircle size={32} class="spin" /><strong>正在连接手机…</strong
         ><span>首次连接需要几秒钟</span>
@@ -367,82 +448,21 @@
             >{viewState === "error" ? "投屏已中断" : "查看实时画面"}</strong
           ><span
             >{online
-              ? "解锁手机后，点击下方开启投屏"
+              ? "解锁手机后，点击标题旁的开启投屏"
               : "手机连接后可开启投屏"}</span
           >
         </div>{/if}
     {/if}
   </div>
-  {#if viewState === "live"}
+  {#if viewState === "live" && (!controlled || isFullscreen)}
     <div class="live-control-area">
-      <div class="live-control-mode">
-        {#if controlled}<Button variant="outline" onclick={endControl}
-            ><Square size={15} />结束操作</Button
-          >
-        {:else if requesting}<Button variant="outline" onclick={endControl}
-            ><LoaderCircle class="spin" size={15} />{waitingPause
-              ? "正在暂停…取消等待"
-              : "正在开启…取消"}</Button
-          >
-        {:else}<Button onclick={requestControl}
-            ><MousePointer2 size={15} />{run && run.state !== "paused"
-              ? "暂停并操作"
-              : "操作手机"}</Button
-          >{/if}
-        <Button
+      {#if !controlled && !requesting}<Button
           variant="outline"
-          class="fullscreen-exit"
-          onclick={() => document.exitFullscreen()}
-          ><Minimize size={15} />退出全屏</Button
-        >
-      </div>
-      <nav class="live-navigation" aria-label="手机导航键">
-        <Button
-          variant="outline"
-          disabled={!controlled || gesture || pointer !== undefined}
-          onclick={() => navigate(4)}><ArrowLeft size={17} />返回</Button
-        >
-        <Button
-          variant="outline"
-          disabled={!controlled || gesture || pointer !== undefined}
-          onclick={() => navigate(3)}><Circle size={16} />主页</Button
-        >
-        <Button
-          variant="outline"
-          disabled={!controlled || gesture || pointer !== undefined}
-          onclick={() => navigate(187)}
-          ><PanelsTopLeft size={17} />最近任务</Button
-        >
-      </nav>
-      <div class="live-swipes" role="group" aria-label="手机滑动">
-        <Button
-          variant="outline"
-          disabled={!controlled || gesture || pointer !== undefined}
-          onclick={() => swipe("up")}><ArrowUp size={14} />上滑</Button
-        >
-        <Button
-          variant="outline"
-          disabled={!controlled || gesture || pointer !== undefined}
-          onclick={() => swipe("down")}><ArrowDown size={14} />下滑</Button
-        >
-        <Button
-          variant="outline"
-          disabled={!controlled || gesture || pointer !== undefined}
-          onclick={() => swipe("left")}><ArrowLeft size={14} />左滑</Button
-        >
-        <Button
-          variant="outline"
-          disabled={!controlled || gesture || pointer !== undefined}
-          onclick={() => swipe("right")}><ArrowRight size={14} />右滑</Button
-        >
-      </div>
-      <p class="hint live-operation-hint">
-        {controlled
-          ? "点按画面 · 按住拖动 · 结束后任务仍保持暂停"
-          : run
-            ? "操作前会等待任务暂停；结束后由你决定何时继续。"
-            : "仅观看，开启操作后可点按、拖动和使用导航键。"}
-      </p>
+          onclick={requestControl}>重试操作</Button
+        >{:else if requesting}<span class="hint live-control-pending"
+          ><LoaderCircle class="spin" size={16} />正在开启操作…</span
+        >{/if}
+      {#if isFullscreen}{@render swipeControls()}{/if}
     </div>
   {/if}
 </div>
@@ -453,26 +473,6 @@
   </p>
 {/if}
 <div class="live-actions">
-  {#if viewState === "live" || viewState === "connecting"}<Button
-      variant="outline"
-      onclick={stop}
-      ><Square size={15} />{viewState === "connecting"
-        ? "取消连接"
-        : "停止投屏"}</Button
-    >
-  {:else}<Button disabled={!online || !supported} onclick={start}
-      ><Monitor size={15} />{viewState === "error"
-        ? "重新投屏"
-        : "开启投屏"}</Button
-    >{/if}
-  {#if viewState === "live" && canFullscreen}<Button
-      variant="outline"
-      title="按 Esc 退出全屏"
-      onclick={() =>
-        stage.requestFullscreen().catch(() => {
-          error = "暂时无法全屏，请在浏览器中重试";
-        })}><Maximize size={15} />全屏观看</Button
-    >{/if}
   <Button variant="outline" disabled={!online || capturing} onclick={onCapture}
     >{#if capturing}<LoaderCircle size={15} class="spin" />获取中…{:else}<Camera
         size={15}
