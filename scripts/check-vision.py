@@ -26,6 +26,7 @@ class Model(http.server.BaseHTTPRequestHandler):
     mode = "valid"
     calls = []
     negative = b""
+    route_images = {}
     started = threading.Event()
     release = threading.Event()
 
@@ -42,6 +43,10 @@ class Model(http.server.BaseHTTPRequestHandler):
         image = base64.b64decode(image.split(",")[1])
         answer = {"choice": "unknown" if image == Model.negative or Model.mode == "unknown" else "confirmed",
                   "reason": "模拟页面依据", "confidence": 1, "target": [250, 250], "coin": 123}
+        prompt = content[-1].get("text", "")
+        if "只根据当前截图选择一个明确符合的页面状态" in prompt:
+            answer = {"choice": Model.route_images.get(image, "unknown"), "reason": "模拟页面分流",
+                      "confidence": 1, "target": None, "coin": None}
         if Model.mode == "outside":
             answer["target"] = [9999, 200]
         if Model.mode == "shift" and len(Model.calls) > 1:
@@ -171,6 +176,55 @@ def main():
             assert not (data / "bin/ocr").exists()
             assert not any('"swift"' in line for line in (fake / "commands").read_text().splitlines())
             print("通过：截图样本验证、三次看图单次点击、操作后新图与配置快照，无本地识别依赖", flush=True)
+
+            route_no = png(450, 800)
+            route_no_sample = inspect(route_no)["image"]
+            Model.route_images = {positive: "route_yes", route_no: "route_no"}
+            route = {"schema_version": 1, "id": "vision-route-test", "version": 1,
+                     "name": "模拟视觉分流", "description": "按画面选择唯一去向", "devices": ["mock-phone"],
+                     "recognition": "vision", "entry": "route", "model_limit": 2,
+                     "nodes": [{"id": "route", "label": "看图分流", "type": "vision_route", "package": "com.luna.music",
+                                "cases": [{"condition": "可操作状态", "next": "route_yes"},
+                                          {"condition": "已完成状态", "next": "route_no"}]},
+                               {"id": "route_yes", "label": "可操作", "type": "end", "result": "succeeded"},
+                               {"id": "route_no", "label": "已完成", "type": "end", "result": "succeeded"}],
+                     "tests": [{"node": "route", "image": before_sample, "expected": "route_yes"},
+                               {"node": "route", "image": route_no_sample, "expected": "route_no"},
+                               {"node": "route", "image": negative_sample, "expected": "unknown"}]}
+            call("/workflows", "POST", route)
+            call("/workflows/vision-route-test@1/validate", "POST")
+            baseline = taps()
+            result = done(start("vision-route-test")["id"])
+            assert result["state"] == "succeeded" and result["model_calls"] == 1 and taps() == baseline, result
+            (fake / "screen.png").write_bytes(route_no)
+            result = done(start("vision-route-test")["id"])
+            assert result["state"] == "succeeded" and result["node"] == "route_no" and taps() == baseline, result
+            (fake / "screen.png").write_bytes(Model.negative)
+            result = done(start("vision-route-test")["id"])
+            assert result["state"] == "needs_help" and taps() == baseline, result
+            (fake / "screen.png").write_bytes(positive)
+            print("通过：视觉分流两个去向均可到达，未知页面停止", flush=True)
+            for restart in [None, False, True]:
+                launch = {"id": "launch", "label": "打开应用", "type": "launch",
+                          "package": "com.luna.music", "next": "route"}
+                if restart is not None:
+                    launch["restart"] = restart
+                item = {**route, "id": "launch-test-" + str(restart).lower(), "entry": "launch",
+                        "nodes": [launch, *route["nodes"]]}
+                call("/workflows", "POST", item)
+                index = len((fake / "commands").read_text().splitlines())
+                result = done(start(item["id"])["id"])
+                assert result["state"] == "succeeded", result
+                commands = [json.loads(line)[2:] for line in (fake / "commands").read_text().splitlines()[index:]]
+                stop = ["shell", "am", "force-stop", "com.luna.music"]
+                opened = [command for command in commands if command[:2] == ["shell", "monkey"]]
+                if restart:
+                    assert commands.count(stop) == 1 and len(opened) == 1, commands
+                    assert commands.index(stop) < commands.index(opened[0]), commands
+                else:
+                    assert stop not in commands and not opened, commands
+            Model.route_images = {}
+            print("通过：默认保留前台应用，仅 restart=true 先结束再启动", flush=True)
 
             def prevalidated_start(mode, budget=5):
                 nonlocal workflow

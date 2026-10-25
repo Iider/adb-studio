@@ -70,6 +70,36 @@ pub fn validate(w: &Workflow) -> Result<()> {
                 crate::vision::query(&n.action, false)?.validate()?;
                 crate::vision::query(&n.action, true)?.validate()?;
             }
+            Action::VisionRoute { package, cases } => {
+                if w.recognition != RecognitionMode::Vision
+                    || n.next.is_some()
+                    || !package.contains('.')
+                    || !package
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "._".contains(c))
+                    || !(2..=5).contains(&cases.len())
+                    || cases.iter().any(|case| {
+                        case.condition.trim().is_empty()
+                            || case.condition.len() > 2000
+                            || case.next == "unknown"
+                    })
+                    || cases
+                        .iter()
+                        .map(|case| &case.next)
+                        .collect::<HashSet<_>>()
+                        .len()
+                        != cases.len()
+                    || cases
+                        .iter()
+                        .map(|case| &case.condition)
+                        .collect::<HashSet<_>>()
+                        .len()
+                        != cases.len()
+                {
+                    bail!("视觉分流需要有效应用编号和 2 到 5 个不同的明确去向")
+                }
+                refs.extend(cases.iter().map(|case| case.next.as_str()));
+            }
             Action::FixedTapLoop {
                 x,
                 y,
@@ -113,7 +143,7 @@ pub fn validate(w: &Workflow) -> Result<()> {
                     bail!("等待时间无效")
                 }
             }
-            Action::Launch { package } => {
+            Action::Launch { package, .. } => {
                 if !package.contains('.')
                     || !package
                         .chars()
@@ -203,7 +233,11 @@ pub fn validate(w: &Workflow) -> Result<()> {
             }
             _ => {}
         }
-        if !matches!(n.action, Action::End { .. } | Action::Branch { .. }) && n.next.is_none() {
+        if !matches!(
+            n.action,
+            Action::End { .. } | Action::Branch { .. } | Action::VisionRoute { .. }
+        ) && n.next.is_none()
+        {
             bail!("步骤缺少下一步")
         }
     }
@@ -231,6 +265,7 @@ pub fn validate(w: &Workflow) -> Result<()> {
             .map(|n| match n.action {
                 Action::VisionTap { .. } => 3,
                 Action::VisionCheck { .. } => 1,
+                Action::VisionRoute { .. } => 1,
                 _ => 0,
             })
             .sum::<u32>();
@@ -251,12 +286,17 @@ pub fn validate(w: &Workflow) -> Result<()> {
         if let Some(next) = &n.next {
             todo.push(next)
         };
-        if let Action::Branch {
-            cases, otherwise, ..
-        } = &n.action
-        {
-            todo.push(otherwise);
-            todo.extend(cases.iter().map(|c| c.next.as_str()));
+        match &n.action {
+            Action::Branch {
+                cases, otherwise, ..
+            } => {
+                todo.push(otherwise);
+                todo.extend(cases.iter().map(|c| c.next.as_str()));
+            }
+            Action::VisionRoute { cases, .. } => {
+                todo.extend(cases.iter().map(|c| c.next.as_str()));
+            }
+            _ => {}
         }
     }
     if !w
@@ -295,9 +335,15 @@ pub fn samples(w: &Workflow) -> Result<()> {
             .find(|n| n.id == t.node)
             .context("样本步骤不存在")?;
         let actual = match &n.action {
-            Action::VisionCheck { .. } | Action::VisionTap { .. } => {
-                if t.image.is_none() || !["confirmed", "unknown"].contains(&t.expected.as_str()) {
-                    bail!("视觉样本需要 image 和 confirmed／unknown 预期结果")
+            Action::VisionCheck { .. } | Action::VisionTap { .. } | Action::VisionRoute { .. } => {
+                let expected = match &n.action {
+                    Action::VisionRoute { cases, .. } => {
+                        t.expected == "unknown" || cases.iter().any(|c| c.next == t.expected)
+                    }
+                    _ => ["confirmed", "unknown"].contains(&t.expected.as_str()),
+                };
+                if t.image.is_none() || !expected {
+                    bail!("视觉样本缺少图片或预期结果无效")
                 }
                 continue;
             }
@@ -847,7 +893,7 @@ async fn run_steps(app: &App, r: &mut Run) -> Result<&'static str> {
                 return Err(e);
             }
         }
-        if !matches!(n.action, Action::Branch { .. }) {
+        if !matches!(n.action, Action::Branch { .. } | Action::VisionRoute { .. }) {
             r.node = n.next.context("缺少下一步")?;
         }
         r.pending = None;
@@ -935,6 +981,13 @@ async fn vision_tap(
 }
 async fn step(app: &App, r: &mut Run, n: &Node) -> Result<Option<&'static str>> {
     match &n.action {
+        Action::VisionRoute { package, cases } => {
+            vision_app(app, r, package).await?;
+            let frame = vision_frame(app, r, "vision-route").await?;
+            let choice = crate::vision::run_route(app, r, &frame, cases).await?;
+            vision_app(app, r, package).await?;
+            r.node = choice;
+        }
         Action::VisionCheck { package, .. } => {
             vision_app(app, r, package).await?;
             let f = vision_frame(app, r, "vision-check").await?;
@@ -986,10 +1039,15 @@ async fn step(app: &App, r: &mut Run, n: &Node) -> Result<Option<&'static str>> 
             save(app, r).await?;
             result?;
         }
-        Action::Launch { package } => {
-            if !app.adb.foreground(&r.device_id).await?.contains(package) {
+        Action::Launch { package, restart } => {
+            if *restart || !app.adb.foreground(&r.device_id).await?.contains(package) {
                 r.pending = Some("launch".into());
                 save(app, r).await?;
+                if *restart {
+                    app.adb
+                        .phone(&r.device_id, &["shell", "am", "force-stop", package])
+                        .await?;
+                }
                 app.adb
                     .phone(
                         &r.device_id,

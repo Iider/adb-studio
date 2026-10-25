@@ -45,7 +45,7 @@ python3 scripts/studio.py stop 运行编号
 | 步骤类型 | 参数 | 行为 |
 | --- | --- | --- |
 | `wait` | `seconds` | 等待，最大 86400 秒 |
-| `launch` | `package` | 打开应用，检查前台应用 |
+| `launch` | `package`，可选 `restart` | 打开应用，检查前台应用；`restart` 默认 `false`，为 `true` 时先强制结束应用再重新打开，具体页面由应用决定 |
 | `tap_text` | `text`, `verify` | 控件文字优先，文字识别补充；匹配唯一位置；检查结果文字 |
 | `tap_point` | `x`, `y`, `guard`, `verify` | 相对坐标；点按前检查页面文字，之后检查结果文字 |
 | `swipe` | `from`, `to`, `duration_ms` | 单次相对坐标滑动；异常恢复时不重放未确认动作 |
@@ -186,6 +186,8 @@ python3 scripts/studio.py request GET /devices/手机自身编号/screenshot --o
 
 ## 纯视觉任务
 
-工作流可声明 `recognition: "vision"`，使用 `vision_check` 与 `vision_tap`；省略时沿用本地优先。纯视觉步骤需要截图样本验证，定位、复查和结果检查均计入模型预算；更换模型后需重新验证与试跑。不能用纯视觉方式直接运行尚未适配的本地读字或高频步骤。
+工作流可声明 `recognition: "vision"`，使用 `vision_check`、`vision_tap` 与 `vision_route`；省略时沿用本地优先。纯视觉步骤需要截图样本验证，定位、复查和结果检查均计入模型预算；更换模型后需重新验证与试跑。不能用纯视觉方式直接运行尚未适配的本地读字或高频步骤。
+
+需要按画面状态选择不同后续步骤时，可用 `vision_route`。每个分流项填写互斥的 `condition` 和目标步骤 `next`；无法确认时任务停止，所有分流状态都要提供截图样本。
 
 字段、样本与只读检查接口见 [纯视觉识别](vision-recognition.md)。模型配置随运行固定，密钥不写入记录；执行导出增加 `vision`，包含本次视觉结果、截图引用与耗时。

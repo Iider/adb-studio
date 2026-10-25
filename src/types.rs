@@ -99,6 +99,10 @@ pub struct Node {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
+    VisionRoute {
+        package: String,
+        cases: Vec<VisionRouteCase>,
+    },
     VisionCheck {
         package: String,
         condition: String,
@@ -115,6 +119,8 @@ pub enum Action {
     },
     Launch {
         package: String,
+        #[serde(default)]
+        restart: bool,
     },
     TapText {
         text: String,
@@ -174,6 +180,11 @@ pub enum Action {
     End {
         result: String,
     },
+}
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct VisionRouteCase {
+    pub condition: String,
+    pub next: String,
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Branch {
