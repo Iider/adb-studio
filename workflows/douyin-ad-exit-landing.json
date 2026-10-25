@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "douyin-ad-exit-landing",
+  "version": 1,
+  "name": "抖音极速版 · 广告落地页退出试跑",
+  "description": "广告已显示领取成功，由工作台关闭落地页并记录后续奖励状态。",
+  "devices": ["3430131496001EB"],
+  "recognition": "vision",
+  "entry": "check_ad",
+  "model_limit": 1,
+  "nodes": [
+    {"id": "check_ad", "label": "确认领取成功和关闭按钮", "type": "vision_check", "package": "com.ss.android.ugc.aweme.lite", "condition": "当前画面是抖音极速版广告播放完的落地页，右上角明确显示“领取成功”及关闭叉号；可以关闭广告返回奖励流程。", "next": "close_ad"},
+    {"id": "close_ad", "label": "关闭广告落地页", "type": "fixed_tap_loop", "x": 983, "y": 160, "count": 1, "interval": 1, "next": "wait_result"},
+    {"id": "wait_result", "label": "等待下一条奖励", "type": "wait", "seconds": 3, "next": "done"},
+    {"id": "done", "label": "保存后续奖励画面", "type": "end", "result": "succeeded"}
+  ],
+  "tests": [
+    {"node": "check_ad", "image": "8930c0e4-b7e8-4e40-a60d-af621c40c361.png", "expected": "confirmed"},
+    {"node": "check_ad", "image": "3de71b0b-db16-4ee0-82f7-a22968595ba4.png", "expected": "unknown"}
+  ]
+}

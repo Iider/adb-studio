@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "daily-checkin",
+  "version": 2,
+  "name": "每日签到 · 三个应用",
+  "description": "第二阶段试跑：快手极速版视频已看完，自动点击立即签到并观察结果。",
+  "devices": ["3430131496001EB"],
+  "recognition": "vision",
+  "entry": "kuaishou",
+  "model_limit": 3,
+  "nodes": [
+    {"id": "kuaishou", "label": "打开快手极速版", "type": "launch", "package": "com.kuaishou.nebula", "next": "check_popup"},
+    {"id": "check_popup", "label": "确认立即签到按钮", "type": "vision_check", "package": "com.kuaishou.nebula", "condition": "快手极速版连续签到弹窗的唯一黄色按钮明确写着“立即签到”，现在可以直接完成今日签到；不是“看视频30秒签到”。", "next": "tap_checkin"},
+    {"id": "tap_checkin", "label": "点击立即签到", "type": "fixed_tap_loop", "x": 540, "y": 1680, "count": 1, "interval": 1, "next": "wait_result"},
+    {"id": "wait_result", "label": "等待签到结果", "type": "wait", "seconds": 3, "next": "end"},
+    {"id": "end", "label": "保存试跑结果", "type": "end", "result": "succeeded"}
+  ],
+  "tests": [
+    {"node": "check_popup", "image": "2968f4eb-ce60-422a-b4b1-224244be0de7.png", "expected": "confirmed"},
+    {"node": "check_popup", "image": "42b24ac7-fe71-447c-a45b-b98bbae6f361.png", "expected": "unknown"}
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "douyin-appointment-claim",
+  "version": 1,
+  "name": "抖音极速版 · 立即预约试跑",
+  "description": "核对天天预约领金币页面，由工作台点击立即预约领取并保存结果。",
+  "devices": ["3430131496001EB"],
+  "recognition": "vision",
+  "entry": "check_appointment",
+  "model_limit": 1,
+  "nodes": [
+    {"id": "check_appointment", "label": "核对预约按钮", "type": "vision_check", "package": "com.ss.android.ugc.aweme.lite", "condition": "当前是抖音极速版的天天预约领金币页面，中间的粉红按钮明确写着立即预约领取，下方说明今日预约、明日可领取。", "next": "tap_appointment"},
+    {"id": "tap_appointment", "label": "立即预约领取", "type": "fixed_tap_loop", "x": 540, "y": 1380, "count": 1, "interval": 1, "next": "wait_result"},
+    {"id": "wait_result", "label": "等待预约结果", "type": "wait", "seconds": 3, "next": "done"},
+    {"id": "done", "label": "保存预约结果", "type": "end", "result": "succeeded"}
+  ],
+  "tests": [
+    {"node": "check_appointment", "image": "407295d1-d28d-42c0-a816-1332eb7a43e4.png", "expected": "confirmed"},
+    {"node": "check_appointment", "image": "3de71b0b-db16-4ee0-82f7-a22968595ba4.png", "expected": "unknown"}
+  ]
+}

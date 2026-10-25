@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "douyin-appointment-probe",
+  "version": 1,
+  "name": "抖音极速版 · 预约领金币试跑",
+  "description": "从赚钱任务页确认预约领金币，由工作台点击去预约并保存结果。",
+  "devices": ["3430131496001EB"],
+  "entry": "check_page",
+  "model_limit": 0,
+  "nodes": [
+    {"id": "check_page", "label": "确认预约入口在当前页面", "type": "branch", "guard": "赚钱任务", "cases": [{"contains": "预约领金币", "next": "tap_appointment"}], "otherwise": "needs_help"},
+    {"id": "tap_appointment", "label": "点击去预约", "type": "fixed_tap_loop", "x": 930, "y": 1737, "count": 1, "interval": 1, "next": "wait_result"},
+    {"id": "wait_result", "label": "等待预约结果", "type": "wait", "seconds": 3, "next": "done"},
+    {"id": "done", "label": "保存预约结果", "type": "end", "result": "succeeded"},
+    {"id": "needs_help", "label": "当前页面不符，停止点击", "type": "end", "result": "needs_help"}
+  ],
+  "tests": [
+    {"node": "check_page", "text": "赚钱任务 预约领金币", "expected": "tap_appointment"},
+    {"node": "check_page", "text": "赚钱任务 其他任务", "expected": "needs_help"},
+    {"node": "check_page", "text": "必应 Rewards", "expected": "unknown"},
+    {"node": "tap_appointment", "text": "x=930,y=1737", "expected": "valid"}
+  ]
+}

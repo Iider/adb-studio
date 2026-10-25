@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "douyin-ad-continue-probe",
+  "version": 1,
+  "name": "抖音极速版 · 继续看广告试跑",
+  "description": "奖励弹窗明确要求再看14秒时，由工作台继续观看并保存结果。",
+  "devices": ["3430131496001EB"],
+  "entry": "check_prompt",
+  "model_limit": 0,
+  "nodes": [
+    {"id": "check_prompt", "label": "确认再看14秒奖励", "type": "branch", "guard": "再看14秒可领奖励", "cases": [{"contains": "+138金币", "next": "continue_ad"}], "otherwise": "needs_help"},
+    {"id": "continue_ad", "label": "继续观看广告", "type": "fixed_tap_loop", "x": 540, "y": 1308, "count": 1, "interval": 1, "next": "watch_ad"},
+    {"id": "watch_ad", "label": "观看20秒", "type": "wait", "seconds": 20, "next": "done"},
+    {"id": "done", "label": "保存广告结果", "type": "end", "result": "succeeded"},
+    {"id": "needs_help", "label": "当前页面不符，停止点击", "type": "end", "result": "needs_help"}
+  ],
+  "tests": [
+    {"node": "check_prompt", "text": "再看14秒可领奖励 +138金币 继续观看", "expected": "continue_ad"},
+    {"node": "check_prompt", "text": "再看14秒可领奖励 其他", "expected": "needs_help"},
+    {"node": "check_prompt", "text": "必应 Rewards", "expected": "unknown"}
+  ]
+}

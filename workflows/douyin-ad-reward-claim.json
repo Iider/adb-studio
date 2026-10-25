@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "douyin-ad-reward-claim",
+  "version": 1,
+  "name": "抖音极速版 · 广告奖励试跑",
+  "description": "确认惊喜奖励窗口，由工作台点击领取奖励并等待广告。",
+  "devices": ["3430131496001EB"],
+  "entry": "check_reward",
+  "model_limit": 0,
+  "nodes": [
+    {"id": "check_reward", "label": "确认惊喜奖励窗口", "type": "branch", "guard": "惊喜奖励", "cases": [{"contains": "观看完整广告视频后领取", "next": "tap_reward"}], "otherwise": "needs_help"},
+    {"id": "tap_reward", "label": "点击领取奖励", "type": "fixed_tap_loop", "x": 540, "y": 1385, "count": 1, "interval": 1, "next": "watch_ad"},
+    {"id": "watch_ad", "label": "等待广告播放", "type": "wait", "seconds": 35, "next": "done"},
+    {"id": "done", "label": "保存广告后的画面", "type": "end", "result": "succeeded"},
+    {"id": "needs_help", "label": "当前页面不符，停止点击", "type": "end", "result": "needs_help"}
+  ],
+  "tests": [
+    {"node": "check_reward", "text": "惊喜奖励 观看完整广告视频后领取", "expected": "tap_reward"},
+    {"node": "check_reward", "text": "惊喜奖励 其他提示", "expected": "needs_help"},
+    {"node": "check_reward", "text": "必应 Rewards", "expected": "unknown"},
+    {"node": "tap_reward", "text": "x=540,y=1385", "expected": "valid"}
+  ]
+}
