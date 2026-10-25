@@ -78,6 +78,12 @@ ADB 官方下载地址：`https://dl.google.com/android/repository/platform-tool
 
 飞牛模型配置保存在安装目录，密钥在 `.env` 中，权限为 `600`。访问凭据独立生成；Mac 的工作流、执行记录、计划任务没有迁入。2026-10-24 每日签到任务选用 `doubao-seed-2-0-mini-260428` 的纯视觉识别。飞牛仍装有 Tesseract 中文识别程序供其他任务使用，但每日签到任务不调用它。
 
+## 本地文字识别
+
+飞牛 `data/bin/ocr` 使用仓库中的 `scripts/ocr-tesseract.py`，从标准输入读取 PNG，输出文字、中心坐标和可信度的 JSON。Tesseract 及中文、英文语言数据位于 `/home/weio/.local/opt/adb-studio/ocr-runtime/`；调用时通过 `ADB_STUDIO_OCR_RUNTIME` 指向该目录。
+
+此脚本仅供本地识别任务使用，纯视觉任务不调用它。源码安装工具在 Linux 上不会自动复制该脚本或 Tesseract 依赖，迁移时需单独保留 `data/bin/ocr`、运行库和目录配置。
+
 ## 手机与 USB 权限
 
 已登记：iQOO、V2171A、`3430131496001EB`。手机已允许飞牛的 USB 调试。
