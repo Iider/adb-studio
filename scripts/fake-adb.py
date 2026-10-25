@@ -36,9 +36,12 @@ elif args[:1] == ["pair"]:
         print("pairing failed", file=sys.stderr)
         sys.exit(1)
 elif args == ["connect", "127.0.0.1:5555"]:
-    if (root / "auto-connect").exists():
+    if (root / "connect-text-fails").exists():
+        print("failed to connect to 127.0.0.1:5555")
+    elif (root / "auto-connect").exists():
         (root / "online").touch()
-    if online or (root / "auto-connect").exists():
+        print("connected to 127.0.0.1:5555")
+    elif online:
         print("connected to 127.0.0.1:5555")
     else:
         print("connection refused", file=sys.stderr)

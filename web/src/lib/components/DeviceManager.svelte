@@ -140,7 +140,7 @@
         address: pairAddress.trim(),
         code: pairCode.trim(),
       });
-      notify.success("配对成功，请填写连接地址并连接手机。");
+      notify.success("配对成功，请核对手机当前的连接端口再连接。");
       pairCode = "";
     } catch (error) {
       notify.error(error instanceof Error ? error.message : "配对失败");
@@ -508,7 +508,7 @@
       spellcheck="false"
       required
     />
-    <p class="hint">填写手机“无线调试”页面显示的 IP 地址和连接端口。</p>
+    <p class="hint">填写手机“无线调试”页面当前显示的 IP 地址和连接端口；配对后端口可能变化。</p>
     <Button type="submit" disabled={lanPending || !address.trim()}
       >{lanPending ? "正在连接…" : "连接手机"}</Button
     >

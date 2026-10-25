@@ -728,6 +728,11 @@ def main():
             call("/devices/pair", "POST", {"address": "127.0.0.1:41234", "code": "12345"}, 400)
             assert call("/devices/pair", "POST", {"address": "127.0.0.1:41234", "code": "123456"})["ok"]
             call("/devices/connect", "POST", {"address": "8.8.8.8:5555"}, 400)
+            (fake / "connect-text-fails").touch()
+            assert "连接端口可能已变化" in call(
+                "/devices/connect", "POST", {"address": "127.0.0.1:5555"}, 400
+            )["error"]
+            (fake / "connect-text-fails").unlink()
             connected = call("/devices/connect", "POST", {"address": "127.0.0.1:5555"})
             assert connected["id"] == "mock-phone" and "127.0.0.1:5555" in connected["manual_endpoints"]
             (fake / "mdns-visible").touch()

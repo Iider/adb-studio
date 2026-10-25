@@ -73,7 +73,7 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.u
 
 USB 配置映射 `/dev/bus/usb` 并允许 USB 设备号，适配插拔；无需 `privileged`。它允许容器访问主机 USB 总线，因此只在需要连接 USB 手机时启用。手机仍需授权调试。
 
-网页“设备管理 → 添加局域网设备”可扫描正在广播无线调试的手机，点选地址后配对或连接。扫描依赖局域网的 mDNS 广播；发现不到时使用手机“无线调试”页面显示的地址手动填写。配对端口与连接端口不同。工作台保存连接地址供断线重连；手机端口变化后重新填写。也可在容器中手动运行：
+网页“设备管理 → 添加局域网设备”可扫描正在广播无线调试的手机。扫描依赖局域网的 mDNS 广播；发现不到时可手动填写地址。配对成功后，返回手机“无线调试”主页，按当前显示的 IP 和连接端口连接。连接端口与配对端口不同，配对后也可能变化。工作台保存连接地址供断线重连；端口变化后需重新填写。也可在容器中手动运行：
 
 ```sh
 docker compose --env-file deploy/.env -f deploy/compose.yaml exec studio adb pair 手机IP:配对端口

@@ -839,10 +839,14 @@ pub async fn pair_manual(app: &App, address: &str, code: &str) -> Result<()> {
 
 pub async fn connect_manual(app: &App, address: &str) -> Result<Device> {
     let address = local_address(address)?;
-    app.adb
+    let result = app
+        .adb
         .text(&["connect", &address])
         .await
         .context("无法连接手机，请确认无线调试已开启，并检查连接地址和端口")?;
+    if !result.starts_with("connected to ") && !result.starts_with("already connected to ") {
+        bail!("连接失败。连接端口可能已变化，请重新查看手机“无线调试”页面的连接地址");
+    }
     let id = app
         .adb
         .text(&["-s", &address, "shell", "getprop", "ro.serialno"])
