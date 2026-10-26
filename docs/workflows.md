@@ -56,7 +56,7 @@ python3 scripts/studio.py stop 运行编号
 | `qishui_loop` | `coin_region`, `identity_region`, `warmup`, `stall`, `finish_stall`, `finish_swipes` | 区域均为 `[左,上,右,下]` 相对坐标；多帧金币识别和视频切换复查 |
 | `end` | `result` | `succeeded` 或 `needs_help` |
 
-除 `branch` 与 `end`，每个步骤需要 `next`。分支和 `next` 必须引用存在的步骤；入口需要能够到达结束步骤。
+除 `branch`、`vision_route`、`canvas` 与 `end`，每个步骤需要 `next`。分支和 `next` 必须引用存在的步骤；入口需要能够到达结束步骤。`canvas` 的出口与循环范围由编排器另行校验。
 
 模型只选择声明过的分支或导航目标。API 不接收任意脚本、电脑 Shell 或任意 ADB 命令。
 
@@ -78,7 +78,7 @@ python3 scripts/studio.py request POST /workflows/编号@版本/publish
 
 草稿字段为 `id`（UUID）、`revision`、`name`、`description`、`entry`、`nodes`、`viewport` 和服务生成的 `updated_at`。每个节点保存 `id`、`kind`、`label`、`config`、`targets` 和 `position`；`targets` 是出口编号到目标节点编号的映射，`position` 为画布位置 `[x,y]`，`viewport` 为 `[x,y,zoom]`。新草稿以 `revision: 0` 提交；保存响应返回递增后的版本。更新与删除必须带上最后读取的版本，冲突返回 HTTP 409，客户端应保留当前编辑并提示重新读取或保存副本。草稿的完整执行校验仍需在后续提交正式版本时完成。
 
-`GET /api/editor/observe/{device_id}` 返回原图数据与屏幕宽高、显示屏标识，用于草稿位置标注，不发送触控命令。
+`POST /api/workflow-drafts/{id}/version` 接收 `{"revision":当前草稿版本}`，校验连线、循环范围、坐标标注和条件样本后创建不可覆盖的正式版本；仅改画布位置会返回原执行版本。`GET /api/editor/observe/{device_id}` 返回原图数据与屏幕宽高、显示屏标识，用于标注，不发送触控命令。新编排步骤序列化为 `{"type":"canvas","step":{...}}`，其出口由 `step.targets` 决定，不能同时声明 `next`。坐标标注绑定手机与屏幕形态；无法确认多屏手机的触控显示编号时拒绝标注。
 
 所有接口前缀 `/api`；Agent 使用 `Authorization: Bearer <令牌>`。响应错误提供 `error` 字段。
 

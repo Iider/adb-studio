@@ -498,24 +498,10 @@ impl Adb {
     pub async fn canvas_screen(&self, id: &str) -> Result<ScreenGeometry> {
         let dump = String::from_utf8(self.phone(id, &["shell", "dumpsys", "display"]).await?)?;
         let physical = active_capture_display(&dump)?;
-        let mut logical = None;
-        if let Some(physical) = &physical {
-            let mut current = None;
-            for line in dump.lines() {
-                if let Some(value) = line.trim().strip_prefix("mDisplayId=") {
-                    current = value.trim().parse::<u32>().ok();
-                }
-                if line.contains(&format!("local:{physical}")) && line.contains("DisplayInfo{") {
-                    if let Some(value) = current {
-                        logical = Some(value);
-                    }
-                }
-            }
-            anyhow::ensure!(
-                logical.is_some(),
-                "无法确认当前屏幕的触控编号，需先适配这台多屏手机"
-            );
-        }
+        let logical = physical
+            .as_deref()
+            .map(|physical| logical_input_display(&dump, physical))
+            .transpose()?;
         let (width, height) = self.size(id).await?;
         let after = String::from_utf8(self.phone(id, &["shell", "dumpsys", "display"]).await?)?;
         anyhow::ensure!(
@@ -666,6 +652,31 @@ fn active_capture_display(dump: &str) -> Result<Option<String>> {
     bail!("无法确认当前亮着的屏幕，请点亮目标屏幕后重新截图")
 }
 
+fn logical_input_display(dump: &str, physical: &str) -> Result<u32> {
+    let mut current = None;
+    let mut matches = std::collections::HashSet::new();
+    for line in dump.lines() {
+        if let Some(value) = line.trim().strip_prefix("mDisplayId=") {
+            current = value.trim().parse::<u32>().ok();
+        }
+        if line.contains("DisplayInfo{") {
+            let logical = current.take();
+            let same_screen = line
+                .split("local:")
+                .skip(1)
+                .any(|part| part.split(|c: char| !c.is_ascii_digit()).next() == Some(physical));
+            if same_screen && let Some(logical) = logical {
+                matches.insert(logical);
+            }
+        }
+    }
+    anyhow::ensure!(
+        matches.len() == 1,
+        "无法确认当前屏幕的触控编号，需先适配这台多屏手机"
+    );
+    Ok(*matches.iter().next().unwrap())
+}
+
 fn clean_screenshot(mut output: Vec<u8>) -> Result<(Vec<u8>, image::DynamicImage)> {
     // 部分多屏手机会将显示屏提示写到 PNG 前面的标准输出中。
     let start = output
@@ -692,6 +703,20 @@ fn screen_size(png: &[u8]) -> Result<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn touch_display_requires_its_own_explicit_mapping() {
+        let dump = "mDisplayId=0\nDisplayInfo{local:100}\nmDisplayId=3\nDisplayInfo{local:200}";
+        assert_eq!(logical_input_display(dump, "200").unwrap(), 3);
+        assert!(logical_input_display(&dump.replace("mDisplayId=3\n", ""), "200").is_err());
+        assert!(logical_input_display(dump, "20").is_err());
+        assert!(
+            logical_input_display(
+                &format!("{dump}\nmDisplayId=4\nDisplayInfo{{local:200}}"),
+                "200"
+            )
+            .is_err()
+        );
+    }
     fn raw_image(format: u32, color_space: u32) -> Vec<u8> {
         [
             2u32.to_le_bytes().as_slice(),

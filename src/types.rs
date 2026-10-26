@@ -99,6 +99,9 @@ pub struct Node {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
+    Canvas {
+        step: crate::drafts::DraftNode,
+    },
     VisionRoute {
         package: String,
         cases: Vec<VisionRouteCase>,
@@ -206,6 +209,8 @@ pub struct SampleCase {
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Run {
+    #[serde(default = "empty_object")]
+    pub canvas_progress: Value,
     pub id: String,
     pub device_id: String,
     pub workflow: Workflow,
@@ -227,6 +232,9 @@ pub struct Run {
     pub resume_size: Option<[u32; 2]>,
     #[serde(default)]
     pub model_settings: Option<ModelSettings>,
+}
+fn empty_object() -> Value {
+    serde_json::json!({})
 }
 impl Run {
     pub fn busy(&self) -> bool {

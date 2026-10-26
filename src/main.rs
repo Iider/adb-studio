@@ -1,6 +1,7 @@
 mod access;
 mod adb;
 mod api;
+mod canvas;
 mod db;
 mod drafts;
 mod engine;

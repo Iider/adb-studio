@@ -54,6 +54,8 @@ elif args[:1] in (["-s"], ["-t"]):
         print("device offline", file=sys.stderr)
         sys.exit(1)
     command = args[2:]
+    if command[:3] == ["shell", "input", "-d"]:
+        command = command[:2] + command[4:]
     if command[:1] == ["reverse"]:
         if command[1] == "--remove":
             (root / command[2].replace(":", "-")).unlink(missing_ok=True)
@@ -109,6 +111,9 @@ elif args[:1] in (["-s"], ["-t"]):
         if (root / "disconnect-after-display").exists():
             (root / "transport-gone").touch()
     elif command[:3] == ["shell", "input", "keyevent"]:
+        if (root / "uncertain-key").exists():
+            print("Warning: input result not confirmed")
+            sys.exit(0)
         if command[-1] == "KEYCODE_SLEEP":
             (root / "asleep").touch()
             (root / "locked").touch()

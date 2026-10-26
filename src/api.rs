@@ -1,4 +1,5 @@
 use crate::{App, engine, schedule, types::*};
+use anyhow::Context;
 use axum::{
     Json, Router,
     extract::{
@@ -45,6 +46,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/devices/{id}/screen", post(screen_control))
         .route("/devices/{id}/mirror", get(mirror))
         .route("/workflows", get(workflows).post(submit))
+        .route("/workflow-drafts/{id}/version", post(draft_version))
         .route("/editor/observe/{id}", get(editor_observe))
         .route("/workflows/{key}/validate", post(validate))
         .route("/workflows/{key}/publish", post(publish))
@@ -313,6 +315,55 @@ async fn workflows(State(app): State<Arc<App>>) -> Result<Json<Vec<Workflow>>> {
             .is_some_and(|key| key == w.key());
     }
     Ok(Json(rows))
+}
+
+#[derive(Deserialize)]
+struct DraftVersion {
+    revision: u32,
+}
+async fn draft_version(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+    Json(input): Json<DraftVersion>,
+) -> Result<Json<Workflow>> {
+    let _gate = app.run_gate.lock().await;
+    let draft = app
+        .db
+        .get::<crate::drafts::Draft>("workflow_drafts", &id)
+        .await?
+        .context("草稿不存在")?;
+    if draft.revision != input.revision {
+        return Err(anyhow::anyhow!("草稿已变化，请先保存并重新读取").into());
+    }
+    let workflow_id = format!("manual-{id}");
+    let previous = app
+        .db
+        .list::<Workflow>("workflows")
+        .await?
+        .into_iter()
+        .filter(|w| w.id == workflow_id)
+        .max_by_key(|w| w.version);
+    let version = previous
+        .as_ref()
+        .map_or(0, |w| w.version)
+        .checked_add(1)
+        .context("版本号超出范围")?;
+    let workflow = crate::canvas::compile(&draft, version)?;
+    if let Some(previous) = previous {
+        let definition = |w: &Workflow| -> anyhow::Result<Value> {
+            let mut value = serde_json::to_value(w)?;
+            for field in ["version", "active", "sample_validated"] {
+                value.as_object_mut().unwrap().remove(field);
+            }
+            Ok(value)
+        };
+        if definition(&previous)? == definition(&workflow)? {
+            return Ok(Json(previous));
+        }
+    }
+    app.db.put("workflows", &workflow.key(), &workflow).await?;
+    let _ = app.events.send(json!({"type":"changed"}));
+    Ok(Json(workflow))
 }
 
 async fn editor_observe(

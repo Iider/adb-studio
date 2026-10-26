@@ -21,6 +21,12 @@ pub fn builtins() -> Vec<Workflow> {
     .collect()
 }
 pub fn validate(w: &Workflow) -> Result<()> {
+    if w.nodes
+        .iter()
+        .any(|n| matches!(n.action, Action::Canvas { .. }))
+    {
+        return crate::canvas::validate(w);
+    }
     if w.schema_version != 1
         || w.version == 0
         || w.id.is_empty()
@@ -335,6 +341,13 @@ pub fn samples(w: &Workflow) -> Result<()> {
             .find(|n| n.id == t.node)
             .context("样本步骤不存在")?;
         let actual = match &n.action {
+            Action::Canvas { step } => {
+                let actual = crate::canvas::sample_choice(step, &t.text)?;
+                if actual != t.expected {
+                    bail!("判断样本未通过：{}", n.label);
+                }
+                continue;
+            }
             Action::VisionCheck { .. } | Action::VisionTap { .. } | Action::VisionRoute { .. } => {
                 let expected = match &n.action {
                     Action::VisionRoute { cases, .. } => {
@@ -388,6 +401,9 @@ pub fn samples(w: &Workflow) -> Result<()> {
         }
     }
     for n in &w.nodes {
+        if let Action::Canvas { step } = &n.action {
+            crate::canvas::require_samples(step, &w.tests)?;
+        }
         if matches!(
             n.action,
             Action::Branch { .. } | Action::QishuiLoop { .. } | Action::QishuiNavigate
@@ -531,6 +547,9 @@ pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow, trial: bool)
     let _gate = app.run_gate.lock().await;
     validate(&w)?;
     let needs_ocr = w.nodes.iter().any(|n| {
+        if let Action::Canvas { step } = &n.action {
+            return crate::canvas::needs_text(step);
+        }
         matches!(
             n.action,
             Action::TapText { .. }
@@ -606,6 +625,7 @@ pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow, trial: bool)
         None
     };
     let r = Run {
+        canvas_progress: json!({}),
         id: uuid::Uuid::new_v4().to_string(),
         device_id: device_id.into(),
         node: w.entry.clone(),
@@ -682,6 +702,7 @@ pub async fn resume(app: Arc<App>, id: &str) -> Result<Run> {
         && matches!(
             node.action,
             Action::FixedTapLoop { .. }
+                | Action::Canvas { .. }
                 | Action::TapLoop { .. }
                 | Action::Swipe { .. }
                 | Action::VisionTap { .. }
@@ -726,12 +747,12 @@ pub async fn recover(app: Arc<App>) -> Result<()> {
     Ok(())
 }
 
-async fn save(app: &App, r: &Run) -> Result<()> {
+pub(crate) async fn save(app: &App, r: &Run) -> Result<()> {
     app.db.put("runs", &r.id, r).await?;
     let _ = app.events.send(json!({"type":"changed","run_id":r.id}));
     Ok(())
 }
-async fn shot(app: &App, r: &mut Run, f: &Frame, label: &str) -> Result<()> {
+pub(crate) async fn shot(app: &App, r: &mut Run, f: &Frame, label: &str) -> Result<()> {
     let folder = app.data.join("shots").join(&r.id);
     tokio::fs::create_dir_all(&folder).await?;
     let name = format!("{}-{label}.png", uuid::Uuid::new_v4().simple());
@@ -739,7 +760,7 @@ async fn shot(app: &App, r: &mut Run, f: &Frame, label: &str) -> Result<()> {
     r.last_shot = Some(format!("{}/{}", r.id, name));
     save(app, r).await
 }
-async fn ready(app: &App, r: &mut Run) -> Result<bool> {
+pub(crate) async fn ready(app: &App, r: &mut Run) -> Result<bool> {
     let mut restored = r.state != "running";
     loop {
         check_pause(app, r).await?;
@@ -781,7 +802,7 @@ async fn check_pause(app: &App, r: &Run) -> Result<()> {
     }
     Ok(())
 }
-async fn pause(app: &App, r: &Run, seconds: f64) -> Result<()> {
+pub(crate) async fn pause(app: &App, r: &Run, seconds: f64) -> Result<()> {
     let control = app
         .controls
         .lock()
@@ -893,7 +914,10 @@ async fn run_steps(app: &App, r: &mut Run) -> Result<&'static str> {
                 return Err(e);
             }
         }
-        if !matches!(n.action, Action::Branch { .. } | Action::VisionRoute { .. }) {
+        if !matches!(
+            n.action,
+            Action::Branch { .. } | Action::VisionRoute { .. } | Action::Canvas { .. }
+        ) {
             r.node = n.next.context("缺少下一步")?;
         }
         r.pending = None;
@@ -981,6 +1005,7 @@ async fn vision_tap(
 }
 async fn step(app: &App, r: &mut Run, n: &Node) -> Result<Option<&'static str>> {
     match &n.action {
+        Action::Canvas { step } => crate::canvas::execute(app, r, step).await?,
         Action::VisionRoute { package, cases } => {
             vision_app(app, r, package).await?;
             let frame = vision_frame(app, r, "vision-route").await?;
