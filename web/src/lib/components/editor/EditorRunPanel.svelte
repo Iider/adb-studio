@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Play, ChevronDown, X } from "@lucide/svelte";
+  import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import {
     api,
     busy,
@@ -192,20 +193,27 @@
       {version ? "已保存第 " + version.version + " 版" : "先保存新版本，再试跑"}
     </p>
     <label
-      >试跑手机<select
+      >试跑手机<Dropdown
+        label="试跑手机"
         bind:value={device}
         disabled={disabled || restoring || working || (!!run && busy(run))}
-        ><option value="">请选择手机</option>{#each devices as item}<option
-            value={item.id}
-            disabled={!item.online ||
-              (!!version?.devices.length && !version.devices.includes(item.id))}
-            >{item.name}{!item.online
-              ? "（离线）"
-              : version?.devices.length && !version.devices.includes(item.id)
-                ? "（未标注）"
-                : ""}</option
-          >{/each}</select
-      ></label
+        items={[
+          { value: "", label: "请选择手机" },
+          ...devices.map((item) => ({
+            value: item.id,
+            label: `${item.name}${
+              !item.online
+                ? "（离线）"
+                : version?.devices.length && !version.devices.includes(item.id)
+                  ? "（未标注）"
+                  : ""
+            }`,
+            disabled:
+              !item.online ||
+              (!!version?.devices.length && !version.devices.includes(item.id)),
+          })),
+        ]}
+      /></label
     >
     <div class="run-actions">
       <button
@@ -324,11 +332,6 @@
   label {
     font-size: 13px;
     margin: 16px 0;
-  }
-  select {
-    width: 100%;
-    min-height: 40px;
-    font-size: 13px;
   }
   .run-actions {
     display: flex;

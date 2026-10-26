@@ -10,6 +10,7 @@
     Workflow as FlowIcon,
   } from "@lucide/svelte";
   import Button from "$lib/components/ui/button/button.svelte";
+  import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import {
     runLabel,
     time,
@@ -115,13 +116,17 @@
       placeholder="搜索任务名称或手机"
       bind:value={search}
     />
-    <label class="visually-hidden" for="task-filter">筛选任务状态</label>
-    <select id="task-filter" class="task-filter" bind:value={filter}>
-      <option value="all">全部任务</option>
-      <option value="ready">已启用</option>
-      <option value="trial">待试跑</option>
-      <option value="running">进行中</option>
-    </select>
+    <Dropdown
+      class="task-filter"
+      label="筛选任务状态"
+      bind:value={filter}
+      items={[
+        { value: "all", label: "全部任务" },
+        { value: "ready", label: "已启用" },
+        { value: "trial", label: "待试跑" },
+        { value: "running", label: "进行中" },
+      ]}
+    />
     <Button disabled={!connected || !!working} onclick={onRefresh}
       ><RefreshCw
         size={14}

@@ -17,6 +17,7 @@
     label,
     placeholder = "请选择",
     disabled = false,
+    class: className = "",
     selection,
     content,
     actions,
@@ -28,6 +29,7 @@
     label: string;
     placeholder?: string;
     disabled?: boolean;
+    class?: string;
     selection?: Snippet<[T]>;
     content?: Snippet<[T]>;
     actions?: Snippet<[T, () => void]>;
@@ -156,7 +158,7 @@
 <button
   bind:this={trigger}
   type="button"
-  class="dropdown-trigger"
+  class={`dropdown-trigger ${className}`}
   class:open
   aria-label={label}
   aria-haspopup="menu"

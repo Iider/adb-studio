@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import type { Config, ConditionSample } from "$lib/workflow-editor";
   let {
     config: c,
@@ -22,15 +23,17 @@
   <fieldset>
     <legend>样本 {index + 1}</legend>
     <label
-      >预期结果<select
+      >预期结果<Dropdown
+        label="预期结果"
         value={sample.expected}
-        onchange={(event) =>
-          set(index, {
-            expected: event.currentTarget.value as ConditionSample["expected"],
-          })}
-        ><option value="yes">符合</option><option value="no">不符合</option
-        ><option value="unknown">无法确定</option></select
-      ></label
+        items={[
+          { value: "yes", label: "符合" },
+          { value: "no", label: "不符合" },
+          { value: "unknown", label: "无法确定" },
+        ]}
+        onchange={(value) =>
+          set(index, { expected: value as ConditionSample["expected"] })}
+      /></label
     >
     {#if c.conditions?.some((item) => item.source === "text")}<label
         >样本页面文字<textarea

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import { api, type Device } from "$lib/api";
   import type { CanvasNode, CoordinateProfile } from "$lib/workflow-editor";
   let {
@@ -141,12 +142,18 @@
   </p>
   <div class="picker-tools">
     <label
-      >目标手机<select bind:value={device} onchange={capture}
-        >{#each devices as item}<option value={item.id} disabled={!item.online}
-            >{item.name}{item.online ? "" : "（离线）"}</option
-          >{/each}</select
-      ></label
-    ><button disabled={busy || !device} onclick={capture}
+      >目标手机<Dropdown
+        label="标注目标手机"
+        bind:value={device}
+        items={devices.map((item) => ({
+          value: item.id,
+          label: `${item.name}${item.online ? "" : "（离线）"}`,
+          disabled: !item.online,
+        }))}
+        onchange={() => void capture()}
+      /></label
+    >
+    <button disabled={busy || !device} onclick={capture}
       >{busy ? "正在取图…" : "重新取图"}</button
     >
   </div>

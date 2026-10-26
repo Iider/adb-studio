@@ -1,5 +1,6 @@
 <script lang="ts">
   import ConditionSamples from "./ConditionSamples.svelte";
+  import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import {
     Plus,
     Trash2,
@@ -247,23 +248,32 @@
   {/if}
   {#if kind === "condition" || kind === "wait_condition"}
     <label
-      >组合方式<select
+      >组合方式<Dropdown
+        label="组合方式"
         value={c.mode}
-        onchange={(event) =>
-          onConfig({ ...c, mode: event.currentTarget.value as "all" | "any" })}
-        ><option value="all">全部条件满足</option><option value="any"
-          >任一条件满足</option
-        ></select
-      ></label
+        items={[
+          { value: "all", label: "全部条件满足" },
+          { value: "any", label: "任一条件满足" },
+        ]}
+        onchange={(value) => onConfig({ ...c, mode: value as "all" | "any" })}
+      /></label
     >
     {#each c.conditions ?? [] as condition, i}
       <fieldset class="condition-card">
         <legend>条件 {i + 1}</legend>
         <label
-          >判断内容<select
+          >判断内容<Dropdown
+            label="判断内容"
             value={condition.source}
-            onchange={(event) => {
-              const source = event.currentTarget.value as Condition["source"];
+            items={[
+              { value: "text", label: "页面文字" },
+              { value: "app", label: "当前应用" },
+              ...(kind === "condition"
+                ? [{ value: "round", label: "当前循环轮次" }]
+                : []),
+            ]}
+            onchange={(value) => {
+              const source = value as Condition["source"];
               setCondition(i, {
                 source,
                 operator:
@@ -275,31 +285,30 @@
                 value: "",
               });
             }}
-            ><option value="text">页面文字</option><option value="app"
-              >当前应用</option
-            >{#if kind === "condition"}<option value="round"
-                >当前循环轮次</option
-              >{/if}</select
-          ></label
+          /></label
         >
         <label
-          >判断方式<select
+          >判断方式<Dropdown
+            label="判断方式"
             value={condition.operator}
-            onchange={(event) =>
-              setCondition(i, {
-                operator: event.currentTarget.value as Condition["operator"],
-              })}
-          >
-            {#if condition.source === "text"}<option value="contains"
-                >包含文字</option
-              ><option value="not_contains">不包含文字</option>
-            {:else if condition.source === "app"}<option value="is"
-                >是这个应用</option
-              ><option value="is_not">不是这个应用</option>
-            {:else}<option value="eq">等于</option><option value="gt"
-                >大于</option
-              ><option value="lt">小于</option>{/if}
-          </select></label
+            items={condition.source === "text"
+              ? [
+                  { value: "contains", label: "包含文字" },
+                  { value: "not_contains", label: "不包含文字" },
+                ]
+              : condition.source === "app"
+                ? [
+                    { value: "is", label: "是这个应用" },
+                    { value: "is_not", label: "不是这个应用" },
+                  ]
+                : [
+                    { value: "eq", label: "等于" },
+                    { value: "gt", label: "大于" },
+                    { value: "lt", label: "小于" },
+                  ]}
+            onchange={(value) =>
+              setCondition(i, { operator: value as Condition["operator"] })}
+          /></label
         >
         <label
           >{condition.source === "text"
@@ -356,14 +365,19 @@
     />{/if}
   {#if kind === "break" || kind === "continue"}
     <label
-      >所属循环<select
+      >所属循环<Dropdown
+        label="所属循环"
         value={c.loop ?? ""}
-        onchange={(event) =>
-          onConfig({ ...c, loop: event.currentTarget.value })}
-        ><option value="">请选择循环</option>{#each loops as loop}<option
-            value={loop.id}>{loop.data.label}</option
-          >{/each}</select
-      ></label
+        placeholder="请选择循环"
+        items={[
+          { value: "", label: "请选择循环" },
+          ...loops.map((loop) => ({
+            value: loop.id,
+            label: loop.data.label,
+          })),
+        ]}
+        onchange={(value) => onConfig({ ...c, loop: value })}
+      /></label
     >
     <p class="inspector-hint">
       {kind === "break"
@@ -372,30 +386,33 @@
     </p>
   {/if}
   {#if kind === "end"}<label
-      >结束结果<select
+      >结束结果<Dropdown
+        label="结束结果"
         value={c.result}
-        onchange={(event) =>
-          onConfig({
-            ...c,
-            result: event.currentTarget.value as Config["result"],
-          })}
-        ><option value="succeeded">任务完成</option><option value="needs_help"
-          >需要人工处理</option
-        ></select
-      ></label
+        items={[
+          { value: "succeeded", label: "任务完成" },
+          { value: "needs_help", label: "需要人工处理" },
+        ]}
+        onchange={(value) =>
+          onConfig({ ...c, result: value as Config["result"] })}
+      /></label
     >{/if}
 
   {#if ports(kind).length}<h3>连接去向</h3>{/if}
   {#each ports(kind) as port (port.id)}
     <label
-      >{port.label}<select
+      >{port.label}<Dropdown
+        label={port.label}
         value={kind === "entry" ? entry : (node.data.targets[port.id] ?? "")}
-        onchange={(event) => onTarget(port.id, event.currentTarget.value)}
-        ><option value="">尚未连接</option
-        >{#each nodes.filter((item) => item.id !== node.id && item.id !== "__entry") as target}<option
-            value={target.id}>{target.data.label}</option
-          >{/each}</select
-      ></label
+        placeholder="尚未连接"
+        items={[
+          { value: "", label: "尚未连接" },
+          ...nodes
+            .filter((item) => item.id !== node.id && item.id !== "__entry")
+            .map((target) => ({ value: target.id, label: target.data.label })),
+        ]}
+        onchange={(value) => onTarget(port.id, value)}
+      /></label
     >
   {/each}
   {#if kind !== "entry"}
@@ -423,8 +440,7 @@
     line-height: 1.5;
     margin: 16px 0;
   }
-  input,
-  select {
+  input {
     font-size: 14px;
   }
   h3 {

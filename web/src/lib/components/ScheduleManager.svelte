@@ -14,6 +14,7 @@
     X,
   } from "@lucide/svelte";
   import Button from "$lib/components/ui/button/button.svelte";
+  import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import type { Device, Schedule, Workflow, Rule } from "$lib/api";
   import {
     onceExpired,
@@ -247,12 +248,16 @@
       placeholder="搜索定时名称、任务或手机"
       bind:value={search}
     />
-    <label class="visually-hidden" for="schedule-filter">筛选定时状态</label>
-    <select id="schedule-filter" class="task-filter" bind:value={filter}>
-      <option value="all">全部定时</option><option value="enabled"
-        >已开启</option
-      ><option value="disabled">未开启</option>
-    </select>
+    <Dropdown
+      class="task-filter"
+      label="筛选定时状态"
+      bind:value={filter}
+      items={[
+        { value: "all", label: "全部定时" },
+        { value: "enabled", label: "已开启" },
+        { value: "disabled", label: "未开启" },
+      ]}
+    />
     <Button
       bind:ref={newButton}
       disabled={loading ||
@@ -438,35 +443,29 @@
       >
       <div class="schedule-field-pair">
         <label
-          >任务<select
-            required
+          >任务<Dropdown
+            label="选择定时任务"
             bind:value={workflowId}
-            onchange={(event) => {
-              workflowId = event.currentTarget.value;
-              chooseDevice();
-            }}
-          >
-            {#if !workflow}<option value={workflowId} disabled
-                >{workflowId
-                  ? `${workflowName(workflowId)}（未启用）`
-                  : "暂无已启用任务"}</option
-              >{/if}
-            {#each activeWorkflows as available}<option value={available.id}
-                >{available.name}</option
-              >{/each}
-          </select></label
+            placeholder={workflowId
+              ? `${workflowName(workflowId)}（未启用）`
+              : "暂无已启用任务"}
+            items={activeWorkflows.map((available) => ({
+              value: available.id,
+              label: available.name,
+            }))}
+            onchange={() => chooseDevice()}
+          /></label
         >
         <label
-          >手机<select required bind:value={deviceId}>
-            {#if !compatibleDevices.some((device) => device.id === deviceId)}<option
-                value={deviceId}
-                disabled
-                >{deviceId ? deviceName(deviceId) : "暂无适用手机"}</option
-              >{/if}
-            {#each compatibleDevices as device}<option value={device.id}
-                >{device.name}{device.online ? "" : "（离线）"}</option
-              >{/each}
-          </select></label
+          >手机<Dropdown
+            label="选择定时手机"
+            bind:value={deviceId}
+            placeholder={deviceId ? deviceName(deviceId) : "暂无适用手机"}
+            items={compatibleDevices.map((device) => ({
+              value: device.id,
+              label: `${device.name}${device.online ? "" : "（离线）"}`,
+            }))}
+          /></label
         >
       </div>
       {#if selectedDevice && (!selectedDevice.online || selectedDevice.locked)}<p
@@ -476,13 +475,16 @@
         </p>{/if}
       <div class="schedule-field-pair">
         <label
-          >执行规则<select bind:value={kind}
-            ><option value="daily">每天</option><option value="weekly"
-              >每周</option
-            ><option value="interval">固定间隔</option><option value="once"
-              >只执行一次</option
-            ></select
-          ></label
+          >执行规则<Dropdown
+            label="选择执行规则"
+            bind:value={kind}
+            items={[
+              { value: "daily", label: "每天" },
+              { value: "weekly", label: "每周" },
+              { value: "interval", label: "固定间隔" },
+              { value: "once", label: "只执行一次" },
+            ]}
+          /></label
         >
         {#if kind === "once"}<label
             >日期与时间<input

@@ -3,6 +3,7 @@
   import { LoaderCircle } from "@lucide/svelte";
   import { notify } from "$lib/notifications";
   import Button from "$lib/components/ui/button/button.svelte";
+  import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import { api, type Device, type VisionInspection } from "$lib/api";
 
   let { devices, connected }: { devices: Device[]; connected: boolean } =
@@ -79,19 +80,25 @@
   </p>
   <fieldset disabled={pending} class="vision-fields">
     <label
-      >图片来源<select bind:value={source}>
-        <option value="phone">手机当前画面</option><option value="file"
-          >本地 PNG</option
-        >
-      </select></label
+      >图片来源<Dropdown
+        label="图片来源"
+        bind:value={source}
+        items={[
+          { value: "phone", label: "手机当前画面" },
+          { value: "file", label: "本地 PNG" },
+        ]}
+      /></label
     >
     {#if source === "phone"}
       <label
-        >手机<select bind:value={deviceId} disabled={!devices.length}>
-          {#each devices as device}<option value={device.id}
-              >{device.name} · {device.online ? "在线" : "离线"}</option
-            >{/each}
-        </select></label
+        >手机<Dropdown
+          label="识别检查手机"
+          bind:value={deviceId}
+          items={devices.map((device) => ({
+            value: device.id,
+            label: `${device.name} · ${device.online ? "在线" : "离线"}`,
+          }))}
+        /></label
       >
     {:else}
       <label

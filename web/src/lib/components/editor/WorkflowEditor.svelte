@@ -55,6 +55,7 @@
   import StepInspector from "./StepInspector.svelte";
   import CoordinatePicker from "./CoordinatePicker.svelte";
   import EditorRunPanel from "./EditorRunPanel.svelte";
+  import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
 
   const nodeTypes = { step: StepNode };
   const flow = useSvelteFlow<CanvasNode>();
@@ -68,6 +69,7 @@
   let publishing = $state(false);
   let executionError = $state("");
   let id = $state("");
+  let draftChoice = $state("");
   let revision = $state(0);
   let name = $state("");
   let description = $state("");
@@ -214,6 +216,7 @@
   function loadDraft(draft: Draft, saved = true) {
     ready = false;
     id = draft.id;
+    draftChoice = draft.id;
     revision = draft.revision;
     name = draft.name;
     description = draft.description;
@@ -369,6 +372,7 @@
     } catch (error) {
       notify.error(message(error));
     } finally {
+      draftChoice = id;
       switching = false;
     }
   }
@@ -839,19 +843,18 @@
         >
       </div>
       <label class="draft-picker"
-        >打开草稿<select
-          value={id}
+        >打开草稿<Dropdown
+          label="打开草稿"
+          bind:value={draftChoice}
           disabled={!ready || saving || switching || !!recovery}
-          onchange={(event) => {
-            const next = event.currentTarget.value;
-            event.currentTarget.value = id;
-            void selectDraft(next);
-          }}
-          ><option value={id}>{name || "未命名工作流"}</option
-          >{#each drafts.filter((draft) => draft.id !== id) as draft}<option
-              value={draft.id}>{draft.name}</option
-            >{/each}</select
-        ></label
+          items={[
+            { value: id, label: name || "未命名工作流" },
+            ...drafts
+              .filter((draft) => draft.id !== id)
+              .map((draft) => ({ value: draft.id, label: draft.name })),
+          ]}
+          onchange={(next) => void selectDraft(next)}
+        /></label
       >
       <div class="popover-actions">
         <button
@@ -1098,13 +1101,18 @@
         </div>
         <div class="settings-content">
           <label
-            >选择步骤<select
+            >选择步骤<Dropdown
+              label="选择步骤"
               value={selected}
-              onchange={(event) => choose(event.currentTarget.value)}
-              ><option value="">工作流设置</option>{#each nodes as node}<option
-                  value={node.id}>{node.data.label}</option
-                >{/each}</select
-            ></label
+              items={[
+                { value: "", label: "工作流设置" },
+                ...nodes.map((node) => ({
+                  value: node.id,
+                  label: node.data.label,
+                })),
+              ]}
+              onchange={choose}
+            /></label
           >
           {#if current}
             <StepInspector
@@ -1152,12 +1160,21 @@
                 onchange={remember}></textarea></label
             >
             <label
-              >开始执行的步骤<select bind:value={entry} onchange={remember}
-                ><option value="">请选择入口</option
-                >{#each nodes.filter((node) => node.id !== "__entry") as node}<option
-                    value={node.id}>{node.data.label}</option
-                  >{/each}</select
-              ></label
+              >开始执行的步骤<Dropdown
+                label="开始执行的步骤"
+                bind:value={entry}
+                items={[
+                  { value: "", label: "请选择入口" },
+                  ...nodes
+                    .filter((node) => node.id !== "__entry")
+                    .map((node) => ({
+                      value: node.id,
+                      label: node.data.label,
+                    })),
+                ]}
+                placeholder="请选择入口"
+                onchange={remember}
+              /></label
             >
             <p class="settings-hint">
               {operationLimit === null
@@ -1394,10 +1411,6 @@
     width: 100%;
     margin: 0 0 14px;
     font-size: 13px;
-  }
-  .draft-picker select {
-    min-height: 40px;
-    width: 100%;
   }
   .popover-actions {
     display: flex;

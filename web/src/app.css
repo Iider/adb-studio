@@ -232,7 +232,7 @@ span[data-slot="badge"] {
 }
 .shell {
   --workspace-header-height: 52px;
-  --workspace-gap: 19px;
+  --workspace-gap: 18px;
   display: flex;
   height: 100dvh;
   min-height: 0;

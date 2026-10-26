@@ -1426,11 +1426,14 @@
                 bind:value={model.endpoint}
               /></label
             ><label
-              >接口格式<select bind:value={model.api}
-                ><option value="responses">Responses</option><option
-                  value="chat_completions">Chat Completions</option
-                ></select
-              ></label
+              >接口格式<Dropdown
+                label="接口格式"
+                bind:value={model.api}
+                items={[
+                  { value: "responses", label: "Responses" },
+                  { value: "chat_completions", label: "Chat Completions" },
+                ]}
+              /></label
             ><label>密钥变量<input required bind:value={model.key_env} /></label
             >
             <p class="hint">
