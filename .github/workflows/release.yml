@@ -7,13 +7,18 @@ permissions:
   contents: read
 jobs:
   build:
+    env:
+      PYTHONUTF8: '1'
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2025]
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -28,10 +33,11 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install android-platform-tools
       - run: cargo test --locked && cargo build --locked
-      - run: python3 scripts/check-integration.py
-      - run: python3 scripts/check-platform.py
-      - run: python3 scripts/check-vision.py
-      - run: python3 scripts/check-mirror.py
+      - run: python scripts/check-integration.py
+      - run: python scripts/check-platform.py
+      - run: python scripts/check-vision.py
+      - run: python scripts/check-mirror.py
+      - run: python scripts/check-editor.py
       - name: Build Linux release on Debian 12
         if: runner.os == 'Linux'
         run: |
@@ -46,11 +52,15 @@ jobs:
           docker cp "$release_container:/out/adb-studio" target/release/adb-studio
           docker rm "$release_container"
           python3 scripts/package-release.py --skip-build
-      - name: Build Mac release
-        if: runner.os == 'macOS'
-        run: python3 scripts/package-release.py
+      - name: Build Mac or Windows release
+        if: runner.os != 'Linux'
+        run: python scripts/package-release.py
       - name: Check release archive
-        run: python3 scripts/check-release.py dist/*.tar.gz
+        if: runner.os != 'Windows'
+        run: python scripts/check-release.py dist/*.tar.gz
+      - name: Check Windows release archive
+        if: runner.os == 'Windows'
+        run: Get-ChildItem dist/*.zip | ForEach-Object { python scripts/check-release.py $_.FullName; if ($LASTEXITCODE) { exit $LASTEXITCODE } }
       - uses: actions/upload-artifact@v4
         with:
           name: adb-studio-${{ runner.os }}-${{ runner.arch }}
@@ -69,4 +79,4 @@ jobs:
       - name: Publish draft release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --draft --title "$GITHUB_REF_NAME" --notes 'macOS 与 Linux 发行包，安装说明见包内 docs/deployment.md。'
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --draft --title "$GITHUB_REF_NAME" --notes 'macOS、Linux 与 Windows 发行包，安装说明见包内 docs/deployment.md。'

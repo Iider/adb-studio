@@ -14,6 +14,8 @@ import urllib.request
 import uuid
 import runpy
 
+from check_support import executable, python_program, environment, stop
+
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "http://127.0.0.1:17844"
 
@@ -28,12 +30,12 @@ def main():
         (data / "bin").mkdir()
         ocr = data / "bin/ocr"
         ocr.write_text('#!/usr/bin/env python3\nimport os,sys\nfrom pathlib import Path\nsys.stdin.buffer.read()\np=Path(os.environ["FAKE_ADB_DIR"])/"words"\nprint(p.read_text() if p.exists() else "[]")\n')
-        ocr.chmod(0o755)
+        ocr = python_program(ocr)
         adb = data / "adb"
         shutil.copy2(ROOT / "scripts/fake-adb.py", adb)
-        adb.chmod(0o755)
+        adb = python_program(adb)
         env = {
-            **os.environ,
+            **os.environ, **environment(data),
             "ADB_STUDIO_ROOT": str(ROOT),
             "ADB_STUDIO_DATA": str(data),
             "ADB_STUDIO_ADB": str(adb),
@@ -59,7 +61,7 @@ def main():
             return status, result
 
         def boot(log):
-            process = subprocess.Popen([str(ROOT / "target/debug/adb-studio")], env=env, stdout=log, stderr=log)
+            process = subprocess.Popen([str(executable(ROOT / "target/debug/adb-studio"))], env=env, stdout=log, stderr=log)
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 if process.poll() is not None:
@@ -69,7 +71,7 @@ def main():
                     return process
                 except (OSError, urllib.error.URLError):
                     time.sleep(0.1)
-            process.terminate()
+            stop(process, data)
             process.wait(timeout=10)
             raise AssertionError("检查后台启动超时")
 
@@ -95,7 +97,7 @@ def main():
                 assert sorted(results) == [200, 409], results
                 latest = call(path)[1]
                 assert latest["revision"] == 2
-                process.terminate()
+                stop(process, data)
                 process.wait(timeout=10)
                 process = boot(log)
                 assert call(path)[1] == latest
@@ -307,7 +309,7 @@ def main():
                 call("/runs/" + run["id"] + "/pause","POST")
                 wait_value(lambda: record(run["id"])["state"] == "paused")
                 paused = record(run["id"])
-                process.terminate()
+                stop(process, data)
                 process.wait(timeout=10)
                 process = boot(log)
                 restored = record(run["id"])
@@ -384,7 +386,7 @@ def main():
                 (fake / "expected-display").unlink()
                 print("通过：截图与点击使用同一显示屏，无法确认触控编号时拒绝动作")
             finally:
-                process.terminate()
+                stop(process, data)
                 process.wait(timeout=10)
 
 

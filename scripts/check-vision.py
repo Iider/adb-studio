@@ -16,6 +16,8 @@ import time
 import urllib.error
 import urllib.request
 
+from check_support import executable, python_program, environment, stop as stop_server
+
 ROOT = Path(__file__).resolve().parents[1]
 helpers = runpy.run_path(str(ROOT / "scripts/check-integration.py"))
 png, wait = helpers["png"], helpers["wait"]
@@ -69,7 +71,7 @@ class Model(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps(data).encode())
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
 
 
@@ -85,15 +87,15 @@ def main():
         (fake / "screen.png").write_bytes(positive)
         adb = data / "adb"
         shutil.copy2(ROOT / "scripts/fake-adb.py", adb)
-        adb.chmod(0o755)
+        adb = python_program(adb)
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Model)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        env = {**os.environ, "ADB_STUDIO_ROOT": str(ROOT), "ADB_STUDIO_DATA": str(data),
+        env = {**os.environ, **environment(data), "ADB_STUDIO_ROOT": str(ROOT), "ADB_STUDIO_DATA": str(data),
                "ADB_STUDIO_ADB": str(adb), "ADB_STUDIO_PORT": "17844", "FAKE_ADB_DIR": str(fake),
                "TEST_VISION_KEY": "test-only", "ADB_STUDIO_ORIGINS": "https://studio.test:8443"}
         logfile = (data / "server.log").open("w")
-        process = subprocess.Popen([str(ROOT / "target/debug/adb-studio")], env=env, stdout=logfile, stderr=logfile)
+        process = subprocess.Popen([str(executable(ROOT / "target/debug/adb-studio"))], env=env, stdout=logfile, stderr=logfile)
 
         def call(path, method="GET", body=None, expected=200, extra=None):
             headers = {"Content-Type": "application/json", "Authorization": "Bearer " + (data / "access-token").read_text().strip(), **(extra or {})}
@@ -130,7 +132,7 @@ def main():
             model = {"endpoint": f"http://127.0.0.1:{server.server_port}", "model": "mock-vision", "api": "responses", "key_env": "TEST_VISION_KEY"}
             call("/settings/model", "PUT", model)
             reply = call("/settings", extra={"Host": "studio.test:8443", "Origin": "https://studio.test:8443"})
-            assert reply["platform"] in {"macos", "linux"}
+            assert reply["platform"] in {"macos", "linux", "windows"}
             call("/settings", expected=401, extra={"Host": "studio.test:8443", "Origin": "http://studio.test:8443"})
             request = urllib.request.Request(BASE + "/api/session", headers={"Host": "studio.test:8443"})
             with urllib.request.urlopen(request) as response:
@@ -272,7 +274,7 @@ def main():
             print("通过：模型等待可暂停，迟到结果不点击，修改设置不改运行快照", flush=True)
         finally:
             Model.release.set()
-            process.terminate()
+            stop_server(process, data)
             process.wait(timeout=20)
             server.shutdown()
             server.server_close()

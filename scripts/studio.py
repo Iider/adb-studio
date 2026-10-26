@@ -19,7 +19,7 @@ def request(method, path, body=None, base="http://127.0.0.1:17841", timings=Fals
     data = Path(os.getenv("ADB_STUDIO_DATA", ROOT / "data"))
     pointer = ROOT / "data/service-root"
     if "ADB_STUDIO_DATA" not in os.environ and pointer.exists():
-        data = Path(pointer.read_text().strip()) / "data"
+        data = Path(pointer.read_text(encoding="utf-8").strip()) / "data"
     token = (data / "access-token").read_text().strip()
     req = urllib.request.Request(
         base + "/api" + path,
@@ -73,7 +73,7 @@ def main():
         if args.file and args.json:
             parser.error("--file 和 --json 只能使用一个")
         body = (
-            json.loads(args.file.read_text() if args.file else args.json)
+            json.loads(args.file.read_text(encoding="utf-8") if args.file else args.json)
             if args.file or args.json
             else None
         )

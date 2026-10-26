@@ -11,8 +11,19 @@ import select
 
 root = Path(os.environ["FAKE_ADB_DIR"])
 args = sys.argv[1:]
-with (root / "commands").open("a") as log:
-    log.write(json.dumps(args) + "\n")
+
+
+def append_log(name, line):
+    # Windows 的追加写入由多个模拟进程共享，需防止记录互相覆盖。
+    with (root / (name + ".lock")).open("a+b") as lock:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        with (root / name).open("ab", buffering=0) as log:
+            log.write((line + "\n").encode("utf-8"))
+
+
+append_log("commands", json.dumps(args))
 online = (root / "online").exists()
 if args == ["devices", "-l"]:
     print("List of devices attached")
@@ -30,6 +41,9 @@ elif args == ["mdns", "services"]:
         print("adb-mock-phone._adb-tls-pairing._tcp. _adb-tls-pairing._tcp. 127.0.0.1:41234")
         print("adb-outside._adb-tls-connect._tcp. _adb-tls-connect._tcp. 8.8.8.8:5555")
 elif args[:1] == ["pair"]:
+    if (root / "pair-protocol-fault").exists():
+        print("error: protocol fault (couldn't read status message): No error", file=sys.stderr)
+        sys.exit(1)
     if args == ["pair", "127.0.0.1:41234", "123456"]:
         print("Successfully paired to 127.0.0.1:41234")
     else:

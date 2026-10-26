@@ -8,3 +8,8 @@
 - `data/` 保存运行状态、令牌、截图及日志，不提交；不得记录模型密钥。
 - 修改执行行为时运行 `cargo test` 与模拟设备集成检查。网页修改运行 `npm run check` 和构建。
 - 以真实失败证据调整规则；保持用户说明、接口文档与实际行为一致。
+- Windows 安装与自启见 `docs/deployment.md`；Mac 使用 launchd，Linux 使用 systemd，平台分支不得混用。Windows 模拟检查通过 `scripts/check_support.py` 调用 Python 模拟设备，不操作真机。
+
+## 当前状态与下一步
+
+Windows 本机部署、模拟检查及用户真机 Wi-Fi 连接、截图、投屏验收通过。安装、启动、停止、自启和 ZIP 使用见 `docs/deployment.md`。待完成：Mac 实机与完整 Linux 后台回归。

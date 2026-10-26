@@ -17,6 +17,8 @@ import urllib.error
 import urllib.request
 import zlib
 
+from check_support import executable, python_program, environment, stop
+
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "http://127.0.0.1:17842"
 
@@ -93,15 +95,15 @@ def main():
         (fake / "screen.png").write_bytes(png())
         adb = data / "adb"
         shutil.copy2(ROOT / "scripts/fake-adb.py", adb)
-        adb.chmod(0o755)
+        adb = python_program(adb)
         (data / "bin").mkdir()
         if (ROOT / "data/bin/ocr").exists():
             shutil.copy2(ROOT / "data/bin/ocr", data / "bin/ocr")
         else:
             (data / "bin/ocr").write_text('#!/usr/bin/env python3\nimport sys\nsys.stdin.buffer.read()\nprint("[]")\n')
-            (data / "bin/ocr").chmod(0o755)
+            python_program(data / "bin/ocr")
         env = {
-            **os.environ,
+            **os.environ, **environment(data),
             "ADB_STUDIO_ROOT": str(ROOT),
             "ADB_STUDIO_DATA": str(data),
             "ADB_STUDIO_ADB": str(adb),
@@ -113,7 +115,7 @@ def main():
 
         def boot():
             p = subprocess.Popen(
-                [str(ROOT / "target/debug/adb-studio")],
+                [str(executable(ROOT / "target/debug/adb-studio"))],
                 env=env,
                 stdout=logfile,
                 stderr=logfile,
@@ -416,7 +418,7 @@ def main():
                     "last_result"
                 ]
             )
-            process.terminate()
+            stop(process, data)
             process.wait(timeout=15)
             process = boot()
             assert (
@@ -496,7 +498,7 @@ def main():
             (fake / "online").unlink()
             call(f"/runs/{stopped['id']}/resume", "POST", expected=400)
             (fake / "online").touch()
-            process.terminate()
+            stop(process, data)
             process.wait(timeout=15)
             process = boot()
             assert record(stopped["id"])["state"] == "cancelled"
@@ -527,7 +529,7 @@ def main():
             wait(lambda: "跳过" in (next(s for s in call("/schedules") if s["id"]==scheduled["id"])["last_result"] or ""))
             assert "跳过" in next(s for s in call("/schedules") if s["id"]==scheduled["id"])["last_result"]
             assert count()==held_count
-            process.terminate()
+            stop(process, data)
             process.wait(timeout=15)
             process=boot()
             assert record(r["id"])["state"]=="paused"
@@ -759,6 +761,10 @@ def main():
                 model_server.server_close()
             call("/devices/pair", "POST", {"address": "8.8.8.8:41234", "code": "123456"}, 400)
             call("/devices/pair", "POST", {"address": "127.0.0.1:41234", "code": "12345"}, 400)
+            (fake / "pair-protocol-fault").touch()
+            pairing = call("/devices/pair", "POST", {"address": "127.0.0.1:41234", "code": "123456"}, 400)
+            assert "配对码窗口" in pairing["error"] and "代理绕过局域网" in pairing["error"]
+            (fake / "pair-protocol-fault").unlink()
             assert call("/devices/pair", "POST", {"address": "127.0.0.1:41234", "code": "123456"})["ok"]
             call("/devices/connect", "POST", {"address": "8.8.8.8:5555"}, 400)
             (fake / "connect-text-fails").touch()
@@ -785,7 +791,7 @@ def main():
             print("通过：局域网配对、手动连接、地址校验与断线重连", flush=True)
         finally:
             if process and process.poll() is None:
-                process.terminate()
+                stop(process, data)
                 process.wait(timeout=15)
             logfile.close()
     print("集成检查全部通过。", flush=True)

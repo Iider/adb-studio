@@ -59,6 +59,9 @@ async fn main() -> Result<()> {
     let data = std::env::var_os("ADB_STUDIO_DATA")
         .map(PathBuf::from)
         .unwrap_or(root.join("data"));
+    tokio::fs::create_dir_all(&data).await?;
+    #[cfg(windows)]
+    platform::private_directory(&data).await?;
     tokio::fs::create_dir_all(data.join("shots")).await?;
     let token_file = data.join("access-token");
     let token = if token_file.exists() {
@@ -73,8 +76,11 @@ async fn main() -> Result<()> {
             uuid::Uuid::new_v4().simple()
         );
         tokio::fs::write(&token_file, &token).await?;
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600)).await?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tokio::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600)).await?;
+        }
         token
     };
     let (events, _) = broadcast::channel(128);
@@ -141,6 +147,21 @@ async fn main() -> Result<()> {
             let mut terminate =
                 tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
             tokio::select! {_=tokio::signal::ctrl_c()=>{},_=terminate.recv()=>{}}
+        }
+        #[cfg(windows)]
+        {
+            let mut interrupt = tokio::signal::windows::ctrl_break().expect("注册停止信号失败");
+            let stop_file = std::env::var_os("ADB_STUDIO_STOP_FILE").map(PathBuf::from);
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {},
+                _ = interrupt.recv() => {},
+                _ = async {
+                    loop {
+                        if stop_file.as_ref().is_some_and(|p| p.is_file()) { break; }
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                } => {},
+            }
         }
         signal.cancel();
     });

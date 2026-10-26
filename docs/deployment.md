@@ -1,6 +1,6 @@
-# Mac／Linux 部署与发行
+# Mac／Linux／Windows 部署与发行
 
-macOS、Linux 共用 Rust 后台与静态网页。Mac 可使用苹果文字识别；Linux 可直接运行纯视觉任务、截图、投屏及不依赖读字的任务。本地读字任务在没有兼容识别程序时会在开始前提示原因。
+macOS、Linux、Windows 共用 Rust 后台与静态网页。Mac 可使用苹果文字识别；Linux、Windows 可直接运行纯视觉任务、截图、投屏及不依赖读字的任务。本地读字任务在没有兼容识别程序时会在开始前提示原因。
 
 ## 平台范围
 
@@ -8,13 +8,54 @@ macOS、Linux 共用 Rust 后台与静态网页。Mac 可使用苹果文字识�
 | --- | --- | --- |
 | macOS | Apple Silicon、Intel | 原生发行包，launchd 用户服务 |
 | Linux | x86_64、aarch64 | 原生发行包，systemd 用户服务；或 Docker |
+| Windows 10／11 | x86_64 | 原生程序，当前用户登录自启 |
 | 飞牛 | 按机器实际架构选择 | 原生 systemd 用户服务；或 Docker |
 
 Linux 原生运行需要 ADB；安装脚本需 Python 3.10+ 与 systemd 用户会话。已验证的飞牛 x86_64 发行包使用 musl 静态构建，不依赖特定 glibc 版本；自行使用 GNU 目标构建时，需匹配目标机器的 glibc。Docker 已包含运行依赖。macOS 原生包包含 ADB 与当前架构的文字识别程序；源码构建需 Xcode 命令行工具。
 
 已验证的飞牛静态 x86_64 部署包已保存在仓库 [releases/linux-x86_64/2026-10-23](../releases/linux-x86_64/2026-10-23/README.md)，不依赖特定 glibc 版本；使用说明及实测范围见该目录。
 
-## 原生发行包
+## Windows 部署
+
+需要 Windows 10／11、Python 3.10+（包含 `pythonw.exe`）。源码构建另需 Rust 1.96+、Visual Studio C++ 构建工具、Node.js 22.19+。在项目目录用 PowerShell 执行：
+
+```powershell
+npm.cmd --prefix web ci
+npm.cmd --prefix web run check
+npm.cmd --prefix web run build
+cargo build --locked --release
+python scripts/setup-adb.py
+python scripts/setup-mirror.py
+python scripts/install-service.py install
+```
+
+`setup-adb.py` 从 Google 官方下载当前 Windows platform-tools，保存到 `data/bin/platform-tools/`。已有完整 ADB 时可跳过下载，安装时用 `--adb "完整路径\adb.exe"` 指定；同目录必须保留 `AdbWinApi.dll`、`AdbWinUsbApi.dll`。
+
+打开 <http://127.0.0.1:17841>。后台安装到 `%LOCALAPPDATA%\ADB Studio`，文件访问限当前用户；登录自启通过启动文件夹内的 `ADB Studio.lnk` 完成，无需管理员权限。实际路径以 `status` 输出为准。关闭网页不停止后台；退出 Windows 登录或电脑休眠会中断运行。
+
+```powershell
+python scripts/install-service.py status
+python scripts/install-service.py remove
+```
+
+`remove` 正常停止后台、关闭自启，保留数据。重新执行 `install` 会更新并启动，保留数据库、令牌和已有 `.env`。查看日志：安装目录的 `logs/service.log`、`logs/service-error.log`。安装目录可用 `--runtime "目录"` 指定，后续安装、状态、移除都需使用相同参数。
+
+已安装但后台停止时，按 Win+R，输入 `shell:startup`，双击 `ADB Studio` 快捷方式即可启动；无需重新构建。程序隐藏运行，启动后打开工作台确认。登录自启不会在退出登录、关机或休眠时维持任务运行。
+
+连接手机：
+
+1. 手机开启开发者选项、USB 调试，使用数据线连接电脑。
+2. 手机提示时允许 USB 调试；若仍不显示，安装手机厂商的 Windows USB 驱动。
+3. 工作台进入“设备管理”，确认手机在线，再检查截图与投屏。
+4. Android 11+ 也可通过手机的“无线调试”获取地址和配对码，从工作台添加局域网手机。其他工作台连接同一手机时，先停止其任务。
+
+无线配对时保持手机的配对码弹窗打开，关闭后重新获取地址和配对码。配对成功后使用“无线调试”主页面的连接端口连接，两种端口不同。若提示未收到配对回复，先检查手机与电脑的网络是否互通；代理或 VPN 应绕过局域网。电脑接主路由器、手机接访客 Wi-Fi 或下级路由器时，可能无法互通。
+
+纯视觉识别需在“系统设置”配置模型及密钥。Windows 不附带本地读字引擎；需要读字的步骤会提示缺少识别程序。可自行提供 `data/bin/ocr.exe` 或 `ocr.py`，协议见下方环境变量说明。
+
+Windows ZIP 发行包包含后台、网页、ADB 及投屏组件。解压后可运行 `.\adb-studio.exe`；关闭时按 Ctrl+C。需要登录自启时，在解压目录执行 `python scripts/install-service.py install`。源码构建后可用 `python scripts/package-release.py --skip-build` 生成 ZIP，使用 `python scripts/check-release.py dist/adb-studio-windows-x86_64.zip` 验证。
+
+## Mac／Linux 原生发行包
 
 在对应系统解压对应架构的压缩包，进入目录后运行：
 
@@ -111,14 +152,16 @@ ADB_STUDIO_ORIGINS=https://studio.example.com
 | --- | --- |
 | `ADB_STUDIO_ROOT` | 网页及组件根目录；原生发行包默认使用可执行文件旁目录，源码运行回退项目目录 |
 | `ADB_STUDIO_DATA` | 数据目录；默认根目录下 `data`，容器固定 `/data` |
-| `ADB_STUDIO_ADB` | ADB 文件；默认查包内 ADB，Mac 开发目录，再查 PATH |
+| `ADB_STUDIO_ADB` | ADB 文件；默认查包内 ADB，Mac 开发目录，再查 PATH；Windows 使用 `adb.exe` |
+| `ADB_STUDIO_PYTHON` | Windows 执行 `.py` 识别程序时的 Python 路径，默认 `python` |
+| `ADB_STUDIO_STOP_FILE` | Windows 后台的本地停止请求文件，由安装工具设置；手动运行无需设置 |
 | `ADB_STUDIO_HOST` | 默认 `127.0.0.1`；局域网或容器为 `0.0.0.0` |
 | `ADB_STUDIO_PORT` | 默认 `17841` |
 | `ADB_STUDIO_ORIGINS` | 明确允许的网址；未配置时保留现有本机／IPv4 局域网规则 |
 | `MODEL_KEY` | 默认模型密钥；自定义变量名在模型设置中填写 |
 | `ADB_SERVER_SOCKET` | ADB 自身变量；容器使用 `tcp:5038`（仅本机，支持自动启动 ADB） |
 
-投屏服务端优先读取 `data/bin/scrcpy-server-v3.1`，再读取发行包 `bin/`。本地文字识别优先读取 `data/bin/ocr`、包内 `bin/ocr`；仅 Mac 可以回退 Swift。Linux 可自行提供相同 PNG 标准输入、JSON 标准输出协议的程序，但不随包安装文字识别引擎。
+投屏服务端优先读取 `data/bin/scrcpy-server-v3.1`，再读取发行包 `bin/`。Mac／Linux 本地文字识别优先读取 `data/bin/ocr`、包内 `bin/ocr`；仅 Mac 可以回退 Swift。Windows 查找数据目录及包内 `bin/` 的 `ocr.exe`、`ocr.py`。自备识别程序需从标准输入读取 PNG，向标准输出写 JSON 数组，每项包含 `text`、`x`、`y`、`confidence`；坐标为原图像素，可信度范围 0–1。Linux、Windows 不随包安装文字识别引擎。
 
 ## 更新、备份与回退
 
@@ -134,13 +177,15 @@ Compose 更新使用相同命令 `up -d --build`；停止使用 `down`，不要�
 
 ## 构建与发布
 
+本机 Windows 已通过后台测试、网页检查和构建、模拟设备、编排器、纯视觉、投屏、平台配置与 ZIP 独立启动检查；用户已确认真机 Wi-Fi 连接、截图和投屏验收通过。Mac 实机与完整 Linux 后台回归尚未执行。WSL Ubuntu 仅完成平台配置检查，不能代替完整 Linux 验收。
+
 ```sh
 python3 scripts/package-release.py
 ```
 
-脚本在当前系统构建网页与 release 后台，下载并校验固定 scrcpy 组件；Mac 额外编译识别程序。输出 `dist/adb-studio-系统-架构.tar.gz` 及 SHA-256 文件，排除数据库、截图、配对信息与密钥。
+脚本在当前系统构建网页与 release 后台，下载并校验固定 scrcpy 组件；Mac 额外编译识别程序。Windows 下载并包含官方 ADB。输出 `dist/adb-studio-系统-架构.tar.gz`（Windows 为 `.zip`）及 SHA-256 文件，排除数据库、截图、配对信息与密钥。
 
-`.github/workflows/release.yml` 配置 Mac／Linux、Intel／ARM 四个平台的构建和模拟检查；手动触发可下载构建产物，推送 `v*` 标签时创建 GitHub 草稿发行版。只有用户确认后才提交、推送或创建正式标签。产物当前未签名；macOS 正式对外发行前还需配置签名与公证。
+`.github/workflows/release.yml` 配置 Mac／Linux、Intel／ARM 以及 Windows x86_64 的构建和模拟检查；手动触发可下载构建产物，推送 `v*` 标签时创建 GitHub 草稿发行版。只有用户确认后才提交、推送或创建正式标签。产物当前未签名；macOS 正式对外发行前还需配置签名与公证。
 
 Docker 检查与构建：
 

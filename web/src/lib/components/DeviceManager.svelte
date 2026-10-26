@@ -454,7 +454,7 @@
     <div>
       <h2 id="lan-device-title">添加局域网设备</h2>
       <p class="hint">
-        手机与运行工作台的电脑或 NAS 接入同一局域网，并开启无线调试。
+        手机与运行工作台的电脑或 NAS 接入同一局域网，并开启无线调试。代理软件需绕过局域网。
       </p>
     </div>
     <Button
@@ -517,7 +517,7 @@
     <summary>首次连接？先配对</summary>
     <p class="hint">
       在手机上打开“使用配对码配对设备”，填写弹窗中的地址与 6
-      位配对码。配对端口与上面的连接端口不同。
+      位配对码。配对时保持手机弹窗打开；配对端口与上面的连接端口不同。
     </p>
     <form class="lan-device-form" onsubmit={pairLan}>
       <label for="lan-pair-address">配对地址</label>

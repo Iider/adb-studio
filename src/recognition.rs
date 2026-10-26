@@ -84,7 +84,7 @@ pub fn difference(a: &[u8], b: &[u8]) -> f64 {
 }
 pub async fn ocr(app: &App, png: &[u8]) -> Result<Vec<Word>> {
     let mut command = if let Some(bin) = crate::platform::local_ocr(&app.root, &app.data) {
-        Command::new(bin)
+        crate::platform::command(bin)
     } else {
         anyhow::ensure!(
             cfg!(target_os = "macos"),

@@ -15,6 +15,8 @@ import urllib.request
 import urllib.error
 import runpy
 
+from check_support import executable, python_program, environment as test_environment, stop
+
 ROOT = Path(__file__).resolve().parents[1]
 PORT = 17843
 
@@ -99,11 +101,11 @@ def main():
         (data / "bin/scrcpy-server-v3.1").write_bytes(b"simulation")
         adb = data / "adb"
         shutil.copy2(ROOT / "scripts/fake-adb.py", adb)
-        adb.chmod(0o755)
-        environment = {**os.environ, "ADB_STUDIO_ROOT": str(ROOT), "ADB_STUDIO_DATA": str(data),
+        adb = python_program(adb)
+        environment = {**os.environ, **test_environment(data), "ADB_STUDIO_ROOT": str(ROOT), "ADB_STUDIO_DATA": str(data),
             "ADB_STUDIO_ADB": str(adb), "ADB_STUDIO_PORT": str(PORT), "FAKE_ADB_DIR": str(fake)}
         with (data / "server.log").open("w") as log:
-            process = subprocess.Popen([str(ROOT / "target/debug/adb-studio")], env=environment, stdout=log, stderr=log)
+            process = subprocess.Popen([str(executable(ROOT / "target/debug/adb-studio"))], env=environment, stdout=log, stderr=log)
             try:
                 wait(lambda: urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/session"))
                 token = (data / "access-token").read_text()
@@ -267,11 +269,11 @@ def main():
                 send(active,2,touch(3))
                 send(active,2,bytes([10,0]))
                 assert json.loads(frame(active)[1]) == {"type":"display_power","enabled":False}
-                process.terminate()
+                stop(process, data)
                 process.wait(timeout=10)
                 active.close()
                 assert not list(fake.glob("localabstract-scrcpy_*"))
-                process = subprocess.Popen([str(ROOT / "target/debug/adb-studio")], env=environment, stdout=log, stderr=log)
+                process = subprocess.Popen([str(executable(ROOT / "target/debug/adb-studio"))], env=environment, stdout=log, stderr=log)
                 wait(lambda: urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/session"))
                 restored = viewer()
                 assert control_message(restored,True)["enabled"]
@@ -285,7 +287,7 @@ def main():
                 print("通过：投屏与触控、任务并行、同机互斥、息屏后断开与重连、保持常亮不误唤醒、重启恢复状态、权限与清理")
             finally:
                 if process.poll() is None:
-                    process.terminate()
+                    stop(process, data)
                     process.wait(timeout=10)
 
 

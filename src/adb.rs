@@ -11,7 +11,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::process::Command;
 
 #[derive(Debug)]
 pub enum AdbIssue {
@@ -100,7 +99,7 @@ impl Adb {
         }
     }
     pub async fn raw(&self, args: &[&str]) -> Result<Vec<u8>> {
-        let mut cmd = Command::new(&self.path);
+        let mut cmd = crate::platform::command(&self.path);
         cmd.args(args).kill_on_drop(true);
         let out = tokio::time::timeout(Duration::from_secs(12), cmd.output())
             .await
@@ -246,7 +245,7 @@ impl Adb {
             .await?;
         let classpath = format!("CLASSPATH={remote}");
         let session = format!("scid={scid}");
-        let child = Command::new(&self.path)
+        let child = crate::platform::command(&self.path)
             .args(connection.target.selector())
             .args([
                 "shell",
@@ -564,13 +563,13 @@ impl Drop for VideoConnection {
         let socket = self.socket.clone();
         let remote = self.remote.clone();
         self.cleanup.spawn(async move {
-            let mut command = Command::new(&path);
+            let mut command = crate::platform::command(&path);
             command
                 .args(target.selector())
                 .args(["reverse", "--remove", &socket])
                 .kill_on_drop(true);
             let _ = tokio::time::timeout(Duration::from_secs(3), command.output()).await;
-            let mut remove = Command::new(path);
+            let mut remove = crate::platform::command(path);
             remove
                 .args(target.selector())
                 .args(["shell", "rm", "-f", &remote])
@@ -898,7 +897,14 @@ pub async fn pair_manual(app: &App, address: &str, code: &str) -> Result<()> {
     if code.len() != 6 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
         bail!("请输入手机显示的 6 位配对码");
     }
-    let result = app.adb.text(&["pair", &address, code]).await?;
+    let result = match app.adb.text(&["pair", &address, code]).await {
+        Err(error) if error.to_string().contains("protocol fault") => {
+            bail!(
+                "手机未返回配对回复。请保持手机配对码窗口打开，使用新地址和配对码；确认网络互通，代理绕过局域网。"
+            )
+        }
+        result => result?,
+    };
     if !result.contains("Successfully paired") {
         bail!("配对失败，请检查配对地址、端口和配对码");
     }
