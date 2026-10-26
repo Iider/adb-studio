@@ -28,6 +28,7 @@
     onMark,
     onMarkCondition,
     deviceNames = {},
+    operationLimit = null,
   }: {
     node: CanvasNode;
     nodes: CanvasNode[];
@@ -41,6 +42,7 @@
     onMark: () => void;
     onMarkCondition: (index: number) => void;
     deviceNames?: Record<string, string>;
+    operationLimit?: number | null;
   } = $props();
   const c = $derived(node.data.config);
   const kind = $derived(node.data.kind);
@@ -175,6 +177,10 @@
       maxlength="120"
       disabled={kind === "entry"}
       value={node.data.label}
+      oninput={(event) => {
+        const value = event.currentTarget.value;
+        if (value.trim()) onLabel(value);
+      }}
       onchange={(event) => {
         const value = event.currentTarget.value.trim() || node.data.label;
         event.currentTarget.value = value;
@@ -232,6 +238,13 @@
       第一次立即执行，间隔只在两次之间等待。
     </p>{/if}
 
+  {#if ["loop", "tap", "swipe"].includes(kind)}
+    <p class="inspector-hint">
+      {operationLimit === null
+        ? "连接完整后显示手机操作次数上限。"
+        : `整个工作流最多执行 ${operationLimit} 次手机操作（含循环和重复次数；分支不一定全部执行）。`}
+    </p>
+  {/if}
   {#if kind === "condition" || kind === "wait_condition"}
     <label
       >组合方式<select

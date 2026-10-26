@@ -42,6 +42,9 @@
     ports,
     defaults,
     checkGraph,
+    canonical,
+    actionLimit,
+    type DraftNode,
     type Draft,
     type Kind,
     type CanvasNode,
@@ -54,7 +57,6 @@
   import EditorRunPanel from "./EditorRunPanel.svelte";
 
   const nodeTypes = { step: StepNode };
-  const executionAvailable = false;
   const flow = useSvelteFlow<CanvasNode>();
   let drafts = $state<Draft[]>([]);
   let devices = $state<Device[]>([]);
@@ -123,7 +125,7 @@
   );
   const dirty = $derived(content !== savedContent);
   const executionContent = $derived(
-    JSON.stringify({
+    canonical({
       name,
       description,
       entry,
@@ -138,6 +140,7 @@
         })),
     }),
   );
+  const operationLimit = $derived(actionLimit(JSON.parse(content) as Draft));
   const visiblePalette = $derived(
     palette.filter((item) =>
       `${item.label}${item.hint}`.includes(search.trim()),
@@ -176,17 +179,37 @@
   }
   function contentOf(draft: Draft) {
     const { revision: _revision, updated_at: _updated, ...value } = draft;
-    function ordered(input: unknown): unknown {
-      if (Array.isArray(input)) return input.map(ordered);
-      if (input && typeof input === "object")
-        return Object.fromEntries(
-          Object.entries(input)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([key, item]) => [key, ordered(item)]),
-        );
-      return input;
+    return canonical(value);
+  }
+  async function restoreVersion(draftId: string) {
+    try {
+      const versions = await api<WorkflowDefinition[]>("/workflows");
+      if (id !== draftId || version || publishing) return;
+      const latest = versions
+        .filter((item) => item.id === `manual-${draftId}`)
+        .sort((a, b) => b.version - a.version)[0];
+      if (!latest) return;
+      version = latest;
+      versionContent = canonical({
+        name: latest.name,
+        description: latest.description,
+        entry: latest.entry,
+        nodes: latest.nodes.map((node) => {
+          if (node.type === "end")
+            return {
+              id: node.id,
+              kind: "end",
+              label: node.label,
+              config: { result: node.result },
+              targets: {},
+            };
+          const { id, kind, label, config, targets } = node.step as DraftNode;
+          return { id, kind, label, config, targets };
+        }),
+      });
+    } catch (error) {
+      if (id === draftId) executionError = message(error);
     }
-    return JSON.stringify(ordered(value));
   }
   function loadDraft(draft: Draft, saved = true) {
     ready = false;
@@ -227,6 +250,7 @@
       /* 后台保存仍可使用。 */
     }
     ready = true;
+    void restoreVersion(draft.id);
   }
 
   async function boot() {
@@ -771,16 +795,17 @@
       >
       <button
         class="editor-button wide-action"
-        disabled={!executionAvailable || !ready || saving || switching || publishing || !!recovery}
+        disabled={!ready || saving || switching || publishing || !!recovery}
         onclick={saveVersion}>{publishing ? "正在检查…" : "保存新版本"}</button
       >
       <EditorRunPanel
+        workflowId={id ? `manual-${id}` : ""}
         {version}
         {devices}
         bind:device={deviceId}
         changed={versionContent !== executionContent}
         onstate={showProgress}
-        disabled={!executionAvailable || !ready || switching || !!recovery}
+        disabled={!ready || switching || !!recovery}
         {publishing}
         onsaveversion={saveVersion}
       />
@@ -859,7 +884,7 @@
           }}><Check size={16} />检查草稿</button
         ><button
           class="editor-button"
-          disabled={!executionAvailable || !ready || saving || switching || publishing || !!recovery}
+          disabled={!ready || saving || switching || publishing || !!recovery}
           onclick={() => {
             morePopover?.hidePopover();
             void saveVersion();
@@ -1083,6 +1108,7 @@
           >
           {#if current}
             <StepInspector
+              {operationLimit}
               deviceNames={Object.fromEntries(
                 devices.map((device) => [device.id, device.name]),
               )}
@@ -1133,6 +1159,11 @@
                   >{/each}</select
               ></label
             >
+            <p class="settings-hint">
+              {operationLimit === null
+                ? "连接完整后显示手机操作次数上限。"
+                : `手机操作上限：${operationLimit} 次（含按键、点击、滑动；分支不一定全部执行）。`}
+            </p>
             <p class="settings-hint">
               选中画布上的步骤，可修改参数和连接去向。每个出口只能连接一个下一步。
             </p>

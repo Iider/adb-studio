@@ -81,10 +81,10 @@
     }
   }
   function position(event: PointerEvent): [number, number] {
-    const rect =
-      event.currentTarget instanceof HTMLElement
-        ? event.currentTarget.getBoundingClientRect()
-        : new DOMRect();
+    const surface = event.currentTarget as HTMLElement;
+    const rect = (
+      surface.querySelector("img") ?? surface
+    ).getBoundingClientRect();
     return [
       Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
       Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
@@ -155,7 +155,11 @@
     <div class="picker-body">
       <button
         class="image-surface"
-        aria-label={swipe ? "在截图上拖动标注滑动路线" : "在截图上点选位置"}
+        aria-label={area
+          ? "在截图上框选文字识别区域"
+          : swipe
+            ? "在截图上拖动标注滑动路线"
+            : "在截图上点选位置"}
         onpointerdown={down}
         onpointermove={move}
         onpointerup={up}

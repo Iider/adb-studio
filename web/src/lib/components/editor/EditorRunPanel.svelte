@@ -11,6 +11,7 @@
     type Event,
   } from "$lib/api";
   let {
+    workflowId,
     version,
     devices,
     device = $bindable(""),
@@ -20,6 +21,7 @@
     publishing = false,
     onsaveversion,
   }: {
+    workflowId: string;
     version: Workflow | null;
     devices: Device[];
     device: string;
@@ -32,28 +34,93 @@
   let run = $state<Run | null>(null);
   let events = $state<Event[]>([]);
   let working = $state(false);
+  let restoring = $state(false);
   let error = $state("");
   let popup = $state<HTMLElement>();
   let open = $state(false);
   $effect(() => {
-    if (!device) device = devices.find((item) => item.online)?.id ?? "";
+    const allowed = (item: Device) =>
+      !version?.devices.length || version.devices.includes(item.id);
+    if (
+      (!device ||
+        !devices.some((item) => item.id === device && allowed(item))) &&
+      !(run && busy(run))
+    )
+      device = devices.find((item) => item.online && allowed(item))?.id ?? "";
+  });
+  $effect(() => {
+    const currentWorkflow = workflowId;
+    let cancelled = false;
+    run = null;
+    events = [];
+    error = "";
+    restoring = !!currentWorkflow;
+    if (currentWorkflow)
+      void api<Run[]>("/runs")
+        .then(async (rows) => {
+          if (cancelled) return;
+          run =
+            rows
+              .filter((item) => item.workflow.id === currentWorkflow)
+              .sort(
+                (a, b) =>
+                  Number(busy(b)) - Number(busy(a)) ||
+                  b.started_at.localeCompare(a.started_at),
+              )[0] ?? null;
+          if (run) {
+            if (busy(run)) device = run.device_id;
+            await refresh();
+          }
+        })
+        .catch((e) => {
+          if (!cancelled)
+            error = e instanceof Error ? e.message : "读取试跑记录失败";
+        })
+        .finally(() => {
+          if (!cancelled) restoring = false;
+        });
+    return () => {
+      cancelled = true;
+    };
   });
   async function refresh() {
-    if (!run) return;
+    const tracked = run,
+      currentWorkflow = workflowId;
+    if (!tracked) return;
     try {
       const rows = await api<Run[]>("/runs");
-      run = rows.find((item) => item.id === run?.id) ?? run;
-      events = (await api<Event[]>("/runs/" + run.id + "/events")).sort(
+      const latest = rows.find((item) => item.id === tracked.id);
+      if (!latest) {
+        if (workflowId === currentWorkflow && run?.id === tracked.id) {
+          run = null;
+          events = [];
+          onstate("");
+        }
+        return;
+      }
+      const logs = (await api<Event[]>("/runs/" + tracked.id + "/events")).sort(
         (a, b) => a.at.localeCompare(b.at),
       );
-      onstate(busy(run) ? run.node : "");
+      if (workflowId !== currentWorkflow || run?.id !== tracked.id) return;
+      run = latest;
+      events = logs;
+      onstate(busy(latest) ? latest.node : "");
       error = "";
     } catch (e) {
-      error = e instanceof Error ? e.message : "读取进度失败";
+      if (workflowId === currentWorkflow && run?.id === tracked.id)
+        error = e instanceof Error ? e.message : "读取进度失败";
     }
   }
   async function start() {
-    if (!version) return;
+    if (
+      !version ||
+      version.id !== workflowId ||
+      disabled ||
+      restoring ||
+      working ||
+      (run && busy(run))
+    )
+      return;
     working = true;
     error = "";
     try {
@@ -127,23 +194,34 @@
     <label
       >试跑手机<select
         bind:value={device}
-        disabled={working || (!!run && busy(run))}
+        disabled={disabled || restoring || working || (!!run && busy(run))}
         ><option value="">请选择手机</option>{#each devices as item}<option
             value={item.id}
-            disabled={!item.online}
-            >{item.name}{item.online ? "" : "（离线）"}</option
+            disabled={!item.online ||
+              (!!version?.devices.length && !version.devices.includes(item.id))}
+            >{item.name}{!item.online
+              ? "（离线）"
+              : version?.devices.length && !version.devices.includes(item.id)
+                ? "（未标注）"
+                : ""}</option
           >{/each}</select
       ></label
     >
     <div class="run-actions">
       <button
-        disabled={publishing || working || (!!run && busy(run))}
+        disabled={disabled ||
+          restoring ||
+          publishing ||
+          working ||
+          (!!run && busy(run))}
         onclick={onsaveversion}
         >{publishing ? "正在检查…" : "保存新版本"}</button
       >
       <button
         class="start-button"
-        disabled={!version ||
+        disabled={disabled ||
+          restoring ||
+          !version ||
           !device ||
           changed ||
           working ||
@@ -165,10 +243,13 @@
           : "试跑会操作所选手机；成功后自动启用此版本。请先将手机置于预期页面。"}
     </p>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
+    {#if restoring}<p role="status">正在找回试跑记录…</p>{/if}
     {#if run}<details>
-        <summary>{runLabel(run)} · {run.reason}</summary>
+        <summary
+          >第 {run.workflow.version} 版 · {runLabel(run)} · {run.reason}</summary
+        >
         <ol>
-          {#each events.slice(-8) as event}<li>{event.message}</li>{/each}
+          {#each events.slice(-30) as event}<li>{event.message}</li>{/each}
         </ol>
       </details>{/if}
   </div>

@@ -84,6 +84,102 @@ export type CanvasData = {
 export type CanvasNode = Node<CanvasData, "step">;
 export type Issue = { node?: string; message: string };
 
+export function canonical(value: unknown): string {
+  function ordered(input: unknown): unknown {
+    if (Array.isArray(input)) return input.map(ordered);
+    if (input && typeof input === "object")
+      return Object.fromEntries(
+        Object.entries(input)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, item]) => [key, ordered(item)]),
+      );
+    return input;
+  }
+  return JSON.stringify(ordered(value));
+}
+
+export function actionLimit(draft: Draft): number | null {
+  const nodes = new Map(draft.nodes.map((node) => [node.id, node]));
+  if (!nodes.has(draft.entry)) return null;
+  const links = new Map<string, string[]>();
+  for (const node of draft.nodes) {
+    let next = ports(node.kind).map((port) => node.targets[port.id]);
+    if (["break", "continue"].includes(node.kind)) {
+      const loop = nodes.get(node.config.loop ?? "");
+      if (loop?.kind !== "loop") return null;
+      next = [node.kind === "break" ? loop.targets.done : loop.id];
+    }
+    if (next.some((id) => !nodes.has(id))) return null;
+    links.set(node.id, next);
+  }
+  const owners = new Map<string, string>();
+  for (const loop of draft.nodes.filter((node) => node.kind === "loop")) {
+    if (
+      !Number.isInteger(loop.config.count) ||
+      Number(loop.config.count) < 1 ||
+      Number(loop.config.count) > 10000 ||
+      loop.targets.body === loop.targets.done
+    )
+      return null;
+    const todo = [loop.targets.body],
+      seen = new Set<string>();
+    while (todo.length) {
+      const id = todo.pop()!;
+      if (id === loop.id || seen.has(id)) continue;
+      if (id === loop.targets.done) return null;
+      seen.add(id);
+      const node = nodes.get(id)!;
+      if (node.kind === "end") continue;
+      if (node.kind === "loop" || owners.has(id)) return null;
+      owners.set(id, loop.id);
+      if (["break", "continue"].includes(node.kind)) {
+        if (node.config.loop !== loop.id) return null;
+      } else todo.push(...links.get(id)!);
+    }
+  }
+  const visiting = new Set<string>(),
+    reached = new Set<string>();
+  function visit(id: string): boolean {
+    if (visiting.has(id)) return false;
+    if (reached.has(id)) return true;
+    reached.add(id);
+    visiting.add(id);
+    for (const next of links.get(id)!) {
+      if (
+        owners.get(next) &&
+        owners.get(id) !== owners.get(next) &&
+        id !== owners.get(next)
+      )
+        return false;
+      if (owners.get(id) !== next && !visit(next)) return false;
+    }
+    visiting.delete(id);
+    return true;
+  }
+  if (
+    owners.has(draft.entry) ||
+    !visit(draft.entry) ||
+    reached.size !== nodes.size
+  )
+    return null;
+  let limit = 0;
+  for (const node of draft.nodes) {
+    const count = ["tap", "swipe"].includes(node.kind)
+      ? node.config.count
+      : ["back", "home", "recents"].includes(node.kind)
+        ? 1
+        : 0;
+    if (!Number.isInteger(count) || Number(count) < 0 || Number(count) > 10000)
+      return null;
+    limit +=
+      Number(count) *
+      (owners.has(node.id)
+        ? Number(nodes.get(owners.get(node.id)!)!.config.count)
+        : 1);
+  }
+  return limit;
+}
+
 export const palette: {
   kind: Kind;
   label: string;
