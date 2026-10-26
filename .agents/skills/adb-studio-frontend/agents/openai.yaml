@@ -1,0 +1,4 @@
+interface:
+  display_name: "ADB 工作台前端规范"
+  short_description: "维护本项目网页交互与滚动条规范，验证显隐、固定占位和动态滚动区域。"
+  default_prompt: "使用 $adb-studio-frontend 修改当前项目的前端，并验证滚动条显隐不引发页面抖动。"

@@ -294,6 +294,7 @@
     width: min(420px, calc(100vw - 32px));
     max-height: calc(100dvh - 86px);
     overflow: auto;
+    scrollbar-gutter: stable;
     border: 1px solid var(--line);
     border-radius: 12px;
     background: var(--panel);
@@ -352,6 +353,7 @@
     margin-top: 14px;
     max-height: 220px;
     overflow: auto;
+    scrollbar-gutter: stable;
     font-size: 12px;
   }
   summary,

@@ -263,6 +263,7 @@
     background: var(--panel);
     color: var(--text);
     overflow: auto;
+    scrollbar-gutter: stable;
   }
   header {
     display: flex;

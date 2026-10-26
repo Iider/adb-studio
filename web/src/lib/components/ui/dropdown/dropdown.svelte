@@ -269,6 +269,7 @@
     margin: 0;
     padding: 6px;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     overscroll-behavior: contain;
     border: 1px solid var(--line);
     border-radius: 12px;

@@ -1360,6 +1360,7 @@
     width: min(380px, calc(100vw - 32px));
     max-height: calc(100dvh - 86px);
     overflow: auto;
+    scrollbar-gutter: stable;
     padding: 18px;
     border: 1px solid var(--line);
     border-radius: 12px;
@@ -1438,6 +1439,7 @@
   .editor-settings {
     background: var(--panel);
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   .editor-palette {
     border-right: 1px solid var(--line);
@@ -1585,6 +1587,7 @@
   .graph-checks {
     max-height: 210px;
     overflow: auto;
+    scrollbar-gutter: stable;
     border-top: 1px solid var(--line);
     background: var(--panel);
     padding: 12px 18px;
