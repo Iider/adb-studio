@@ -494,6 +494,49 @@ impl Adb {
         let png = self.shot(id).await?;
         screen_size(&png)
     }
+
+    pub async fn canvas_screen(&self, id: &str) -> Result<ScreenGeometry> {
+        let dump = String::from_utf8(self.phone(id, &["shell", "dumpsys", "display"]).await?)?;
+        let physical = active_capture_display(&dump)?;
+        let mut logical = None;
+        if let Some(physical) = &physical {
+            let mut current = None;
+            for line in dump.lines() {
+                if let Some(value) = line.trim().strip_prefix("mDisplayId=") {
+                    current = value.trim().parse::<u32>().ok();
+                }
+                if line.contains(&format!("local:{physical}")) && line.contains("DisplayInfo{") {
+                    if let Some(value) = current {
+                        logical = Some(value);
+                    }
+                }
+            }
+            anyhow::ensure!(
+                logical.is_some(),
+                "无法确认当前屏幕的触控编号，需先适配这台多屏手机"
+            );
+        }
+        let (width, height) = self.size(id).await?;
+        let after = String::from_utf8(self.phone(id, &["shell", "dumpsys", "display"]).await?)?;
+        anyhow::ensure!(
+            active_capture_display(&after)? == physical,
+            "屏幕形态已改变，请重新标注"
+        );
+        Ok(ScreenGeometry {
+            width,
+            height,
+            display: physical.unwrap_or_else(|| "default".into()),
+            input_display: logical.unwrap_or(0),
+        })
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct ScreenGeometry {
+    pub width: u32,
+    pub height: u32,
+    pub display: String,
+    pub input_display: u32,
 }
 
 pub struct VideoConnection {

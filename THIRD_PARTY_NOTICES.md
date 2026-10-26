@@ -8,6 +8,10 @@
 
 连接方式参考 Aya 1.14.2 的设计，工作台直接接入上述底层组件，未复制 Aya 的 AGPL 源码。
 
+## Svelte Flow 与 Dagre
+
+可视化编排画布使用 `@xyflow/svelte` 1.7.0（MIT），来源：https://github.com/xyflow/xyflow 。自动排版使用 `@dagrejs/dagre` 3.1.3（MIT），来源：https://github.com/dagrejs/dagre 。许可证分别见 `licenses/xyflow-MIT` 与 `licenses/dagre-MIT`。
+
 ## Pulse V2 原型
 
 界面依据用户提供的 `pulse-adb-fusion-v2.html`，沿用配色、品牌外观、侧栏、顶部栏及设备卡片样式。设备数据和操作接入本项目服务。

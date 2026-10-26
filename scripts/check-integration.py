@@ -6,6 +6,7 @@ import http.server
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import struct
 import subprocess
@@ -166,6 +167,38 @@ def main():
 
         try:
             process = boot()
+            for route in ("/", "/editor?draft=web-serving-check", "/index.html"):
+                with urllib.request.urlopen(BASE + route, timeout=5) as response:
+                    assert response.status == 200
+                    assert response.headers["Cache-Control"] == "no-store"
+                    assert response.headers["Content-Type"].startswith("text/html")
+                    html = response.read().decode()
+                for asset in set(re.findall(r'(?:src|href)="(/_app/[^"]+)"', html)):
+                    with urllib.request.urlopen(BASE + asset, timeout=5) as response:
+                        assert response.status == 200
+                        assert not response.headers["Content-Type"].startswith("text/html")
+            with urllib.request.urlopen(BASE + "/_app/version.json", timeout=5) as response:
+                assert response.headers["Cache-Control"] == "no-store"
+                assert "version" in json.load(response)
+            with urllib.request.urlopen(BASE + "/", timeout=5) as response:
+                modified = response.headers["Last-Modified"]
+            request = urllib.request.Request(
+                BASE + "/", headers={"If-Modified-Since": modified}
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    assert response.headers["Cache-Control"] == "no-store"
+            except urllib.error.HTTPError as error:
+                assert error.code == 304
+                assert error.headers["Cache-Control"] == "no-store"
+            try:
+                urllib.request.urlopen(BASE + "/_app/immutable/missing.js", timeout=5)
+                raise AssertionError("缺失脚本未返回 404")
+            except urllib.error.HTTPError as error:
+                assert error.code == 404
+                assert error.headers["Cache-Control"] == "no-store"
+                assert not error.headers.get("Content-Type", "").startswith("text/html")
+            print("通过：网页入口不缓存、编辑器直达、资源完整、缺失脚本返回 404", flush=True)
             call("/devices", expected=401, auth=False)
             req = urllib.request.Request(
                 BASE + "/api/session", headers={"Origin": "https://example.com"}

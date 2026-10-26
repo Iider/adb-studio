@@ -104,6 +104,9 @@
     </p>
   </div>
   <div class="page-actions task-tools">
+    <a class="task-editor-link" href="/editor"
+      ><FlowIcon size={15} />编排工作流</a
+    >
     <label class="visually-hidden" for="task-search">搜索任务名称或手机</label>
     <input
       id="task-search"
@@ -261,3 +264,21 @@
     {/each}
   </div>
 {/if}
+
+<style>
+  .task-editor-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 40px;
+    padding: 8px 13px;
+    background: var(--accent);
+    color: var(--primary-ink);
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+</style>

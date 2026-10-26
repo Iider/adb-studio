@@ -34,6 +34,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 pub fn router(app: Arc<App>) -> Router {
     let secured = Router::new()
+        .merge(crate::drafts::router())
         .route("/devices", get(devices))
         .route("/devices/connect", post(connect_device))
         .route("/devices/discover", get(discover_devices))
@@ -44,6 +45,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/devices/{id}/screen", post(screen_control))
         .route("/devices/{id}/mirror", get(mirror))
         .route("/workflows", get(workflows).post(submit))
+        .route("/editor/observe/{id}", get(editor_observe))
         .route("/workflows/{key}/validate", post(validate))
         .route("/workflows/{key}/publish", post(publish))
         .route("/runs", get(runs).post(start))
@@ -72,12 +74,24 @@ pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/api/session", get(session))
         .nest("/api", secured)
+        .nest_service("/_app", ServeDir::new(app.root.join("web/build/_app")))
         .fallback_service(
             ServeDir::new(app.root.join("web/build"))
-                .not_found_service(ServeFile::new(app.root.join("web/build/index.html"))),
+                .fallback(ServeFile::new(app.root.join("web/build/index.html"))),
         )
+        .layer(middleware::from_fn(web_cache))
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
         .with_state(app)
+}
+async fn web_cache(request: Request, next: Next) -> Response {
+    let immutable = request.uri().path().starts_with("/_app/immutable/");
+    let mut response = next.run(request).await;
+    if !immutable || response.status().as_u16() >= 400 {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+    }
+    response
 }
 async fn auth(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let h = request.headers();
@@ -299,6 +313,23 @@ async fn workflows(State(app): State<Arc<App>>) -> Result<Json<Vec<Workflow>>> {
             .is_some_and(|key| key == w.key());
     }
     Ok(Json(rows))
+}
+
+async fn editor_observe(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    use base64::Engine;
+    app.adb.check_unlocked(&id).await?;
+    let screen = app.adb.canvas_screen(&id).await?;
+    let png = app.adb.shot(&id).await?;
+    let image = image::load_from_memory(&png)?;
+    if (image.width(), image.height()) != (screen.width, screen.height) {
+        return Err(anyhow::anyhow!("屏幕发生变化，请重新取图").into());
+    }
+    Ok(Json(
+        json!({"screen":screen,"image":format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png))}),
+    ))
 }
 async fn submit(
     State(app): State<Arc<App>>,
