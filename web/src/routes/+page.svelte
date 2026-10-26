@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
+  import { replaceState } from "$app/navigation";
+  import { page } from "$app/state";
+  import {
+    readHomeNavigation,
+    homeNavigationUrl,
+    type HomeTab,
+  } from "$lib/home-navigation";
   import {
     Smartphone,
     Workflow as FlowIcon,
@@ -51,8 +58,8 @@
     { id: "schedules", label: "定时任务", icon: CalendarClock },
     { id: "runs", label: "执行记录", icon: History },
     { id: "settings", label: "系统设置", icon: SettingsIcon },
-  ];
-  let tab = $state("devices");
+  ] as const;
+  let tab = $state<HomeTab>("devices");
   let selectedDeviceId = $state("");
   let deviceDetailTab = $state<"parameters" | "task">("parameters");
   let taskSetupDevice = $state("");
@@ -115,6 +122,23 @@
   let swipeMinutes = $state(15);
   let swipeInterval = $state(25);
   let selectedRun = $state("");
+  let navigationReady = $state(false);
+  $effect(() => {
+    if (!navigationReady) return;
+    const navigation = {
+      tab,
+      selectedDeviceId,
+      deviceDetailTab,
+      workflowOpen,
+      selectedWorkflow,
+      selectedVersion,
+      selectedRun,
+    };
+    untrack(() => {
+      const next = homeNavigationUrl(page.url, navigation);
+      if (next.href !== page.url.href) replaceState(next, page.state);
+    });
+  });
   let events = $state<Event[]>([]);
   let clearDialog = $state<HTMLDialogElement>();
   let runList = $state<HTMLDivElement>();
@@ -577,6 +601,15 @@
   }
   onMount(() => {
     alive = true;
+    const navigation = readHomeNavigation(page.url);
+    tab = navigation.tab;
+    selectedDeviceId = navigation.selectedDeviceId;
+    deviceDetailTab = navigation.deviceDetailTab;
+    workflowOpen = navigation.workflowOpen;
+    selectedWorkflow = navigation.selectedWorkflow;
+    selectedVersion = navigation.selectedVersion;
+    selectedRun = navigation.selectedRun;
+    navigationReady = true;
     theme =
       document.documentElement.dataset.theme === "dark" ? "dark" : "light";
     const updateClock = () => {
