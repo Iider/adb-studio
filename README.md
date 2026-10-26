@@ -23,6 +23,8 @@ USB 截图优先由电脑生成 PNG；不支持时自动回退手机截图。速
 
 设备管理页“手机屏幕”标题旁可开启或停止实时投屏；连接成功后自动进入操作模式，支持点按、拖动、四向滑动和返回／主页／最近任务，任务继续运行。停止投屏不改变任务的运行或暂停状态。折叠屏画面优先占用卡片宽度，导航键和全屏键位于画面顶部。切换浏览器页签或窗口保留投屏与操作模式，并取消尚未松开的触点；离开设备页后停止投屏。顶部操作区提供实体屏幕开关，未投屏时自动连接；息屏后可继续投屏操作与运行任务。原图截图独立保留。安装、浏览器要求与验收见 [实时投屏](docs/realtime-screen.md)。
 
+同一手机的投屏可直接切换到当前页：点“开启投屏”会结束旧页连接；刷新正在投屏的页面会自动恢复。主动停止或被其他页面接管后，刷新保持停止；新页签需手动开启。投屏恢复不会自动继续已暂停的任务。
+
 网页可通过“自动化任务 → 编排工作流”添加步骤、连线、按手机截图标注位置，并保存为新版本试跑。支持重复动作、组合循环、条件判断与等待，以及退出循环和进入下一轮。试跑成功后自动启用；正在运行的任务固定使用启动时的版本。开发进度与验收见 [人工编排工作流开发方案](docs/visual-workflow-editor.md)。
 
 同一手机一次执行一个任务。定时滑动保持当前应用，应用改变时停止，请在目标页面重新开始。新任务遇到忙碌或离线会跳过；执行途中掉线会一直等待。恢复连接或后台重启后重新观察，未确认结果的点击不会直接重放。等待中的任务也可停止。
@@ -84,6 +86,8 @@ Agent 使用 [工作流说明](docs/workflows.md) 与 [使用技能](.agents/ski
 ```sh
 cargo test
 cargo build
+python3 scripts/check-mirror.py
+node --experimental-strip-types scripts/check-touch.mjs
 python3 scripts/check-editor.py
 python3 scripts/check-integration.py
 python3 scripts/check-vision.py
@@ -91,10 +95,11 @@ python3 scripts/check-platform.py
 cd web
 npm run check
 npm run test:editor
+npm run test:mirror
 npm run build
 ```
 
-集成检查与编排器检查使用临时数据库和模拟 ADB，不操作真机，分别使用端口 17842、17844；正式工作台使用 17841。`test:editor` 使用 Node.js 内置测试工具与 TypeScript 类型擦除，需 Node.js 22.18+ 或 24+。编排器自测范围见 [自测记录](docs/visual-workflow-editor-testing.md)。
+集成、投屏与编排器检查使用临时数据库和模拟 ADB，不操作真机，分别使用端口 17842、17843、17844；正式工作台使用 17841。投屏检查前需关闭占用 17843 的开发预览。网页测试使用 Node.js 内置测试工具与 TypeScript 类型擦除，需 Node.js 22.18+ 或 24+。编排器自测范围见 [自测记录](docs/visual-workflow-editor-testing.md)。
 
 参考项目与组件来源见 [来源声明](THIRD_PARTY_NOTICES.md)。
 

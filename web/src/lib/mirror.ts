@@ -10,7 +10,7 @@ export function startMirror(
   id: string,
   canvas: HTMLCanvasElement,
   onFrame: (width: number, height: number) => void,
-  onError: (message: string) => void,
+  onError: (message: string, reason?: "taken_over") => void,
   onControl: (enabled: boolean, error?: string) => void,
   onResize: (width: number, height: number) => void,
   onDisplayPower: (enabled: boolean, initial: boolean) => void,
@@ -116,10 +116,10 @@ export function startMirror(
     decoder?.dispose();
     context?.clearRect(0, 0, canvas.width, canvas.height);
   }
-  function fail(message: string) {
+  function fail(message: string, reason?: "taken_over") {
     if (stopped) return;
     stop();
-    onError(message);
+    onError(message, reason);
   }
   socket.onmessage = (event) => {
     if (stopped) return;
@@ -132,6 +132,8 @@ export function startMirror(
           if (message.enabled && !wantsControl) setControl(false);
         } else if (message.type === "display_power") {
           onDisplayPower(message.enabled, message.initial === true);
+        } else if (message.type === "taken_over") {
+          fail(message.message || "投屏已切换到其他页面", "taken_over");
         } else fail(message.error || "投屏已结束");
       } catch {
         fail("投屏返回异常，请重新开启");

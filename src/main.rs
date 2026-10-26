@@ -29,7 +29,7 @@ pub struct App {
     run_gate: Mutex<()>,
     device_gate: Mutex<()>,
     schedule_gate: Mutex<()>,
-    mirrors: Mutex<std::collections::HashMap<String, Arc<tokio::sync::Semaphore>>>,
+    mirrors: Mutex<std::collections::HashMap<String, Arc<mirror::Slot>>>,
     manual_devices: Mutex<std::collections::HashSet<String>>,
     stop: CancellationToken,
     controls: Mutex<std::collections::HashMap<String, Arc<run_control::RunControl>>>,

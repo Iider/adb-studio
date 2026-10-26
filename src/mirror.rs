@@ -8,6 +8,25 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
+use tokio_util::sync::CancellationToken;
+
+pub struct Slot {
+    gate: Arc<tokio::sync::Semaphore>,
+    owner: tokio::sync::Mutex<CancellationToken>,
+}
+impl Default for Slot {
+    fn default() -> Self {
+        Self {
+            gate: Arc::new(tokio::sync::Semaphore::new(1)),
+            owner: tokio::sync::Mutex::new(CancellationToken::new()),
+        }
+    }
+}
+
+enum End {
+    Closed,
+    TakenOver,
+}
 
 pub async fn ensure_screen_available(app: &App, id: &str) -> Result<()> {
     ensure!(
@@ -18,13 +37,18 @@ pub async fn ensure_screen_available(app: &App, id: &str) -> Result<()> {
 }
 
 pub async fn serve(app: Arc<App>, id: String, mut socket: WebSocket) {
-    let result = stream(&app, &id, &mut socket).await;
-    if let Err(error) = result {
+    let message = match stream(&app, &id, &mut socket).await {
+        Ok(End::Closed) => None,
+        Ok(End::TakenOver) => Some(json!({
+            "type": "taken_over",
+            "message": "投屏已切换到其他页面"
+        })),
+        Err(error) => Some(json!({"error":error.to_string()})),
+    };
+    if let Some(message) = message {
         let _ = tokio::time::timeout(
             Duration::from_secs(2),
-            socket.send(Message::Text(
-                json!({"error":error.to_string()}).to_string().into(),
-            )),
+            socket.send(Message::Text(message.to_string().into())),
         )
         .await;
     }
@@ -178,17 +202,30 @@ async fn free(app: &App, id: &str) {
     app.manual_devices.lock().await.remove(id);
     let _ = app.events.send(json!({"type":"changed"}));
 }
-async fn stream(app: &App, id: &str, socket: &mut WebSocket) -> Result<()> {
+async fn stream(app: &App, id: &str, socket: &mut WebSocket) -> Result<End> {
     let slot = app
         .mirrors
         .lock()
         .await
         .entry(id.to_owned())
-        .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(1)))
+        .or_insert_with(|| Arc::new(Slot::default()))
         .clone();
-    let _permit = slot
-        .try_acquire_owned()
-        .context("这台手机已在其他页面投屏，请先关闭原投屏")?;
+    let cancelled = CancellationToken::new();
+    {
+        let mut owner = slot.owner.lock().await;
+        owner.cancel();
+        *owner = cancelled.clone();
+    }
+    // 旧会话完成取消触点、关闭通道和释放操作权后，新会话才能启动。
+    let _permit = tokio::select! {
+        biased;
+        _ = cancelled.cancelled() => return Ok(End::TakenOver),
+        _ = app.stop.cancelled() => return Ok(End::Closed),
+        _ = socket.recv() => return Ok(End::Closed),
+        permit = tokio::time::timeout(Duration::from_secs(15), slot.gate.clone().acquire_owned()) => {
+            permit.context("原投屏尚未释放，请稍后重试")??
+        },
+    };
     let installed = app.data.join("bin/scrcpy-server-v3.1");
     let server = if installed.is_file() {
         installed
@@ -202,12 +239,14 @@ async fn stream(app: &App, id: &str, socket: &mut WebSocket) -> Result<()> {
         .context("手机未登记")?
         .display_off;
     let mut connection = tokio::select! {
+        biased;
+        _ = cancelled.cancelled() => return Ok(End::TakenOver),
+        _ = app.stop.cancelled() => return Ok(End::Closed),
+        _ = socket.recv() => return Ok(End::Closed),
         result = app.adb.video(id, &server, app.workers.clone(), display_off) => result?,
-        _ = app.stop.cancelled() => return Ok(()),
-        _ = socket.recv() => return Ok(()),
     };
     let mut state = Control::default();
-    let result = relay(app, id, socket, &mut connection, &mut state).await;
+    let result = relay(app, id, socket, &mut connection, &mut state, &cancelled).await;
     if let Some(control) = connection.control.as_mut() {
         let _ = state.release(control).await;
     }
@@ -221,7 +260,8 @@ async fn relay(
     socket: &mut WebSocket,
     connection: &mut crate::adb::VideoConnection,
     state: &mut Control,
-) -> Result<()> {
+    cancelled: &CancellationToken,
+) -> Result<End> {
     let stream = connection.stream.as_mut().context("投屏通道未连接")?;
     let control = connection.control.as_mut().context("操作通道未连接")?;
     let errors = connection.errors.as_mut().context("投屏状态未连接")?;
@@ -250,7 +290,9 @@ async fn relay(
     .await??;
     loop {
         tokio::select! {
-            _ = app.stop.cancelled() => return Ok(()),
+            biased;
+            _ = cancelled.cancelled() => return Ok(End::TakenOver),
+            _ = app.stop.cancelled() => return Ok(End::Closed),
             error = errors.recv(), if logs_open => match error {
                 Some(error) => {
                     disabled = true;
@@ -265,7 +307,7 @@ async fn relay(
             },
             incoming = socket.recv() => match incoming {
                 Some(Ok(Message::Pong(_))) => last_seen = tokio::time::Instant::now(),
-                Some(Ok(Message::Close(_))) | None => return Ok(()),
+                Some(Ok(Message::Close(_))) | None => return Ok(End::Closed),
                 Some(Err(error)) => return Err(error.into()),
                 Some(Ok(Message::Text(text))) => {
                     ensure!(text.len() <= 256, "操作消息过长");

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""隔离检查投屏转发、访问限制、重复连接与清理；不操作真机。"""
+"""隔离检查投屏转发、访问限制、页面接管与清理；不操作真机。"""
 
 import base64
 import json
@@ -116,8 +116,11 @@ def main():
                 initial_power(first, True)
                 assert frame(first) == (2, b"studio-video-test")
                 duplicate = connect(token)
-                assert "其他页面" in json.loads(frame(duplicate)[1])["error"]
-                duplicate.close()
+                initial_power(duplicate, True)
+                assert frame(duplicate) == (2, b"studio-video-test")
+                assert json.loads(frame(first)[1])["type"] == "taken_over"
+                first.close()
+                first = duplicate
                 send(first, 2, touch(0))
                 assert "先开启" in json.loads(frame(first)[1])["error"]
                 first.close()
@@ -136,6 +139,22 @@ def main():
                 wait(lambda: not list(fake.glob("localabstract-scrcpy_*")))
                 (fake / "end-mirror").unlink()
                 (fake / "slow-mirror").touch()
+                starting = connect(token)
+                wait(lambda: list(fake.glob("localabstract-scrcpy_*")))
+                replacement = connect(token)
+                assert json.loads(frame(starting)[1])["type"] == "taken_over"
+                starting.close()
+                latest = connect(token)
+                message = json.loads(frame(replacement)[1])
+                if message.get("type") == "display_power":
+                    assert frame(replacement) == (2, b"studio-video-test")
+                    message = json.loads(frame(replacement)[1])
+                assert message["type"] == "taken_over"
+                replacement.close()
+                initial_power(latest, True)
+                assert frame(latest) == (2, b"studio-video-test")
+                latest.close()
+                wait(lambda: not list(fake.glob("localabstract-scrcpy_*")))
                 pending = connect(token)
                 wait(lambda: list(fake.glob("localabstract-scrcpy_*")))
                 send(pending, 8)
@@ -266,6 +285,14 @@ def main():
                 assert control_message(active,True)["enabled"]
                 count=len(records());send(active,2,touch(0))
                 wait(lambda: len(records())>count)
+                replacement = viewer()
+                assert json.loads(frame(active)[1])["type"] == "taken_over"
+                wait(lambda: records()[-1][1] == 3)
+                active.close()
+                active = replacement
+                assert control_message(active,True)["enabled"]
+                count=len(records());send(active,2,touch(0))
+                wait(lambda: len(records())>count)
                 send(active,2,touch(3))
                 send(active,2,bytes([10,0]))
                 assert json.loads(frame(active)[1]) == {"type":"display_power","enabled":False}
@@ -284,7 +311,7 @@ def main():
                 commands = [json.loads(line) for line in (fake / "commands").read_text().splitlines()]
                 assert all(command[2:5] == ["shell","input","swipe"] for command in commands if "input" in command)
                 assert any("control=true" in command and "power_on=false" in command and "cleanup=false" in command for command in commands)
-                print("通过：投屏与触控、任务并行、同机互斥、息屏后断开与重连、保持常亮不误唤醒、重启恢复状态、权限与清理")
+                print("通过：投屏与触控、页面接管、启动中接管、接管取消触点、任务并行、同机互斥、息屏后断开与重连、保持常亮不误唤醒、重启恢复状态、权限与清理")
             finally:
                 if process.poll() is None:
                     stop(process, data)

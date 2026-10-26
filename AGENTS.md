@@ -13,4 +13,4 @@
 
 ## 当前状态与下一步
 
-Windows 本机部署、模拟检查及用户真机 Wi-Fi 连接、截图、投屏验收通过。安装、启动、停止、自启和 ZIP 使用见 `docs/deployment.md`。待完成：Mac 实机与完整 Linux 后台回归。
+Windows 本机部署、模拟检查及用户真机 Wi-Fi 连接、截图、投屏验收通过。安装、启动、停止、自启和 ZIP 使用见 `docs/deployment.md`。待完成：Mac 完整实机回归与完整 Linux 后台回归。

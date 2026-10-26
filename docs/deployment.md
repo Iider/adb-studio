@@ -177,7 +177,7 @@ Compose 更新使用相同命令 `up -d --build`；停止使用 `down`，不要�
 
 ## 构建与发布
 
-本机 Windows 已通过后台测试、网页检查和构建、模拟设备、编排器、纯视觉、投屏、平台配置与 ZIP 独立启动检查；用户已确认真机 Wi-Fi 连接、截图和投屏验收通过。Mac 实机与完整 Linux 后台回归尚未执行。WSL Ubuntu 仅完成平台配置检查，不能代替完整 Linux 验收。
+本机 Windows 已通过后台测试、网页检查和构建、模拟设备、编排器、纯视觉、投屏、平台配置与 ZIP 独立启动检查；用户已确认真机 Wi-Fi 连接、截图和投屏验收通过。Mac 已完成本轮投屏接管与刷新恢复的荣耀 USB 实机检查，范围见 [变更记录](changes/2026-10-26-投屏接管与刷新恢复.md)；Mac 完整实机回归与完整 Linux 后台回归尚未完成。WSL Ubuntu 仅完成平台配置检查，不能代替完整 Linux 验收。
 
 ```sh
 python3 scripts/package-release.py

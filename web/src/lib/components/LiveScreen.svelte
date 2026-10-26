@@ -16,6 +16,11 @@
   import Button from "$lib/components/ui/button/button.svelte";
   import { notify } from "$lib/notifications";
   import { startMirror } from "$lib/mirror";
+  import {
+    rememberMirror,
+    forgetMirror,
+    restoreMirror,
+  } from "$lib/mirror-session";
   import { screenPoint, type ScreenPoint } from "$lib/touch";
 
   let {
@@ -39,7 +44,10 @@
   } = $props();
   let canvas: HTMLCanvasElement;
   let stage: HTMLDivElement;
-  let viewState = $state<"idle" | "connecting" | "live" | "error">("idle");
+  let viewState = $state<
+    "idle" | "connecting" | "live" | "error" | "taken_over"
+  >("idle");
+  let restorePending = $state(false);
   let supported = $state(false);
   let canFullscreen = $state(false);
   let isFullscreen = $state(false);
@@ -74,7 +82,7 @@
       );
       return;
     }
-    if (viewState === "idle" || viewState === "error") start();
+    if (viewState !== "live" && viewState !== "connecting") start();
     cancelTouch();
     powerPending = true;
     if (controlled) connection?.setDisplayPower(enabled);
@@ -91,7 +99,7 @@
     controlled = false;
     connection?.setControl(false);
   }
-  function stop() {
+  function disconnect() {
     endControl();
     connection?.stop();
     connection = undefined;
@@ -99,8 +107,15 @@
     dimensions = "";
     powerPending = false;
   }
+  function stop() {
+    restorePending = false;
+    forgetMirror(id);
+    disconnect();
+  }
   function start() {
-    stop();
+    restorePending = false;
+    disconnect();
+    rememberMirror(id);
     viewState = "connecting";
     connection = startMirror(
       id,
@@ -111,9 +126,10 @@
         dimensions = `${width} × ${height}`;
         if (firstFrame) requestControl();
       },
-      (message) => {
-        viewState = "error";
-        notify.error(message);
+      (message, reason) => {
+        forgetMirror(id);
+        viewState = reason === "taken_over" ? "taken_over" : "error";
+        if (reason !== "taken_over") notify.error(message);
         dimensions = "";
         pendingPower = undefined;
         powerPending = false;
@@ -282,6 +298,30 @@
   onMount(() => {
     supported = window.isSecureContext && "VideoDecoder" in window;
     canFullscreen = document.fullscreenEnabled;
+    const navigation = performance.getEntriesByType("navigation")[0] as
+      PerformanceNavigationTiming | undefined;
+    const entry = new URL(navigation?.name || location.href);
+    const devicePage =
+      entry.pathname === "/" &&
+      (entry.searchParams.get("tab") || "devices") === "devices";
+    restorePending = restoreMirror(
+      id,
+      devicePage ? navigation?.type || "navigate" : "navigate",
+      undefined,
+      document,
+    );
+    if (!restorePending) forgetMirror(id);
+    let leavingDocument = false;
+    const pageHidden = () => {
+      leavingDocument = true;
+      disconnect();
+    };
+    const pageShown = (event: PageTransitionEvent) => {
+      leavingDocument = false;
+      if (event.persisted) {
+        stop();
+      }
+    };
     const visibility = () => {
       if (document.hidden) cancelTouch();
     };
@@ -291,15 +331,24 @@
     document.addEventListener("visibilitychange", visibility);
     document.addEventListener("fullscreenchange", fullscreenChanged);
     window.addEventListener("blur", cancelTouch);
+    window.addEventListener("pagehide", pageHidden);
+    window.addEventListener("pageshow", pageShown);
     return () => {
       document.removeEventListener("visibilitychange", visibility);
       document.removeEventListener("fullscreenchange", fullscreenChanged);
       window.removeEventListener("blur", cancelTouch);
-      stop();
+      window.removeEventListener("pagehide", pageHidden);
+      window.removeEventListener("pageshow", pageShown);
+      if (leavingDocument) disconnect();
+      else stop();
     };
   });
   $effect(() => {
-    if (!online) stop();
+    if (!online) {
+      if (viewState === "connecting" || viewState === "live") stop();
+    } else if (restorePending && supported) {
+      start();
+    }
   });
 </script>
 
@@ -353,7 +402,9 @@
     {:else}<Button disabled={!online || !supported} onclick={start}
         ><Monitor size={15} />{viewState === "error"
           ? "重新投屏"
-          : "开启投屏"}</Button
+          : viewState === "taken_over"
+            ? "在此投屏"
+            : "开启投屏"}</Button
       >{/if}
   </div>
   <div class="live-heading-actions">
@@ -442,11 +493,17 @@
         />
       {:else}<div class="device-screen-placeholder">
           <Monitor size={32} strokeWidth={1.4} /><strong
-            >{viewState === "error" ? "投屏已中断" : "查看实时画面"}</strong
+            >{viewState === "error"
+              ? "投屏已中断"
+              : viewState === "taken_over"
+                ? "投屏已切换到其他页面"
+                : "查看实时画面"}</strong
           ><span
-            >{online
-              ? "解锁手机后，点击标题旁的开启投屏"
-              : "手机连接后可开启投屏"}</span
+            >{viewState === "taken_over"
+              ? "点击“在此投屏”可切回当前页面"
+              : online
+                ? "解锁手机后，点击标题旁的开启投屏"
+                : "手机连接后可开启投屏"}</span
           >
         </div>{/if}
     {/if}
@@ -469,5 +526,5 @@
   </p>
 {/if}
 <p class="hint live-footnote">
-  切换页签或窗口保留投屏与操作模式，并松开触点；离开设备页后停止投屏。
+  开启投屏会切换到当前页面；刷新自动恢复，离开设备页后停止投屏。
 </p>
