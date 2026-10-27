@@ -415,6 +415,9 @@ pub fn samples(w: &Workflow) -> Result<()> {
     Ok(())
 }
 pub async fn active(app: &App, id: &str) -> Result<Workflow> {
+    if archived(app, id).await? {
+        bail!("任务已归档，请先恢复")
+    }
     let key = app
         .db
         .get::<String>("active", id)
@@ -425,7 +428,25 @@ pub async fn active(app: &App, id: &str) -> Result<Workflow> {
         .await?
         .context("工作流版本不存在")
 }
+pub async fn archived(app: &App, id: &str) -> Result<bool> {
+    Ok(app
+        .db
+        .get::<String>("archived_workflows", id)
+        .await?
+        .is_some())
+}
 pub async fn activate(app: &App, w: &Workflow, automatic: bool) -> Result<bool> {
+    if app
+        .db
+        .get::<Workflow>("workflows", &w.key())
+        .await?
+        .is_none()
+    {
+        bail!("任务版本已移除，请重新创建")
+    }
+    if archived(app, &w.id).await? {
+        bail!("任务已归档，请先恢复")
+    }
     if w.recognition == RecognitionMode::Vision {
         let current = recognition::settings(app).await?;
         let validated = app
@@ -545,6 +566,17 @@ pub fn with_swipe_settings(mut w: Workflow, settings: Option<&SwipeSettings>) ->
 
 pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow, trial: bool) -> Result<Run> {
     let _gate = app.run_gate.lock().await;
+    if app
+        .db
+        .get::<Workflow>("workflows", &w.key())
+        .await?
+        .is_none()
+    {
+        bail!("任务版本已移除，请重新创建")
+    }
+    if archived(&app, &w.id).await? {
+        bail!("任务已归档，请先恢复")
+    }
     validate(&w)?;
     let needs_ocr = w.nodes.iter().any(|n| {
         if let Action::Canvas { step } = &n.action {
@@ -677,6 +709,17 @@ pub async fn request_pause(app: &App, id: &str) -> Result<()> {
 pub async fn resume(app: Arc<App>, id: &str) -> Result<Run> {
     let _gate = app.run_gate.lock().await;
     let mut r = app.db.get::<Run>("runs", id).await?.context("任务不存在")?;
+    if app
+        .db
+        .get::<Workflow>("workflows", &r.workflow.key())
+        .await?
+        .is_none()
+    {
+        bail!("任务版本已移除，无法继续")
+    }
+    if archived(&app, &r.workflow.id).await? {
+        bail!("任务已归档，请先恢复")
+    }
     if !matches!(r.state.as_str(), "paused" | "cancelled") {
         bail!("只有已暂停或已停止的任务可以继续")
     }

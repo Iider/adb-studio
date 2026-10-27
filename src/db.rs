@@ -1,6 +1,7 @@
 use anyhow::Result;
 use sea_orm::{
     ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement,
+    TransactionTrait,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use std::path::Path;
@@ -64,6 +65,32 @@ impl Store {
                 [kind.into(), id.into()],
             ))
             .await?;
+        Ok(())
+    }
+
+    pub async fn remove_workflow(
+        &self,
+        id: &str,
+        versions: &[String],
+        draft_id: &str,
+    ) -> Result<()> {
+        let transaction = self.0.begin().await?;
+        transaction
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "DELETE FROM records WHERE (kind='workflows' AND json_extract(body,'$.id')=?) OR (kind='vision_validated' AND id IN (SELECT value FROM json_each(?))) OR (kind IN ('active','archived_workflows') AND id=?) OR (kind='workflow_drafts' AND id=?) OR (kind='schedules' AND json_extract(body,'$.workflow_id')=?)",
+                [id.into(), serde_json::to_string(versions)?.into(), id.into(), draft_id.into(), id.into()],
+            ))
+            .await?;
+        // 防止重启时重新生成用户已经移除的内置任务。
+        transaction
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO records(kind,id,body) VALUES ('removed_workflows',?,?) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body",
+                [id.into(), serde_json::to_string(id)?.into()],
+            ))
+            .await?;
+        transaction.commit().await?;
         Ok(())
     }
 }

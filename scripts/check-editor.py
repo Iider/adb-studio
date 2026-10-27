@@ -80,6 +80,10 @@ def main():
             try:
                 call("/workflow-drafts", expected=401, auth=False)
                 initial_workflows = call("/workflows")[1]
+                call("/workflows/swipe/archive", "PUT")
+                assert all(item["archived"] for item in call("/workflows")[1] if item["id"] == "swipe")
+                call("/workflows/swipe/archive", "DELETE")
+                call("/workflows/no-such-task/archive", "PUT", expected=400)
                 draft = {
                     "id": str(uuid.uuid4()), "revision": 0, "name": "未接完的草稿",
                     "description": "", "entry": "wait", "viewport": [0, 0, 1],
@@ -108,9 +112,25 @@ def main():
                 call(path, expected=404)
                 call(path, "PUT", latest, expected=409)
                 assert call("/workflow-drafts")[1] == []
+                original_swipe = next(item for item in initial_workflows if item["id"] == "swipe")
+                edited_swipe = {**original_swipe, "version": original_swipe["version"] + 1, "name": "修改后的滑动任务"}
+                created_swipe = call("/workflows", "POST", edited_swipe)[1]
+                assert created_swipe["version"] == original_swipe["version"] + 1
+                assert not created_swipe["active"]
+                assert next(item for item in call("/workflows")[1] if item["id"] == "swipe" and item["version"] == original_swipe["version"])["name"] == original_swipe["name"]
                 commands = (fake / "commands").read_text()
                 assert '"input"' not in commands
-                print("通过：未完成草稿保存、身份验证、非法连线拒绝、并发冲突、重启保留、删除冲突、草稿不参与执行")
+                print("通过：草稿保存与冲突、旧任务归档恢复和新版保存、历史版本保留")
+                call("/workflows/swipe", "DELETE", expected=401, auth=False)
+                assert call("/workflows/swipe", "DELETE")[1]["removed_versions"] == 2
+                assert not any(item["id"] == "swipe" for item in call("/workflows")[1])
+                call("/workflows/swipe/archive", "DELETE", expected=400)
+                stop(process, data)
+                process.wait(timeout=10)
+                process = boot(log)
+                assert not any(item["id"] == "swipe" for item in call("/workflows")[1])
+                assert any(item["id"] == "point-click" for item in call("/workflows")[1])
+                print("通过：永久移除全部版本，重启不再生成已移除的内置任务")
                 (fake / "online").touch()
                 (fake / "stay_on_while_plugged_in").write_text("3")
                 (fake / "screen_off_timeout").write_text("600000")
@@ -171,6 +191,53 @@ def main():
                 assert result["state"] == "needs_help" and taps() == 6
                 (fake / "screen.png").write_bytes(helpers["png"]())
                 print("通过：循环轮数、重复点击、滑动路线、画布布局不增加版本、屏幕变化拒绝动作")
+
+                busy_workflow, _ = publish([
+                    node("wait", "wait", {"next":"end"}, seconds=8),
+                    node("end", "end", result="succeeded"),
+                ], "wait")
+                busy_run = trial(busy_workflow)
+                busy_archive_path = "/workflows/" + busy_workflow["id"] + "/archive"
+                call(busy_archive_path, "PUT", expected=400)
+                call("/workflows/" + busy_workflow["id"], "DELETE", expected=400)
+                call("/runs/" + busy_run["id"] + "/stop", "POST")
+                finish(busy_run["id"])
+                call(busy_archive_path, "PUT")
+                call("/runs/" + busy_run["id"] + "/resume", "POST", expected=400)
+                call(busy_archive_path, "DELETE")
+                call("/workflows/" + busy_workflow["id"], "DELETE")
+                call("/runs/" + busy_run["id"] + "/resume", "POST", expected=400)
+
+                archive_path = "/workflows/" + workflow["id"] + "/archive"
+                schedule_body = {"name":"归档检查","device_id":"mock-phone","workflow_id":workflow["id"],"enabled":True,"rule":{"kind":"interval","minutes":60}}
+                scheduled = call("/schedules", "POST", schedule_body)[1]
+                assert scheduled["enabled"]
+                assert call(archive_path, "PUT")[1]["ok"]
+                assert call(archive_path, "PUT")[1]["ok"]
+                assert next(w for w in call("/workflows")[1] if w["id"] == workflow["id"])["archived"]
+                assert not next(s for s in call("/schedules")[1] if s["id"] == scheduled["id"])["enabled"]
+                call("/runs", "POST", {"device_id":"mock-phone","workflow_id":workflow["id"],"trial":False}, expected=400)
+                call("/runs", "POST", {"device_id":"mock-phone","workflow_id":workflow["id"],"version":workflow["version"],"trial":True}, expected=400)
+                call("/workflows/" + workflow["id"] + "@" + str(workflow["version"]) + "/publish", "POST", expected=400)
+                call("/schedules", "POST", schedule_body, expected=400)
+                stop(process, data)
+                process.wait(timeout=10)
+                process = boot(log)
+                assert next(w for w in call("/workflows")[1] if w["id"] == workflow["id"])["archived"]
+                assert call(archive_path, "DELETE")[1]["ok"]
+                assert call(archive_path, "DELETE")[1]["ok"]
+                restored = next(w for w in call("/workflows")[1] if w["id"] == workflow["id"])
+                assert not restored["archived"] and restored["active"]
+                assert not next(s for s in call("/schedules")[1] if s["id"] == scheduled["id"])["enabled"]
+                assert any(r["workflow"]["id"] == workflow["id"] for r in call("/runs")[1])
+                print("通过：归档阻止运行、试跑、启用和定时；重启保留；恢复后版本与记录仍在，定时不自动恢复")
+                call("/workflows/" + workflow["id"], "DELETE")
+                assert not any(item["id"] == workflow["id"] for item in call("/workflows")[1])
+                assert not any(item["id"] == scheduled["id"] for item in call("/schedules")[1])
+                call("/workflow-drafts/" + source["id"], expected=404)
+                call("/workflows/" + workflow["id"] + "@" + str(workflow["version"]) + "/publish", "POST", expected=400)
+                assert any(item["workflow"]["id"] == workflow["id"] for item in call("/runs")[1])
+                print("通过：运行中拒绝移除，移除后不能续跑；关联草稿、定时与启用版本一并清除，保留历史记录")
 
                 samples = [{"text":"","app":"","round":2,"expected":"yes"},{"text":"","app":"","round":1,"expected":"no"}]
                 for control, expected in [("continue",2),("break",1)]:

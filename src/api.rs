@@ -13,7 +13,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use tower_http::services::{ServeDir, ServeFile};
 
 struct Error(anyhow::Error);
@@ -46,6 +46,11 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/devices/{id}/screen", post(screen_control))
         .route("/devices/{id}/mirror", get(mirror))
         .route("/workflows", get(workflows).post(submit))
+        .route("/workflows/{id}", axum::routing::delete(remove_workflow))
+        .route(
+            "/workflows/{id}/archive",
+            put(archive_workflow).delete(restore_workflow),
+        )
         .route("/workflow-drafts/{id}/version", post(draft_version))
         .route("/editor/observe/{id}", get(editor_observe))
         .route("/workflows/{key}/validate", post(validate))
@@ -305,8 +310,14 @@ async fn mirror(
         })
         .into_response())
 }
-async fn workflows(State(app): State<Arc<App>>) -> Result<Json<Vec<Workflow>>> {
+async fn workflows(State(app): State<Arc<App>>) -> Result<Json<Vec<Value>>> {
     let mut rows = app.db.list::<Workflow>("workflows").await?;
+    let archived: HashSet<String> = app
+        .db
+        .list::<String>("archived_workflows")
+        .await?
+        .into_iter()
+        .collect();
     for w in &mut rows {
         w.active = app
             .db
@@ -314,7 +325,108 @@ async fn workflows(State(app): State<Arc<App>>) -> Result<Json<Vec<Workflow>>> {
             .await?
             .is_some_and(|key| key == w.key());
     }
-    Ok(Json(rows))
+    Ok(Json(
+        rows.into_iter()
+            .map(|workflow| {
+                let is_archived = archived.contains(&workflow.id);
+                let mut value = json!(workflow);
+                value["archived"] = json!(is_archived);
+                value
+            })
+            .collect(),
+    ))
+}
+
+async fn ensure_archivable(app: &App, id: &str) -> Result<()> {
+    if !app
+        .db
+        .list::<Workflow>("workflows")
+        .await?
+        .iter()
+        .any(|workflow| workflow.id == id)
+    {
+        return Err(anyhow::anyhow!("任务不存在").into());
+    }
+    Ok(())
+}
+
+async fn archive_workflow(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    // 与定时派发、运行启动保持相同的加锁顺序。
+    let _schedule_gate = app.schedule_gate.lock().await;
+    let _run_gate = app.run_gate.lock().await;
+    ensure_archivable(&app, &id).await?;
+    if engine::archived(&app, &id).await? {
+        return Ok(Json(json!({"ok":true})));
+    }
+    if app
+        .db
+        .list::<Run>("runs")
+        .await?
+        .iter()
+        .any(|run| run.workflow.id == id && run.busy())
+    {
+        return Err(anyhow::anyhow!("任务正在运行或暂停，请先停止再归档").into());
+    }
+    app.db.put("archived_workflows", &id, &id).await?;
+    for mut schedule in app.db.list::<Schedule>("schedules").await? {
+        if schedule.workflow_id == id && schedule.enabled {
+            schedule.enabled = false;
+            schedule.last_result = Some("任务已归档，定时已停用".into());
+            app.db.put("schedules", &schedule.id, &schedule).await?;
+        }
+    }
+    let _ = app.events.send(json!({"type":"changed"}));
+    Ok(Json(json!({"ok":true})))
+}
+
+async fn restore_workflow(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    let _schedule_gate = app.schedule_gate.lock().await;
+    let _run_gate = app.run_gate.lock().await;
+    ensure_archivable(&app, &id).await?;
+    app.db.delete("archived_workflows", &id).await?;
+    let _ = app.events.send(json!({"type":"changed"}));
+    Ok(Json(json!({"ok":true})))
+}
+
+async fn remove_workflow(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    let _schedule_gate = app.schedule_gate.lock().await;
+    let _run_gate = app.run_gate.lock().await;
+    let versions: Vec<String> = app
+        .db
+        .list::<Workflow>("workflows")
+        .await?
+        .into_iter()
+        .filter(|workflow| workflow.id == id)
+        .map(|workflow| workflow.key())
+        .collect();
+    if versions.is_empty() {
+        return Err(anyhow::anyhow!("任务不存在").into());
+    }
+    if app
+        .db
+        .list::<Run>("runs")
+        .await?
+        .iter()
+        .any(|run| run.workflow.id == id && run.busy())
+    {
+        return Err(anyhow::anyhow!("任务正在运行或暂停，请先停止再移除").into());
+    }
+    let draft_id = id
+        .strip_prefix("manual-")
+        .filter(|value| uuid::Uuid::parse_str(value).is_ok())
+        .unwrap_or("");
+    app.db.remove_workflow(&id, &versions, draft_id).await?;
+    let _ = app.events.send(json!({"type":"changed"}));
+    Ok(Json(json!({"ok":true,"removed_versions":versions.len()})))
 }
 
 #[derive(Deserialize)]
@@ -408,6 +520,8 @@ async fn validate(State(app): State<Arc<App>>, Path(key): Path<String>) -> Resul
         .await?
         .ok_or_else(|| anyhow::anyhow!("工作流不存在"))?;
     validate_workflow_samples(&app, &w).await?;
+    let _gate = app.run_gate.lock().await;
+    ensure_workflow_version(&app, &w).await?;
     w.sample_validated = true;
     app.db.put("workflows", &key, &w).await?;
     Ok(Json(json!({"ok":true,"samples":w.tests.len()})))
@@ -445,6 +559,8 @@ async fn start(State(app): State<Arc<App>>, Json(s): Json<Start>) -> Result<Json
             .await?
             .ok_or_else(|| anyhow::anyhow!("版本不存在"))?;
         validate_workflow_samples(&app, &w).await?;
+        let _gate = app.run_gate.lock().await;
+        ensure_workflow_version(&app, &w).await?;
         w.sample_validated = true;
         app.db.put("workflows", &key, &w).await?;
         w
@@ -699,6 +815,17 @@ async fn ws(State(app): State<Arc<App>>, upgrade: WebSocketUpgrade) -> Response 
     upgrade.on_upgrade(move|mut socket|async move{let mut rx=app.events.subscribe();loop{tokio::select!{event=rx.recv()=>{match event{Ok(v)=>if socket.send(Message::Text(v.to_string().into())).await.is_err(){break},Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>{if socket.send(Message::Text(json!({"type":"changed"}).to_string().into())).await.is_err(){break}},Err(_)=>break}},msg=socket.recv()=>if !matches!(msg,Some(Ok(Message::Ping(_)|Message::Pong(_)|Message::Text(_)))){break},_=app.stop.cancelled()=>break}}}).into_response()
 }
 
+async fn ensure_workflow_version(app: &App, workflow: &Workflow) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        app.db
+            .get::<Workflow>("workflows", &workflow.key())
+            .await?
+            .is_some(),
+        "任务版本已移除，请重新创建"
+    );
+    Ok(())
+}
+
 async fn validate_workflow_samples(app: &App, workflow: &Workflow) -> anyhow::Result<()> {
     engine::samples(workflow)?;
     if workflow.recognition == RecognitionMode::Vision {
@@ -709,6 +836,8 @@ async fn validate_workflow_samples(app: &App, workflow: &Workflow) -> anyhow::Re
             crate::recognition::settings(app).await? == settings,
             "模型设置已变化，请重新验证样本"
         );
+        let _gate = app.run_gate.lock().await;
+        ensure_workflow_version(app, workflow).await?;
         app.db
             .put("vision_validated", &workflow.key(), &settings)
             .await?;

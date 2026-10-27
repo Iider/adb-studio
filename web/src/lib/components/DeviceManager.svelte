@@ -285,9 +285,6 @@
         </div>
       {/if}
     </div>
-    {#if !selectedDevice}<p class="intro">
-        连接 USB 手机，或从下拉列表添加局域网设备。
-      </p>{/if}
   </div>
   <div class="device-detail-tabs" role="tablist" aria-label="设备详情">
     {#each [{ id: "parameters", label: "设备参数" }, { id: "task", label: "任务详情" }] as item}
@@ -454,7 +451,8 @@
     <div>
       <h2 id="lan-device-title">添加局域网设备</h2>
       <p class="hint">
-        手机与运行工作台的电脑或 NAS 接入同一局域网，并开启无线调试。代理软件需绕过局域网。
+        手机与运行工作台的电脑或 NAS
+        接入同一局域网，并开启无线调试。代理软件需绕过局域网。
       </p>
     </div>
     <Button
@@ -508,7 +506,9 @@
       spellcheck="false"
       required
     />
-    <p class="hint">填写手机“无线调试”页面当前显示的 IP 地址和连接端口；配对后端口可能变化。</p>
+    <p class="hint">
+      填写手机“无线调试”页面当前显示的 IP 地址和连接端口；配对后端口可能变化。
+    </p>
     <Button type="submit" disabled={lanPending || !address.trim()}
       >{lanPending ? "正在连接…" : "连接手机"}</Button
     >

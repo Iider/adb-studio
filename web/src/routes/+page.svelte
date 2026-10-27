@@ -35,6 +35,7 @@
   import { notify } from "$lib/notifications";
   import { resumeBlocked } from "$lib/run-feedback";
   import { scheduleInput } from "$lib/schedules";
+  import type { Draft } from "$lib/workflow-editor";
   import Badge from "$lib/components/ui/badge/badge.svelte";
   import {
     api,
@@ -84,7 +85,6 @@
     });
   });
   let theme = $state("light");
-  let clock = $state("");
   function toggleTheme() {
     theme = theme === "light" ? "dark" : "light";
     document.documentElement.dataset.theme = theme;
@@ -96,6 +96,7 @@
   }
   let devices = $state<Device[]>([]);
   let workflows = $state<Workflow[]>([]);
+  let drafts = $state<Draft[]>([]);
   let runs = $state<Run[]>([]);
   let schedules = $state<Schedule[]>([]);
   let settings = $state<Settings | null>(null);
@@ -312,16 +313,18 @@
     try {
       do {
         dirty = false;
-        const [d, w, r, s, config] = await Promise.all([
+        const [d, w, r, s, config, savedDrafts] = await Promise.all([
           api<Device[]>("/devices"),
           api<Workflow[]>("/workflows"),
           api<Run[]>("/runs"),
           api<Schedule[]>("/schedules"),
           api<Settings>("/settings"),
+          api<Draft[]>("/workflow-drafts"),
         ]);
         if (!alive) return;
         devices = d;
         workflows = w.sort((a, b) => b.version - a.version);
+        drafts = savedDrafts;
         runs = r;
         reconcileRunSelection();
         schedules = s;
@@ -612,17 +615,6 @@
     navigationReady = true;
     theme =
       document.documentElement.dataset.theme === "dark" ? "dark" : "light";
-    const updateClock = () => {
-      clock = new Intl.DateTimeFormat("zh-CN", {
-        timeZone: "Asia/Shanghai",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      }).format(new Date());
-    };
-    updateClock();
-    const clockTimer = setInterval(updateClock, 1000);
     try {
       const saved = JSON.parse(
         localStorage.getItem("swipe-settings") || "null",
@@ -662,7 +654,6 @@
     return () => {
       alive = false;
       clearTimeout(retry);
-      clearInterval(clockTimer);
       socket?.close();
       Object.values(pictures).forEach(URL.revokeObjectURL);
     };
@@ -826,7 +817,7 @@
           {flow.recognition === "vision"
             ? `试跑前还需 ${flow.tests?.length || 0} 次样本识别，不计入运行预算。`
             : ""}
-          试跑通过后自动启用。Agent 修改步骤；你查看流程、管理运行和定时。
+          试跑通过后自动启用。可从任务列表的“编辑”修改步骤。
         </p>{/if}
     </form>
   {/if}
@@ -1040,12 +1031,20 @@
         >{/each}
     </nav>
     <div class="sidebar-foot">
-      <div>
-        <span class="local-dot"></span>本地服务 · {connected
-          ? "已连接"
-          : "连接中"}
-      </div>
-      <small>ADB 工作台 · 网页关闭后继续运行</small>
+      <button
+        type="button"
+        class="theme-button"
+        onclick={toggleTheme}
+        aria-label={theme === "light" ? "切换夜间模式" : "切换日间模式"}
+        title={theme === "light" ? "切换夜间模式" : "切换日间模式"}
+      >
+        {#if theme === "light"}<Moon size={16} aria-hidden="true" /><span
+            class="theme-label">夜间模式</span
+          >
+        {:else}<Sun size={16} aria-hidden="true" /><span class="theme-label"
+            >日间模式</span
+          >{/if}
+      </button>
     </div>
   </aside>
   <main>
@@ -1059,50 +1058,26 @@
               : tabs.find((item) => item.id === tab)?.label}</strong
         >
       </div>
-      <div class="top-actions">
-        <span class="mode-tag" class:disconnected={!connected}
-          >{connected ? "LOCAL" : "连接中"}</span
-        >
-        <button
-          class="theme-button"
-          onclick={toggleTheme}
-          aria-label={theme === "light" ? "切换夜间模式" : "切换日间模式"}
-          >{#if theme === "light"}<Moon
-              size={12}
-              aria-hidden="true"
-            />夜间模式{:else}<Sun
-              size={12}
-              aria-hidden="true"
-            />日间模式{/if}</button
-        >
-        <time class="clock">{clock}</time><span
-          class="avatar"
-          aria-hidden="true">PS</span
-        >
-      </div>
     </header>
     <section class="content" bind:this={contentElement}>
-      {#if tab === "runs" || tab === "settings"}<div class="page-heading">
-          <div>
-            <p class="eyebrow">手机自动化 · 本地托管</p>
-            <h1>
-              {tabs.find((t) => t.id === tab)?.label}
-            </h1>
-            <p class="intro">
-              {(
-                {
-                  runs: "任务进度、结果与判断依据。",
-                  settings: "后台状态与识别模型。",
-                } as Record<string, string>
-              )[tab]}
-            </p>
-          </div>
-          {#if activeRuns.length}<Button
-              variant="outline"
-              class="stop-button"
-              disabled={!!working}
-              onclick={stopAllRuns}><Square size={16} />全部停止</Button
-            >{/if}
+      {#if tab === "runs" || tab === "settings"}<div
+          class="page-heading page-heading-simple"
+        >
+          <h1>{tabs.find((t) => t.id === tab)?.label}</h1>
+          {#if tab === "runs" || activeRuns.length}<div class="page-actions">
+              {#if tab === "runs"}<Button
+                  variant="outline"
+                  disabled={!!working || !connected || !finishedRuns.length}
+                  onclick={() => requestClear()}
+                  ><Trash2 size={17} aria-hidden="true" />清理已结束</Button
+                >{/if}
+              {#if activeRuns.length}<Button
+                  variant="outline"
+                  class="stop-button"
+                  disabled={!!working}
+                  onclick={stopAllRuns}><Square size={16} />全部停止</Button
+                >{/if}
+            </div>{/if}
         </div>
       {/if}
       {#if tab === "devices"}
@@ -1148,6 +1123,7 @@
         <div hidden={workflowOpen && !!flow}>
           <TaskList
             {workflows}
+            {drafts}
             {devices}
             {runs}
             {schedules}
@@ -1174,14 +1150,31 @@
               );
             }}
             onStopAll={stopAllRuns}
+            onArchive={(workflow) =>
+              action(
+                `archive-${workflow.id}`,
+                () =>
+                  api(
+                    `/workflows/${encodeURIComponent(workflow.id)}/archive`,
+                    "PUT",
+                  ),
+                "任务已归档，相关定时已停用",
+              )}
+            onRestore={(workflow) =>
+              action(
+                `restore-${workflow.id}`,
+                () =>
+                  api(
+                    `/workflows/${encodeURIComponent(workflow.id)}/archive`,
+                    "DELETE",
+                  ),
+                "任务已恢复，定时仍保持停用",
+              )}
           />
         </div>
         {#if workflowOpen && flow}
-          <div class="page-heading">
-            <div>
-              <h1>任务详情</h1>
-              <p class="intro">选择手机与参数，再试跑或运行。</p>
-            </div>
+          <div class="page-heading page-heading-simple">
+            <h1>任务详情</h1>
             <div class="page-actions">
               {#if activeRuns.length}<Button
                   variant="outline"
@@ -1209,8 +1202,12 @@
               </div>
               <Badge
                 class="status"
-                variant={flow.active ? "default" : "outline"}
-                >{flow.active ? "已启用" : "待试跑"}</Badge
+                variant={flow.active && !flow.archived ? "default" : "outline"}
+                >{flow.archived
+                  ? "已归档"
+                  : flow.active
+                    ? "已启用"
+                    : "待试跑"}</Badge
               >
             </div>
             <p class="hint">
@@ -1219,7 +1216,13 @@
                 ? "截图发送到模型服务；定位、复查、结果检查和重试均计入次数。"
                 : "无需识别的动作直接执行。"}
             </p>
-            {@render taskLaunch(false)}
+            {#if flow.archived}
+              <p class="hint">
+                任务已归档。恢复后可再次运行；原有定时需手动开启。
+              </p>
+            {:else}
+              {@render taskLaunch(false)}
+            {/if}
             <ol class="flow-nodes">
               {#each flow.nodes as n, i}
                 {@const nodeRun =
@@ -1313,26 +1316,8 @@
               () => api(`/schedules/${schedule.id}`, "DELETE"),
               "定时已删除",
             )}
-          onViewTasks={() => {
-            tab = "workflows";
-            workflowOpen = false;
-          }}
         />
       {:else if tab === "runs"}
-        <div class="run-toolbar">
-          <p aria-live="polite">
-            共 <strong>{runs.length}</strong> 条
-            <span
-              >未结束 {activeRuns.length} · 已结束 {finishedRuns.length}</span
-            >
-          </p>
-          <Button
-            variant="outline"
-            disabled={!!working || !connected || !finishedRuns.length}
-            onclick={() => requestClear()}
-            ><Trash2 size={17} aria-hidden="true" />清理已结束</Button
-          >
-        </div>
         {#if !runs.length}
           <div class="panel empty">
             {#if loading}<LoaderCircle size={32} class="spin" />

@@ -117,6 +117,14 @@ async fn main() -> Result<()> {
     for wf in engine::builtins() {
         if app
             .db
+            .get::<String>("removed_workflows", &wf.id)
+            .await?
+            .is_some()
+        {
+            continue;
+        }
+        if app
+            .db
             .get::<Workflow>("workflows", &wf.key())
             .await?
             .is_none()

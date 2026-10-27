@@ -9,6 +9,7 @@
     Pencil,
     Play,
     Plus,
+    Search,
     Square,
     Trash2,
     X,
@@ -37,7 +38,6 @@
     onSave,
     onToggle,
     onDelete,
-    onViewTasks,
   }: {
     schedules: Schedule[];
     workflows: Workflow[];
@@ -50,7 +50,6 @@
     onSave: (id: string, input: ScheduleInput) => Promise<boolean>;
     onToggle: (schedule: Schedule) => Promise<boolean>;
     onDelete: (schedule: Schedule) => Promise<boolean>;
-    onViewTasks: () => void;
   } = $props();
 
   let search = $state("");
@@ -76,7 +75,7 @@
   let swipeInterval = $state(25);
 
   const activeWorkflows = $derived(
-    workflows.filter((workflow) => workflow.active),
+    workflows.filter((workflow) => workflow.active && !workflow.archived),
   );
   const workflow = $derived(
     activeWorkflows.find((workflow) => workflow.id === workflowId),
@@ -228,36 +227,32 @@
   }
 </script>
 
-<div class="page-heading task-heading">
-  <div>
-    <h1>定时任务</h1>
-    <p class="intro">
-      共 {schedules.length} 条 · {schedules.filter(
-        (schedule) => schedule.enabled,
-      ).length} 条已开启 · 上海时间
-    </p>
-  </div>
-  <div class="page-actions task-tools schedule-tools">
-    <label class="visually-hidden" for="schedule-search"
-      >搜索定时名称、任务或手机</label
-    >
-    <input
-      id="schedule-search"
-      class="task-search"
-      type="search"
-      placeholder="搜索定时名称、任务或手机"
-      bind:value={search}
-    />
-    <Dropdown
-      class="task-filter"
-      label="筛选定时状态"
-      bind:value={filter}
-      items={[
-        { value: "all", label: "全部定时" },
-        { value: "enabled", label: "已开启" },
-        { value: "disabled", label: "未开启" },
-      ]}
-    />
+<header class="page-heading schedule-heading">
+  <h1>定时任务</h1>
+  <div class="schedule-toolbar" aria-label="搜索与筛选定时">
+    <div class="schedule-search">
+      <Search size={17} aria-hidden="true" />
+      <label class="visually-hidden" for="schedule-search"
+        >搜索定时名称、任务或手机</label
+      >
+      <input
+        id="schedule-search"
+        type="search"
+        placeholder="搜索定时名称、任务或手机"
+        bind:value={search}
+      />
+    </div>
+    <div class="schedule-filter">
+      <Dropdown
+        label="筛选定时状态"
+        bind:value={filter}
+        items={[
+          { value: "all", label: "全部定时" },
+          { value: "enabled", label: "已开启" },
+          { value: "disabled", label: "未开启" },
+        ]}
+      />
+    </div>
     <Button
       bind:ref={newButton}
       disabled={loading ||
@@ -266,37 +261,28 @@
         !activeWorkflows.length ||
         !devices.length}
       onclick={() => void openEditor()}
-      ><Plus size={14} aria-hidden="true" />新建定时</Button
+      ><Plus size={16} aria-hidden="true" />新建定时</Button
     >
-    {#if activeCount}<Button
-        variant="outline"
-        class="stop-button"
-        disabled={!!working}
-        onclick={onStopAll}
-        ><Square size={14} aria-hidden="true" />全部停止</Button
-      >{/if}
+    {#if activeCount}
+      <div class="schedule-toolbar-actions">
+        <Button
+          variant="outline"
+          class="stop-button"
+          disabled={!!working}
+          onclick={onStopAll}
+        >
+          <Square size={14} aria-hidden="true" />全部停止
+        </Button>
+      </div>
+    {/if}
   </div>
-</div>
+</header>
 
 {#if loading}
   <div class="empty">
     <LoaderCircle class="spin" aria-hidden="true" />正在读取定时…
   </div>
 {:else}
-  {#if !activeWorkflows.length || !devices.length}
-    <div class="schedule-note">
-      <CalendarClock size={18} aria-hidden="true" />
-      <div>
-        {!devices.length
-          ? "请先在设备管理中确认已登记的手机。"
-          : "任务试跑并启用后，即可新建定时。"}
-      </div>
-      {#if !activeWorkflows.length}<Button
-          variant="outline"
-          onclick={onViewTasks}>查看任务</Button
-        >{/if}
-    </div>
-  {/if}
   {#if !visible.length}
     <div class="empty">
       <CalendarClock size={28} aria-hidden="true" />
@@ -401,9 +387,6 @@
       {/each}
     </div>
   {/if}
-  <p class="schedule-footnote">
-    离线、忙碌或后台停机错过的定时点会跳过；已开始的任务掉线后等待手机。
-  </p>
 {/if}
 
 <dialog
@@ -625,3 +608,105 @@
     >
   </div>
 </dialog>
+
+<style>
+  .schedule-heading {
+    align-items: center;
+    flex-direction: row;
+  }
+  .schedule-heading h1 {
+    font-size: 26px;
+    line-height: 1.3;
+  }
+  .schedule-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    margin-left: auto;
+  }
+  .schedule-search {
+    position: relative;
+    width: 280px;
+    min-width: 180px;
+  }
+  .schedule-search > :global(svg) {
+    position: absolute;
+    top: 50%;
+    left: 13px;
+    transform: translateY(-50%);
+    pointer-events: none;
+    color: var(--dim);
+  }
+  .schedule-search input {
+    width: 100%;
+    height: 40px;
+    min-height: 40px;
+    margin: 0;
+    padding: 8px 12px 8px 39px;
+    background: var(--panel);
+    font-size: 13px;
+  }
+  .schedule-search input::placeholder {
+    color: var(--dim);
+  }
+  .schedule-filter {
+    width: 150px;
+    flex: none;
+  }
+  .schedule-filter :global(.dropdown-trigger) {
+    height: 40px;
+    min-height: 40px;
+  }
+  .schedule-toolbar-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .schedule-heading :global([data-slot="button"]),
+  .schedule-toolbar-actions :global([data-slot="button"]) {
+    height: 40px;
+    min-height: 40px;
+    padding: 0 14px;
+    font-size: 13px;
+    line-height: 1;
+    transition-property: background-color, color, border-color, box-shadow;
+  }
+  @media (max-width: 900px) {
+    .schedule-heading {
+      flex-wrap: wrap;
+    }
+    .schedule-toolbar {
+      width: 100%;
+      justify-content: flex-end;
+    }
+    .schedule-search {
+      flex: 1;
+      width: auto;
+    }
+  }
+  @media (max-width: 660px) {
+    .schedule-heading {
+      flex-direction: row;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .schedule-heading h1 {
+      font-size: 24px;
+    }
+    .schedule-toolbar {
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .schedule-filter {
+      width: 125px;
+    }
+    .schedule-heading :global([data-slot="button"]),
+    .schedule-toolbar-actions :global([data-slot="button"]),
+    .schedule-filter :global(.dropdown-trigger),
+    .schedule-search input {
+      height: 44px;
+      min-height: 44px;
+    }
+  }
+</style>

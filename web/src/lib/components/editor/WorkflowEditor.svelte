@@ -263,7 +263,8 @@
       await session();
       drafts = await api<Draft[]>("/workflow-drafts");
       devices = await api<Device[]>("/devices");
-      let requested = new URLSearchParams(location.search).get("draft") ?? "";
+      const explicitDraft = new URLSearchParams(location.search).get("draft");
+      let requested = explicitDraft ?? "";
       if (!requested) {
         try {
           requested = localStorage.getItem("adb-workflow-last-draft") ?? "";
@@ -271,9 +272,12 @@
           /* 使用后台最近草稿。 */
         }
       }
-      const chosen =
-        drafts.find((draft) => draft.id === requested) ?? drafts[0];
-      if (chosen) loadDraft(chosen);
+      const chosen = drafts.find((draft) => draft.id === requested);
+      if (explicitDraft && !chosen && !readBackup(requested)) {
+        throw new Error("这份草稿已不存在，请返回任务列表查看");
+      }
+      if (chosen || (!explicitDraft && drafts.length))
+        loadDraft(chosen ?? drafts[0]);
       else {
         const local = requested ? readBackup(requested) : null;
         loadDraft(
@@ -1243,7 +1247,7 @@
 
 <dialog bind:this={deleteDialog}>
   <h2>删除这份草稿？</h2>
-  <p>“{name}”删除后无法恢复。</p>
+  <p>“{name}”的草稿删除后无法恢复。任务版本仍保留，可从任务卡片继续修改，但原画布布局无法恢复。</p>
   <div class="dialog-actions">
     <button
       class="editor-button"

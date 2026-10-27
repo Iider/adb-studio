@@ -80,6 +80,8 @@ python3 scripts/studio.py request POST /workflows/编号@版本/publish
 
 `POST /api/workflow-drafts/{id}/version` 接收 `{"revision":当前草稿版本}`，校验连线、循环范围、坐标标注和条件样本后创建不可覆盖的正式版本；仅改画布位置会返回原执行版本。`GET /api/editor/observe/{device_id}` 返回原图数据与屏幕宽高、显示屏标识，用于标注，不发送触控命令。新编排步骤序列化为 `{"type":"canvas","step":{...}}`，其出口由 `step.targets` 决定，不能同时声明 `next`。坐标标注绑定手机与屏幕形态；无法确认多屏手机的触控显示编号时拒绝标注。
 
+自动化任务卡片直接提供“编辑”：有草稿的任务打开画布，其余任务从最新版本制作新版。`GET /api/workflows` 的每个版本带有 `archived` 布尔状态。所有已保存任务可通过 `PUT /api/workflows/{id}/archive` 归档、`DELETE /api/workflows/{id}/archive` 恢复；归档保留草稿、版本与执行记录，停用相关定时。归档中拒绝启动、继续、试跑、启用和新建定时；恢复后定时仍需手动开启。详情见 [编辑与归档方案](workflow-edit-archive.md)。
+
 所有接口前缀 `/api`；Agent 使用 `Authorization: Bearer <令牌>`。响应错误提供 `error` 字段。
 
 | 方法与路径 | 用途 |
@@ -92,6 +94,8 @@ python3 scripts/studio.py request POST /workflows/编号@版本/publish
 | PUT `/devices/{id}` | `name` 或 `keep_awake` |
 | GET `/devices/{id}/screenshot` | 当前截图 PNG |
 | GET / POST `/workflows` | 查询版本 / 提交新版 |
+| PUT / DELETE `/workflows/{id}/archive` | 归档 / 恢复任务 |
+| DELETE `/workflows/{id}` | 彻底移除任务的全部版本、关联草稿与定时；未结束时拒绝。保留历史执行记录，禁止续跑已移除版本；内置任务重启后不再生成 |
 | POST `/workflows/{id}@{version}/validate` | 校验与文本样本验证 |
 | POST `/workflows/{id}@{version}/publish` | 启用或回退版本 |
 | GET / POST `/runs` | 查询 / 运行，参数见下方 |

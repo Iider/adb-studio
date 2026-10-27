@@ -74,6 +74,7 @@ export interface Node {
 export interface Workflow {
   id: string;
   version: number;
+  archived?: boolean;
   name: string;
   description: string;
   devices: string[];
