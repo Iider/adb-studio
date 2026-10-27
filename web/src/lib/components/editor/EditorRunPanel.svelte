@@ -298,7 +298,6 @@
     background: var(--panel);
     color: var(--text);
     padding: 18px;
-    box-shadow: 0 12px 40px rgb(0 0 0 / 18%);
   }
   header {
     display: flex;

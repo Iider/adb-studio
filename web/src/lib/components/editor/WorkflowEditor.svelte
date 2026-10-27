@@ -1396,7 +1396,6 @@
     border-radius: 12px;
     background: var(--panel);
     color: var(--text);
-    box-shadow: 0 12px 40px rgb(0 0 0 / 18%);
     white-space: normal;
   }
   .popover-heading {

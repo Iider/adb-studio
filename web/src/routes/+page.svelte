@@ -999,17 +999,6 @@
     </div>
   </aside>
   <main>
-    <header class="topbar">
-      <div class="breadcrumb">
-        工作空间 <span>/</span><strong
-          >{tab === "devices" && selectedDeviceId
-            ? "设备详情"
-            : tab === "workflows" && workflowOpen
-              ? "任务详情"
-              : tabs.find((item) => item.id === tab)?.label}</strong
-        >
-      </div>
-    </header>
     <section class="content" bind:this={contentElement}>
       {#if tab === "runs" || tab === "settings"}<div
           class="page-heading page-heading-simple"

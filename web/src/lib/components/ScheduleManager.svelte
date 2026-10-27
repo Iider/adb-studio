@@ -616,7 +616,6 @@
     flex-direction: row;
   }
   .schedule-heading h1 {
-    font-size: 26px;
     line-height: 1.3;
   }
   .schedule-toolbar {
@@ -691,9 +690,6 @@
       align-items: center;
       flex-wrap: wrap;
       gap: 12px;
-    }
-    .schedule-heading h1 {
-      font-size: 24px;
     }
     .schedule-toolbar {
       flex-wrap: wrap;

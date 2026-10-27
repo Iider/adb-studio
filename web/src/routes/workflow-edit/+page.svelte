@@ -513,7 +513,6 @@
     max-width: 1380px;
   }
   .revision-header h1 {
-    font-size: 26px;
     font-weight: 750;
   }
   .revision-panel p {

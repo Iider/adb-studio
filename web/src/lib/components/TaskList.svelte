@@ -322,32 +322,6 @@
           </dl>
 
           <footer class="catalog-footer">
-            <span
-              class="catalog-result"
-              class:live={!!run && run.state !== "paused"}
-              class:paused={run?.state === "paused"}
-              class:success={!run && task.latestRun?.state === "succeeded"}
-              class:attention={!run && task.latestRun?.state === "needs_help"}
-              title={run
-                ? task.inProgress
-                    .map(
-                      (item) =>
-                        `${deviceName(item.device_id)} · ${runLabel(item)}`,
-                    )
-                    .join("；")
-                : undefined}
-            >
-              <span class="catalog-result-dot" aria-hidden="true"></span>
-              <span
-                >{run
-                  ? task.inProgress.length > 1
-                    ? `${task.inProgress.length} 个未结束`
-                    : `${deviceName(run.device_id)} · ${runLabel(run)}`
-                  : task.latestRun
-                    ? runLabel(task.latestRun)
-                    : "尚未执行"}</span
-              >
-            </span>
             <div class="catalog-actions">
               {#if workflow.archived}
                 <Button
@@ -492,7 +466,6 @@
     flex-wrap: wrap;
   }
   .catalog-heading h1 {
-    font-size: 26px;
     line-height: 1.3;
   }
   .catalog-toolbar {
@@ -682,40 +655,11 @@
   .catalog-footer {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 12px;
     margin-top: auto;
     padding-top: 16px;
     border-top: 1px solid var(--line);
-  }
-  .catalog-result {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-    color: var(--dim);
-    font-size: 12px;
-    line-height: 20px;
-  }
-  .catalog-result > span:last-child {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .catalog-result-dot {
-    flex: none;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: currentColor;
-  }
-  .catalog-result.live,
-  .catalog-result.success {
-    color: var(--accent2);
-  }
-  .catalog-result.paused,
-  .catalog-result.attention {
-    color: var(--amber);
   }
   .catalog-actions {
     display: flex;
@@ -812,10 +756,6 @@
     border-radius: 14px;
     background: var(--panel);
     color: var(--text);
-    box-shadow: var(--shadow);
-  }
-  .task-archive-dialog::backdrop {
-    background: rgb(0 0 0 / 55%);
   }
   .task-archive-dialog h2 {
     margin-bottom: 12px;
@@ -834,13 +774,6 @@
     .catalog-meta > div {
       grid-template-columns: 76px minmax(0, 1fr);
       gap: 8px;
-    }
-    .catalog-footer {
-      flex-direction: column;
-      align-items: stretch;
-    }
-    .catalog-actions {
-      justify-content: flex-end;
     }
   }
   @container task-card (max-width: 320px) {
@@ -872,9 +805,6 @@
       align-items: flex-start;
       flex-wrap: wrap;
       gap: 12px;
-    }
-    .catalog-heading h1 {
-      font-size: 24px;
     }
     .catalog-toolbar {
       flex-wrap: wrap;
