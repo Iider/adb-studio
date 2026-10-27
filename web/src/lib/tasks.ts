@@ -1,33 +1,33 @@
 import { busy, type Run, type Schedule, type Workflow } from "./api";
 
+export function latestWorkflows(workflows: Workflow[]): Workflow[] {
+  const latest = new Map<string, Workflow>();
+  for (const workflow of workflows) {
+    const previous = latest.get(workflow.id);
+    if (!previous || previous.version < workflow.version)
+      latest.set(workflow.id, workflow);
+  }
+  return [...latest.values()];
+}
+
 export function summarizeTasks(
   workflows: Workflow[],
   runs: Run[],
   schedules: Schedule[],
 ) {
-  const groups = new Map<string, Workflow[]>();
-  for (const workflow of workflows) {
-    const versions = groups.get(workflow.id) || [];
-    versions.push(workflow);
-    groups.set(workflow.id, versions);
-  }
-  return [...groups.values()]
-    .map((versions) => {
-      versions.sort((a, b) => b.version - a.version);
-      const latest = versions[0];
-      const active = versions.find((workflow) => workflow.active);
+  return latestWorkflows(workflows)
+    .map((workflow) => {
       const history = runs
-        .filter((run) => run.workflow.id === latest.id)
+        .filter((run) => run.workflow.id === workflow.id)
         .sort((a, b) => b.started_at.localeCompare(a.started_at));
       return {
-        workflow: active || latest,
-        latest,
-        active,
+        workflow,
         history,
         latestRun: history[0],
         inProgress: history.filter(busy),
         scheduled: schedules.filter(
-          (schedule) => schedule.enabled && schedule.workflow_id === latest.id,
+          (schedule) =>
+            schedule.enabled && schedule.workflow_id === workflow.id,
         ).length,
       };
     })

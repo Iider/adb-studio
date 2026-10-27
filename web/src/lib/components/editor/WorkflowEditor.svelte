@@ -66,7 +66,7 @@
   let markCondition = $state<number | null>(null);
   let version = $state<WorkflowDefinition | null>(null);
   let versionContent = $state("");
-  let publishing = $state(false);
+  let savingVersion = $state(false);
   let executionError = $state("");
   let id = $state("");
   let draftChoice = $state("");
@@ -186,7 +186,7 @@
   async function restoreVersion(draftId: string) {
     try {
       const versions = await api<WorkflowDefinition[]>("/workflows");
-      if (id !== draftId || version || publishing) return;
+      if (id !== draftId || version || savingVersion) return;
       const latest = versions
         .filter((item) => item.id === `manual-${draftId}`)
         .sort((a, b) => b.version - a.version)[0];
@@ -449,11 +449,11 @@
         : node,
     );
   }
-  async function saveVersion() {
-    publishing = true;
+  async function saveVersion(): Promise<WorkflowDefinition | null> {
+    savingVersion = true;
     executionError = "";
     try {
-      if (!(await flush())) return;
+      if (!(await flush())) return null;
       const submitted = executionContent,
         submittedId = id;
       const result = await api<WorkflowDefinition>(
@@ -461,14 +461,16 @@
         "POST",
         { revision },
       );
-      if (id !== submittedId) return;
+      if (id !== submittedId) return null;
       version = result;
       versionContent = submitted;
-      notify.success("第 " + version.version + " 版已保存，可选择手机试跑");
+      notify.success("第 " + version.version + " 版已保存，可直接运行");
+      return result;
     } catch (error) {
       executionError = message(error);
+      return null;
     } finally {
-      publishing = false;
+      savingVersion = false;
     }
   }
   function showProgress(nodeId: string) {
@@ -803,8 +805,9 @@
       >
       <button
         class="editor-button wide-action"
-        disabled={!ready || saving || switching || publishing || !!recovery}
-        onclick={saveVersion}>{publishing ? "正在检查…" : "保存新版本"}</button
+        disabled={!ready || saving || switching || savingVersion || !!recovery}
+        onclick={saveVersion}
+        >{savingVersion ? "正在保存…" : "保存新版本"}</button
       >
       <EditorRunPanel
         workflowId={id ? `manual-${id}` : ""}
@@ -814,7 +817,7 @@
         changed={versionContent !== executionContent}
         onstate={showProgress}
         disabled={!ready || switching || !!recovery}
-        {publishing}
+        {savingVersion}
         onsaveversion={saveVersion}
       />
       <button
@@ -891,7 +894,11 @@
           }}><Check size={16} />检查草稿</button
         ><button
           class="editor-button"
-          disabled={!ready || saving || switching || publishing || !!recovery}
+          disabled={!ready ||
+            saving ||
+            switching ||
+            savingVersion ||
+            !!recovery}
           onclick={() => {
             morePopover?.hidePopover();
             void saveVersion();
@@ -1090,7 +1097,7 @@
                       }}>{issue.message}</button
                     >
                   </li>{/each}
-              </ul>{:else}<p>运行前仍需后台校验与试跑。</p>{/if}
+              </ul>{:else}<p>可保存并运行。</p>{/if}
           </div>{/if}
       </section>
 
@@ -1247,7 +1254,9 @@
 
 <dialog bind:this={deleteDialog}>
   <h2>删除这份草稿？</h2>
-  <p>“{name}”的草稿删除后无法恢复。任务版本仍保留，可从任务卡片继续修改，但原画布布局无法恢复。</p>
+  <p>
+    “{name}”的草稿删除后无法恢复。任务版本仍保留，可从任务卡片继续修改，但原画布布局无法恢复。
+  </p>
   <div class="dialog-actions">
     <button
       class="editor-button"

@@ -33,6 +33,7 @@
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import RunFeedback from "$lib/components/RunFeedback.svelte";
   import { notify } from "$lib/notifications";
+  import { latestWorkflows } from "$lib/tasks";
   import { resumeBlocked } from "$lib/run-feedback";
   import { scheduleInput } from "$lib/schedules";
   import type { Draft } from "$lib/workflow-editor";
@@ -156,13 +157,10 @@
   const activeRuns = $derived(runs.filter(busy));
   const finishedRuns = $derived(runs.filter((r) => !busy(r)));
   const flow = $derived(
-    tab === "devices"
-      ? workflows.find((w) => w.id === selectedWorkflow && w.active) ||
-          workflows.find((w) => w.id === selectedWorkflow)
+    tab === "devices" || selectedVersion === 0
+      ? latestWorkflows(workflows).find((w) => w.id === selectedWorkflow)
       : workflows.find(
-          (w) =>
-            w.id === selectedWorkflow &&
-            (selectedVersion === 0 || w.version === selectedVersion),
+          (w) => w.id === selectedWorkflow && w.version === selectedVersion,
         ),
   );
   const deviceRun = $derived(
@@ -187,19 +185,12 @@
     }
   });
   const taskChoices = $derived(
-    workflows
-      .filter(
-        (w, index) => workflows.findIndex((item) => item.id === w.id) === index,
-      )
-      .map((latest) => {
-        const current =
-          workflows.find((w) => w.id === latest.id && w.active) || latest;
-        return {
-          value: current.id,
-          label: current.name,
-          description: current.active ? "已启用" : "需试跑验证",
-        };
-      }),
+    latestWorkflows(workflows)
+      .filter((w) => !w.archived)
+      .map((workflow) => ({
+        value: workflow.id,
+        label: workflow.name,
+      })),
   );
   $effect(() => {
     if (
@@ -256,35 +247,33 @@
   const launchBlocked = $derived(
     !connected
       ? "后台未连接，请稍后重试。"
-      : tab === "devices" && flow && !flow.active
-        ? "任务尚未启用，请先到自动化任务页试跑并启用。"
-        : flow?.devices.length &&
-            launchDevice &&
-            !flow.devices.includes(launchDevice.id)
-          ? "此任务尚未适配当前手机，请选择其他任务。"
-          : !launchDevice?.online
-            ? "手机离线，连接后可开始。"
-            : launchDevice.locked
-              ? "请先在设备详情中唤醒并解锁手机。"
-              : launchRun
-                ? `当前任务：${runLabel(launchRun)}。停止后可开始新任务。`
-                : flow?.id === "point-click" && !launchDevice.tap_point
-                  ? "请先标注这台手机的点击位置。"
-                  : settings &&
-                      !settings.local_ocr &&
-                      flow?.nodes.some((n) =>
-                        [
-                          "tap_text",
-                          "tap_point",
-                          "key",
-                          "branch",
-                          "tap_loop",
-                          "qishui_navigate",
-                          "qishui_loop",
-                        ].includes(n.type),
-                      )
-                    ? "此任务需要本地文字识别，当前平台未安装。请使用已适配的纯视觉任务。"
-                    : "",
+      : flow?.devices.length &&
+          launchDevice &&
+          !flow.devices.includes(launchDevice.id)
+        ? "此任务尚未适配当前手机，请选择其他任务。"
+        : !launchDevice?.online
+          ? "手机离线，连接后可开始。"
+          : launchDevice.locked
+            ? "请先在设备详情中唤醒并解锁手机。"
+            : launchRun
+              ? `当前任务：${runLabel(launchRun)}。停止后可开始新任务。`
+              : flow?.id === "point-click" && !launchDevice.tap_point
+                ? "请先标注这台手机的点击位置。"
+                : settings &&
+                    !settings.local_ocr &&
+                    flow?.nodes.some((n) =>
+                      [
+                        "tap_text",
+                        "tap_point",
+                        "key",
+                        "branch",
+                        "tap_loop",
+                        "qishui_navigate",
+                        "qishui_loop",
+                      ].includes(n.type),
+                    )
+                  ? "此任务需要本地文字识别，当前平台未安装。请使用已适配的纯视觉任务。"
+                  : "",
   );
   $effect(() => {
     if (tab === "devices") targetDevice = selectedDeviceId;
@@ -464,7 +453,7 @@
       "已请求停止全部任务",
     );
   }
-  async function startFlow(trial: boolean, embedded = false) {
+  async function startFlow(embedded = false) {
     if (!flow || working || launchBlocked) return;
     if (flow.id === "swipe") {
       localStorage.setItem(
@@ -478,8 +467,7 @@
         const r = await api<Run>("/runs", "POST", {
           device_id: targetDevice,
           workflow_id: flow.id,
-          version: embedded && !trial ? undefined : flow.version,
-          trial,
+          version: embedded ? undefined : flow.version,
           tap: flow.nodes.some((n) =>
             ["tap_loop", "fixed_tap_loop"].includes(n.type),
           )
@@ -497,7 +485,7 @@
         if (embedded) deviceDetailTab = "task";
         else tab = "runs";
       },
-      trial ? "试跑已开始；通过后自动启用" : "任务已开始",
+      "任务已开始",
     );
   }
   function reconcileRunSelection() {
@@ -666,12 +654,7 @@
       class="task-launch"
       onsubmit={(event) => {
         event.preventDefault();
-        void startFlow(
-          embedded
-            ? false
-            : (event.submitter as HTMLButtonElement | null)?.value !== "run",
-          embedded,
-        );
+        void startFlow(embedded);
       }}
     >
       {#if flow.id === "point-click"}
@@ -762,7 +745,7 @@
                 .filter((w) => w.id === flow.id)
                 .map((w) => ({
                   value: String(w.version),
-                  label: `第 ${w.version} 版${w.active ? " · 已启用" : ""}`,
+                  label: `第 ${w.version} 版`,
                 }))}
               value={String(flow.version)}
               label="任务版本"
@@ -781,43 +764,13 @@
               bind:value={targetDevice}
               label="执行手机"
             /></label
-          ><Button
-            disabled={!!working || !!launchBlocked}
-            type="submit"
-            name="mode"
-            value="trial"
-            ><Play size={16} />{flow.recognition === "vision"
-              ? "验证样本并试跑"
-              : "试跑此版本"}</Button
-          >{#if flow.active}<Button
-              variant="outline"
-              disabled={!!working || !!launchBlocked}
-              type="submit"
-              name="mode"
-              value="run">直接运行</Button
-            >{/if}{#if !flow.active && runs.some((r) => r.trial && r.state === "succeeded" && r.workflow.id === flow.id && r.workflow.version === flow.version)}<Button
-              variant="outline"
-              onclick={() =>
-                action(
-                  "publish",
-                  () =>
-                    api(
-                      `/workflows/${flow.id}@${flow.version}/publish`,
-                      "POST",
-                    ),
-                  "此版本已启用",
-                )}>启用 / 回退到此版</Button
-            >{/if}
+          ><Button disabled={!!working || !!launchBlocked} type="submit"
+            ><Play size={16} />运行此版本</Button
+          >
         </div>
       {/if}
       {#if launchBlocked}<p class="hint" role="status">
           {launchBlocked}
-        </p>{/if}
-      {#if !embedded}<p class="hint">
-          {flow.recognition === "vision"
-            ? `试跑前还需 ${flow.tests?.length || 0} 次样本识别，不计入运行预算。`
-            : ""}
-          试跑通过后自动启用。可从任务列表的“编辑”修改步骤。
         </p>{/if}
     </form>
   {/if}
@@ -834,9 +787,7 @@
       <div>
         <h2>{run.workflow.name}</h2>
         <p>
-          {deviceName} · 第 {run.workflow.version} 版{run.trial
-            ? " · 试跑"
-            : ""}
+          {deviceName} · 第 {run.workflow.version} 版
         </p>
       </div>
       <Badge variant={run.state === "needs_help" ? "destructive" : "default"}
@@ -1202,12 +1153,8 @@
               </div>
               <Badge
                 class="status"
-                variant={flow.active && !flow.archived ? "default" : "outline"}
-                >{flow.archived
-                  ? "已归档"
-                  : flow.active
-                    ? "已启用"
-                    : "待试跑"}</Badge
+                variant={flow.archived ? "outline" : "default"}
+                >{flow.archived ? "已归档" : "已保存"}</Badge
               >
             </div>
             <p class="hint">

@@ -54,7 +54,6 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/workflow-drafts/{id}/version", post(draft_version))
         .route("/editor/observe/{id}", get(editor_observe))
         .route("/workflows/{key}/validate", post(validate))
-        .route("/workflows/{key}/publish", post(publish))
         .route("/runs", get(runs).post(start))
         .route("/runs/{id}", axum::routing::delete(clear_run))
         .route("/runs/{id}/stop", post(stop))
@@ -311,20 +310,13 @@ async fn mirror(
         .into_response())
 }
 async fn workflows(State(app): State<Arc<App>>) -> Result<Json<Vec<Value>>> {
-    let mut rows = app.db.list::<Workflow>("workflows").await?;
+    let rows = app.db.list::<Workflow>("workflows").await?;
     let archived: HashSet<String> = app
         .db
         .list::<String>("archived_workflows")
         .await?
         .into_iter()
         .collect();
-    for w in &mut rows {
-        w.active = app
-            .db
-            .get::<String>("active", &w.id)
-            .await?
-            .is_some_and(|key| key == w.key());
-    }
     Ok(Json(
         rows.into_iter()
             .map(|workflow| {
@@ -464,9 +456,7 @@ async fn draft_version(
     if let Some(previous) = previous {
         let definition = |w: &Workflow| -> anyhow::Result<Value> {
             let mut value = serde_json::to_value(w)?;
-            for field in ["version", "active", "sample_validated"] {
-                value.as_object_mut().unwrap().remove(field);
-            }
+            value.as_object_mut().unwrap().remove("version");
             Ok(value)
         };
         if definition(&previous)? == definition(&workflow)? {
@@ -494,10 +484,7 @@ async fn editor_observe(
         json!({"screen":screen,"image":format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png))}),
     ))
 }
-async fn submit(
-    State(app): State<Arc<App>>,
-    Json(mut w): Json<Workflow>,
-) -> Result<Json<Workflow>> {
+async fn submit(State(app): State<Arc<App>>, Json(w): Json<Workflow>) -> Result<Json<Workflow>> {
     let _gate = app.run_gate.lock().await;
     engine::validate(&w)?;
     if app
@@ -508,13 +495,12 @@ async fn submit(
     {
         return Err(anyhow::anyhow!("版本已存在，请增加版本号").into());
     }
-    w.active = false;
-    w.sample_validated = false;
     app.db.put("workflows", &w.key(), &w).await?;
+    let _ = app.events.send(json!({"type":"changed"}));
     Ok(Json(w))
 }
 async fn validate(State(app): State<Arc<App>>, Path(key): Path<String>) -> Result<Json<Value>> {
-    let mut w = app
+    let w = app
         .db
         .get::<Workflow>("workflows", &key)
         .await?
@@ -522,19 +508,7 @@ async fn validate(State(app): State<Arc<App>>, Path(key): Path<String>) -> Resul
     validate_workflow_samples(&app, &w).await?;
     let _gate = app.run_gate.lock().await;
     ensure_workflow_version(&app, &w).await?;
-    w.sample_validated = true;
-    app.db.put("workflows", &key, &w).await?;
     Ok(Json(json!({"ok":true,"samples":w.tests.len()})))
-}
-async fn publish(State(app): State<Arc<App>>, Path(key): Path<String>) -> Result<Json<Value>> {
-    let _gate = app.run_gate.lock().await;
-    let w = app
-        .db
-        .get::<Workflow>("workflows", &key)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("工作流不存在"))?;
-    engine::activate(&app, &w, false).await?;
-    Ok(Json(json!({"ok":true})))
 }
 #[derive(Deserialize)]
 struct Start {
@@ -546,30 +520,19 @@ struct Start {
     workflow_id: String,
     #[serde(default)]
     version: Option<u32>,
-    #[serde(default)]
-    trial: bool,
 }
 async fn start(State(app): State<Arc<App>>, Json(s): Json<Start>) -> Result<Json<Run>> {
-    let w = if s.trial {
-        let version = s.version.ok_or_else(|| anyhow::anyhow!("试跑需指定版本"))?;
-        let key = format!("{}@{version}", s.workflow_id);
-        let mut w = app
-            .db
-            .get::<Workflow>("workflows", &key)
+    let w = if let Some(version) = s.version {
+        app.db
+            .get::<Workflow>("workflows", &format!("{}@{version}", s.workflow_id))
             .await?
-            .ok_or_else(|| anyhow::anyhow!("版本不存在"))?;
-        validate_workflow_samples(&app, &w).await?;
-        let _gate = app.run_gate.lock().await;
-        ensure_workflow_version(&app, &w).await?;
-        w.sample_validated = true;
-        app.db.put("workflows", &key, &w).await?;
-        w
+            .context("版本不存在")?
     } else {
-        engine::active(&app, &s.workflow_id).await?
+        engine::latest(&app, &s.workflow_id).await?
     };
     let w = engine::with_swipe_settings(w, s.swipe.as_ref())?;
     let w = engine::with_tap_settings(w, s.tap.as_ref())?;
-    Ok(Json(engine::start(app, &s.device_id, w, s.trial).await?))
+    Ok(Json(engine::start(app, &s.device_id, w).await?))
 }
 async fn runs(State(app): State<Arc<App>>) -> Result<Json<Vec<Value>>> {
     let rows = app.db.list::<Run>("runs").await?;
@@ -706,7 +669,7 @@ async fn schedule_from(app: &App, s: ScheduleInput, id: String) -> Result<Schedu
         return Err(anyhow::anyhow!("手机未登记").into());
     }
     engine::with_tap_settings(
-        engine::with_swipe_settings(engine::active(app, &s.workflow_id).await?, s.swipe.as_ref())?,
+        engine::with_swipe_settings(engine::latest(app, &s.workflow_id).await?, s.swipe.as_ref())?,
         s.tap.as_ref(),
     )?;
     if s.name.trim().is_empty() || s.name.chars().count() > 80 {
@@ -829,18 +792,7 @@ async fn ensure_workflow_version(app: &App, workflow: &Workflow) -> anyhow::Resu
 async fn validate_workflow_samples(app: &App, workflow: &Workflow) -> anyhow::Result<()> {
     engine::samples(workflow)?;
     if workflow.recognition == RecognitionMode::Vision {
-        let settings = crate::recognition::settings(app).await?;
-        app.db.delete("vision_validated", &workflow.key()).await?;
         crate::vision::validate_samples(app, workflow).await?;
-        anyhow::ensure!(
-            crate::recognition::settings(app).await? == settings,
-            "模型设置已变化，请重新验证样本"
-        );
-        let _gate = app.run_gate.lock().await;
-        ensure_workflow_version(app, workflow).await?;
-        app.db
-            .put("vision_validated", &workflow.key(), &settings)
-            .await?;
     }
     Ok(())
 }

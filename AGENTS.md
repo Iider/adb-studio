@@ -4,7 +4,7 @@
 
 - 后端：Rust / Axum / Tokio / SeaORM / SQLite；前端：SvelteKit 静态网页。
 - 修改工作台前端时，使用项目级 [前端开发规范](.agents/skills/adb-studio-frontend/SKILL.md)。
-- 使用 `scripts/studio.py` 管理工作流；格式见 `docs/workflows.md`。版本不可覆盖，发布需样本与真机试跑通过。
+- 使用 `scripts/studio.py` 管理工作流；格式见 `docs/workflows.md`。版本不可覆盖；保存后直接运行，默认使用最新保存版本，样本检查为可选诊断。
 - 所有手机命令经 `src/adb.rs` 核对自身编号。不要绕过同机任务互斥或恢复检查。
 - `data/` 保存运行状态、令牌、截图及日志，不提交；不得记录模型密钥。
 - 修改执行行为时运行 `cargo test` 与模拟设备集成检查。网页修改运行 `npm run check` 和构建。

@@ -200,7 +200,7 @@ def main():
                     return len((fake / "swipes").read_text().splitlines()) if (fake / "swipes").exists() else 0
                 fixture = runpy.run_path(str(ROOT / "scripts/check-integration.py"))["workflow"]
                 call("/workflows",fixture("mirror-parallel",count=100,interval=0.3))
-                body={"device_id":"mock-phone","workflow_id":"mirror-parallel","version":1,"trial":True}
+                body={"device_id":"mock-phone","workflow_id":"mirror-parallel","version":1}
                 manual=viewer()
                 assert control_message(manual,True)["enabled"]
                 run = call("/runs",body)

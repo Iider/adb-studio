@@ -236,8 +236,6 @@
       const candidate = JSON.parse(JSON.stringify(workflow));
       delete candidate.archived;
       candidate.version = sourceVersion + 1;
-      candidate.active = false;
-      candidate.sample_validated = false;
       const result = await api<Workflow>("/workflows", "POST", candidate);
       workflow = result;
       sourceVersion = result.version;
@@ -290,7 +288,7 @@
         <Check size={16} />第 {savedVersion} 版已保存。
         <a
           href={`/?tab=workflows&workflow=${encodeURIComponent(workflow.id)}&version=${savedVersion}`}
-          >前往试跑</a
+          >前往运行</a
         >
       </p>{/if}
 

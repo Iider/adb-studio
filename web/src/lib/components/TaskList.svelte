@@ -97,11 +97,7 @@
       if (filter === "archived") return !!workflow.archived;
       if (workflow.archived) return false;
       return (
-        filter === "all" ||
-        (filter === "ready" && !!task.active) ||
-        (filter === "trial" &&
-          (!task.active || task.latest.version > workflow.version)) ||
-        (filter === "running" && task.inProgress.length > 0)
+        filter === "all" || (filter === "running" && task.inProgress.length > 0)
       );
     }),
   );
@@ -196,8 +192,6 @@
           bind:value={filter}
           items={[
             { value: "all", label: "全部任务" },
-            { value: "ready", label: "已启用" },
-            { value: "trial", label: "待试跑" },
             { value: "running", label: "未结束" },
             { value: "archived", label: "已归档" },
           ]}
@@ -270,9 +264,7 @@
           ? "已归档"
           : run
             ? runLabel(run)
-            : task.active
-              ? "已启用"
-              : "待试跑"}
+            : "已保存"}
         <article class="catalog-card" aria-label={workflow.name}>
           <div class="catalog-card-heading">
             <span class="catalog-icon" aria-hidden="true"
@@ -280,14 +272,14 @@
             >
             <h2>
               <button
-                onclick={() => onOpen(task.latest)}
+                onclick={() => onOpen(task.workflow)}
                 aria-label={`查看任务详情：${workflow.name}`}
                 >{workflow.name}</button
               >
             </h2>
             <span
               class="catalog-status"
-              class:ready={!!task.active && !run && !workflow.archived}
+              class:ready={!run && !workflow.archived}
               class:live={!!run && run.state !== "paused"}
               class:paused={run?.state === "paused"}
               class:archived={!!workflow.archived}>{status}</span
@@ -324,14 +316,7 @@
             <div>
               <dt><Layers size={15} aria-hidden="true" />版本</dt>
               <dd>
-                {#if task.latest.version > workflow.version}
-                  <button
-                    class="catalog-version"
-                    title={`当前第 ${workflow.version} 版；第 ${task.latest.version} 版待试跑`}
-                    onclick={() => onOpen(task.latest)}
-                    >第 {workflow.version} 版 · 有新版</button
-                  >
-                {:else}第 {workflow.version} 版{/if}
+                第 {workflow.version} 版
               </dd>
             </div>
           </dl>
@@ -391,7 +376,7 @@
                     />查看进度{:else}<Play
                       size={15}
                       aria-hidden="true"
-                    />{task.active ? "运行" : "试跑"}{/if}
+                    />运行{/if}
                 </Button>
               {/if}
               <details class="catalog-more">
@@ -406,7 +391,7 @@
                     onkeydown={closeMoreMenuOnEscape}
                     onclick={(event) => {
                       closeMoreMenu(event);
-                      onOpen(task.latest);
+                      onOpen(task.workflow);
                     }}><FileText size={15} aria-hidden="true" />任务详情</button
                   >
                   <button
@@ -693,20 +678,6 @@
     line-height: 20px;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .catalog-version {
-    overflow: hidden;
-    max-width: 100%;
-    border: 0;
-    padding: 0;
-    background: none;
-    color: var(--amber);
-    font: inherit;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .catalog-version:hover {
-    text-decoration: underline;
   }
   .catalog-footer {
     display: flex;

@@ -414,19 +414,17 @@ pub fn samples(w: &Workflow) -> Result<()> {
     }
     Ok(())
 }
-pub async fn active(app: &App, id: &str) -> Result<Workflow> {
+pub async fn latest(app: &App, id: &str) -> Result<Workflow> {
     if archived(app, id).await? {
         bail!("任务已归档，请先恢复")
     }
-    let key = app
-        .db
-        .get::<String>("active", id)
-        .await?
-        .context("工作流尚未启用，请先试跑")?;
     app.db
-        .get("workflows", &key)
+        .list::<Workflow>("workflows")
         .await?
-        .context("工作流版本不存在")
+        .into_iter()
+        .filter(|workflow| workflow.id == id)
+        .max_by_key(|workflow| workflow.version)
+        .context("工作流不存在")
 }
 pub async fn archived(app: &App, id: &str) -> Result<bool> {
     Ok(app
@@ -434,68 +432,6 @@ pub async fn archived(app: &App, id: &str) -> Result<bool> {
         .get::<String>("archived_workflows", id)
         .await?
         .is_some())
-}
-pub async fn activate(app: &App, w: &Workflow, automatic: bool) -> Result<bool> {
-    if app
-        .db
-        .get::<Workflow>("workflows", &w.key())
-        .await?
-        .is_none()
-    {
-        bail!("任务版本已移除，请重新创建")
-    }
-    if archived(app, &w.id).await? {
-        bail!("任务已归档，请先恢复")
-    }
-    if w.recognition == RecognitionMode::Vision {
-        let current = recognition::settings(app).await?;
-        let validated = app
-            .db
-            .get::<ModelSettings>("vision_validated", &w.key())
-            .await?;
-        if validated.as_ref() != Some(&current) {
-            bail!("当前模型尚未通过此版本的截图样本验证")
-        }
-    }
-    let validated_model = if w.recognition == RecognitionMode::Vision {
-        app.db
-            .get::<ModelSettings>("vision_validated", &w.key())
-            .await?
-    } else {
-        None
-    };
-    let successful = app
-        .db
-        .list::<Run>("runs")
-        .await?
-        .into_iter()
-        .filter(|r| {
-            r.trial
-                && r.state == "succeeded"
-                && r.workflow.key() == w.key()
-                && (w.recognition != RecognitionMode::Vision || r.model_settings == validated_model)
-        })
-        .collect::<Vec<_>>();
-    let tested = if w.devices.is_empty() {
-        !successful.is_empty()
-    } else {
-        w.devices
-            .iter()
-            .all(|id| successful.iter().any(|r| &r.device_id == id))
-    };
-    if !w.sample_validated || !tested {
-        bail!("需要样本验证及适用手机的成功试跑记录")
-    }
-    if automatic {
-        if let Ok(current) = active(app, &w.id).await {
-            if current.version >= w.version {
-                return Ok(false);
-            }
-        }
-    }
-    app.db.put("active", &w.id, &w.key()).await?;
-    let _ = app.events.send(json!({"type":"changed"}));
-    Ok(true)
 }
 pub fn with_tap_settings(mut w: Workflow, settings: Option<&TapSettings>) -> Result<Workflow> {
     if let Some(settings) = settings {
@@ -564,7 +500,7 @@ pub fn with_swipe_settings(mut w: Workflow, settings: Option<&SwipeSettings>) ->
     Ok(w)
 }
 
-pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow, trial: bool) -> Result<Run> {
+pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow) -> Result<Run> {
     let _gate = app.run_gate.lock().await;
     if app
         .db
@@ -599,24 +535,6 @@ pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow, trial: bool)
     let model_settings = Some(recognition::settings(&app).await?);
     if w.recognition == RecognitionMode::Vision {
         recognition::ensure_key(&app, model_settings.as_ref().context("缺少模型快照")?)?;
-        let validated = app
-            .db
-            .get::<ModelSettings>("vision_validated", &w.key())
-            .await?;
-        if validated != model_settings {
-            bail!("当前模型尚未通过此版本的截图样本验证，请重新验证")
-        }
-        if !trial
-            && !app.db.list::<Run>("runs").await?.iter().any(|r| {
-                r.trial
-                    && r.state == "succeeded"
-                    && r.workflow.key() == w.key()
-                    && r.model_settings == model_settings
-                    && r.device_id == device_id
-            })
-        {
-            bail!("当前模型尚未在这台手机试跑通过")
-        }
     }
     let d = app
         .db
@@ -667,7 +585,6 @@ pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow, trial: bool)
         ended_at: None,
         reason: "开始执行".into(),
         model_calls: 0,
-        trial,
         checkpoint: json!({}),
         pending: None,
         last_shot: None,
@@ -915,13 +832,6 @@ async fn execute(app: Arc<App>, mut r: Run, control: Arc<RunControl>) {
     let _gate = app.run_gate.lock().await;
     let _ = save(&app, &r).await;
     let _ = app.event(&r, &r.reason).await;
-    if r.trial && r.state == "succeeded" {
-        if let Ok(Some(wf)) = app.db.get::<Workflow>("workflows", &r.workflow.key()).await {
-            if activate(&app, &wf, true).await.unwrap_or(false) {
-                let _ = app.event(&r, "样本验证与真机试跑通过，已自动启用").await;
-            }
-        }
-    }
     app.controls.lock().await.remove(&r.id);
 }
 

@@ -19,7 +19,7 @@
     changed,
     onstate,
     disabled = false,
-    publishing = false,
+    savingVersion = false,
     onsaveversion,
   }: {
     workflowId: string;
@@ -29,8 +29,8 @@
     changed: boolean;
     onstate: (node: string) => void;
     disabled?: boolean;
-    publishing?: boolean;
-    onsaveversion: () => void;
+    savingVersion?: boolean;
+    onsaveversion: () => Promise<Workflow | null>;
   } = $props();
   let run = $state<Run | null>(null);
   let events = $state<Event[]>([]);
@@ -75,7 +75,7 @@
         })
         .catch((e) => {
           if (!cancelled)
-            error = e instanceof Error ? e.message : "读取试跑记录失败";
+            error = e instanceof Error ? e.message : "读取运行记录失败";
         })
         .finally(() => {
           if (!cancelled) restoring = false;
@@ -113,27 +113,20 @@
     }
   }
   async function start() {
-    if (
-      !version ||
-      version.id !== workflowId ||
-      disabled ||
-      restoring ||
-      working ||
-      (run && busy(run))
-    )
-      return;
+    if (disabled || restoring || working || (run && busy(run))) return;
     working = true;
     error = "";
     try {
+      const saved = !version || changed ? await onsaveversion() : version;
+      if (!saved || saved.id !== workflowId) return;
       run = await api<Run>("/runs", "POST", {
-        workflow_id: version.id,
-        version: version.version,
+        workflow_id: saved.id,
+        version: saved.version,
         device_id: device,
-        trial: true,
       });
       await refresh();
     } catch (e) {
-      error = e instanceof Error ? e.message : "试跑失败";
+      error = e instanceof Error ? e.message : "运行失败";
     } finally {
       working = false;
     }
@@ -164,11 +157,11 @@
     class="run-trigger"
     class:attention={!!error}
     {disabled}
-    aria-label="版本与试跑"
+    aria-label="版本与运行"
     aria-haspopup="dialog"
     aria-expanded={open}
     popovertarget="editor-run"
-    ><Play size={16} /><span>{run && busy(run) ? runLabel(run) : "试跑"}</span
+    ><Play size={16} /><span>{run && busy(run) ? runLabel(run) : "运行"}</span
     ><ChevronDown size={13} /></button
   >
   <div
@@ -178,23 +171,23 @@
     popover="auto"
     role="dialog"
     tabindex="-1"
-    aria-label="版本与试跑设置"
+    aria-label="版本与运行设置"
     ontoggle={(event) => (open = event.newState === "open")}
   >
     <header>
-      <h2>版本与试跑</h2>
+      <h2>版本与运行</h2>
       <button
         class="close-button"
-        aria-label="关闭试跑设置"
+        aria-label="关闭运行设置"
         onclick={() => popup?.hidePopover()}><X size={18} /></button
       >
     </header>
     <p class="version-label">
-      {version ? "已保存第 " + version.version + " 版" : "先保存新版本，再试跑"}
+      {version ? "已保存第 " + version.version + " 版" : "运行时保存新版本"}
     </p>
     <label
-      >试跑手机<Dropdown
-        label="试跑手机"
+      >运行手机<Dropdown
+        label="运行手机"
         bind:value={device}
         disabled={disabled || restoring || working || (!!run && busy(run))}
         items={[
@@ -219,22 +212,21 @@
       <button
         disabled={disabled ||
           restoring ||
-          publishing ||
+          savingVersion ||
           working ||
           (!!run && busy(run))}
         onclick={onsaveversion}
-        >{publishing ? "正在检查…" : "保存新版本"}</button
+        >{savingVersion ? "正在保存…" : "保存新版本"}</button
       >
       <button
         class="start-button"
         disabled={disabled ||
           restoring ||
-          !version ||
+          savingVersion ||
           !device ||
-          changed ||
           working ||
           (!!run && busy(run))}
-        onclick={start}>试跑此版本</button
+        onclick={start}>运行</button
       >
       {#if run && busy(run)}<button
           disabled={working}
@@ -244,14 +236,12 @@
         >{/if}
     </div>
     <p>
-      {changed && version
-        ? "草稿已修改，请重新保存版本后试跑。"
-        : version && version.devices.length > 1
-          ? "试跑会操作所选手机；标注的手机全部通过后自动启用。请先将手机置于预期页面。"
-          : "试跑会操作所选手机；成功后自动启用此版本。请先将手机置于预期页面。"}
+      {!version || changed
+        ? "运行时自动保存当前修改。"
+        : ""}请先将手机置于预期页面。
     </p>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
-    {#if restoring}<p role="status">正在找回试跑记录…</p>{/if}
+    {#if restoring}<p role="status">正在找回运行记录…</p>{/if}
     {#if run}<details>
         <summary
           >第 {run.workflow.version} 版 · {runLabel(run)} · {run.reason}</summary

@@ -60,7 +60,6 @@ def main():
     run = sub.add_parser("run")
     run.add_argument("workflow")
     run.add_argument("--device", required=True)
-    run.add_argument("--trial", action="store_true")
     run.add_argument("--version", type=int)
     for command in ["stop", "pause", "resume"]:
         control = sub.add_parser(command)
@@ -83,7 +82,6 @@ def main():
         body = {
             "device_id": args.device,
             "workflow_id": args.workflow,
-            "trial": args.trial,
             "version": args.version,
         }
     elif args.command in {"stop", "pause", "resume"}:

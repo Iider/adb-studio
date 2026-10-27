@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { latestWorkflows } from "$lib/tasks";
   import { notify } from "$lib/notifications";
   import { tick } from "svelte";
   import {
@@ -74,11 +75,11 @@
   let swipeMinutes = $state(15);
   let swipeInterval = $state(25);
 
-  const activeWorkflows = $derived(
-    workflows.filter((workflow) => workflow.active && !workflow.archived),
+  const availableWorkflows = $derived(
+    latestWorkflows(workflows).filter((workflow) => !workflow.archived),
   );
   const workflow = $derived(
-    activeWorkflows.find((workflow) => workflow.id === workflowId),
+    availableWorkflows.find((workflow) => workflow.id === workflowId),
   );
   const hasTap = $derived(
     workflow?.nodes.some((node) =>
@@ -96,7 +97,7 @@
   );
   const blocked = $derived(
     !workflow
-      ? "请先到自动化任务页试跑并启用此任务。"
+      ? "请先保存一个自动化任务。"
       : !compatibleDevices.some((device) => device.id === deviceId)
         ? "请选择适用于此任务的已登记手机。"
         : workflowId === "point-click" && !selectedDevice?.tap_point
@@ -146,8 +147,8 @@
     workflowId =
       schedule?.workflow_id ??
       (
-        activeWorkflows.find((workflow) => workflow.id === "swipe") ||
-        activeWorkflows[0]
+        availableWorkflows.find((workflow) => workflow.id === "swipe") ||
+        availableWorkflows[0]
       )?.id ??
       "";
     deviceId = schedule?.device_id ?? "";
@@ -258,7 +259,7 @@
       disabled={loading ||
         !connected ||
         !!working ||
-        !activeWorkflows.length ||
+        !availableWorkflows.length ||
         !devices.length}
       onclick={() => void openEditor()}
       ><Plus size={16} aria-hidden="true" />新建定时</Button
@@ -353,7 +354,7 @@
             <span class="schedule-card-hint"
               >{expired
                 ? "修改时间后可再次开启"
-                : "使用届时已启用的任务版本"}</span
+                : "使用执行时最新保存的版本"}</span
             >
             <div class="task-buttons">
               <Button
@@ -430,9 +431,9 @@
             label="选择定时任务"
             bind:value={workflowId}
             placeholder={workflowId
-              ? `${workflowName(workflowId)}（未启用）`
-              : "暂无已启用任务"}
-            items={activeWorkflows.map((available) => ({
+              ? `${workflowName(workflowId)}（已移除或归档）`
+              : "暂无可用任务"}
+            items={availableWorkflows.map((available) => ({
               value: available.id,
               label: available.name,
             }))}

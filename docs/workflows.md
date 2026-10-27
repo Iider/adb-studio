@@ -10,8 +10,7 @@ python3 scripts/studio.py request GET /devices/手机自身编号/screenshot --o
 python3 scripts/studio.py workflows
 python3 scripts/studio.py runs
 python3 scripts/studio.py request POST /workflows --file /绝对路径/工作流.json
-python3 scripts/studio.py request POST /workflows/编号@版本/validate
-python3 scripts/studio.py run 编号 --device 手机自身编号 --version 版本 --trial
+python3 scripts/studio.py run 编号 --device 手机自身编号
 python3 scripts/studio.py request GET /runs/运行编号/export --output /绝对路径/运行记录.json
 python3 scripts/studio.py stop 运行编号
 ```
@@ -38,7 +37,7 @@ python3 scripts/studio.py stop 运行编号
 }
 ```
 
-`devices` 为空表示通用工作流；专用界面应填写已适配手机编号。版本不可覆盖；改动需增加 `version`。`active` 和 `sample_validated` 由服务管理，提交值不会用于绕过验证。
+`devices` 为空表示通用工作流；专用界面应填写已适配手机编号。版本不可覆盖；改动需增加 `version`。保存后即可运行，默认选择最大版本号；可用 `version` 指定历史版本。旧数据中的 `active`、`sample_validated` 和 `trial` 字段会被忽略，不再决定运行资格。
 
 步骤说明与编号会直接显示在网页，使用用户能读懂的中文说明。
 
@@ -60,14 +59,14 @@ python3 scripts/studio.py stop 运行编号
 
 模型只选择声明过的分支或导航目标。API 不接收任意脚本、电脑 Shell 或任意 ADB 命令。
 
-## 验证与发布
+## 运行与可选样本检查
 
-`tests` 是文本样本：`node` 指定判断步骤，`text` 是识别结果，`expected` 是预期分支。分支步骤须提供样本；`guard` 未匹配的样本预期为 `unknown`，已知页面的否定分支需提供 `guard`；汽水任务须覆盖视频与网络阻塞样本。文字样本检查、运行引擎的图像规则检查、真机试跑分别验证不同环节。
+`tests` 是文本样本：`node` 指定判断步骤，`text` 是识别结果，`expected` 是预期分支。仅在手动执行样本检查时，分支步骤须提供样本；`guard` 未匹配的样本预期为 `unknown`，已知页面的否定分支需提供 `guard`；汽水任务须覆盖视频与网络阻塞样本。文字样本检查与运行中的图像判断用于不同环节。`tests` 可省略或为空，不影响保存与运行。
 
-试跑接口会自动校验文本样本。成功试跑后自动启用；限定多台手机的工作流需要各台都通过真机试跑。手动发布与回退也须具备该版本的样本通过和成功试跑记录。
+运行不触发样本检查；各台适用手机均可首次直接运行，更换模型后也不需要重新试跑。样本检查可单独调用，只返回诊断结果，不产生启用标记。
 
 ```sh
-python3 scripts/studio.py request POST /workflows/编号@版本/publish
+python3 scripts/studio.py request POST /workflows/编号@版本/validate
 ```
 
 恢复任务时，重新识别当前页面。一般点击、按键只有在验证结果通过后才向后执行，无法确认则标记需要处理；无法验证的固定点击和单次滑动不重放。定时滑动不补发待确认动作，并检查原来的应用是否仍在前台；汽水任务重新观察金币和视频状态。
@@ -78,9 +77,9 @@ python3 scripts/studio.py request POST /workflows/编号@版本/publish
 
 草稿字段为 `id`（UUID）、`revision`、`name`、`description`、`entry`、`nodes`、`viewport` 和服务生成的 `updated_at`。每个节点保存 `id`、`kind`、`label`、`config`、`targets` 和 `position`；`targets` 是出口编号到目标节点编号的映射，`position` 为画布位置 `[x,y]`，`viewport` 为 `[x,y,zoom]`。新草稿以 `revision: 0` 提交；保存响应返回递增后的版本。更新与删除必须带上最后读取的版本，冲突返回 HTTP 409，客户端应保留当前编辑并提示重新读取或保存副本。草稿的完整执行校验仍需在后续提交正式版本时完成。
 
-`POST /api/workflow-drafts/{id}/version` 接收 `{"revision":当前草稿版本}`，校验连线、循环范围、坐标标注和条件样本后创建不可覆盖的正式版本；仅改画布位置会返回原执行版本。`GET /api/editor/observe/{device_id}` 返回原图数据与屏幕宽高、显示屏标识，用于标注，不发送触控命令。新编排步骤序列化为 `{"type":"canvas","step":{...}}`，其出口由 `step.targets` 决定，不能同时声明 `next`。坐标标注绑定手机与屏幕形态；无法确认多屏手机的触控显示编号时拒绝标注。
+`POST /api/workflow-drafts/{id}/version` 接收 `{"revision":当前草稿版本}`，校验连线、循环范围与坐标标注后创建不可覆盖的正式版本；仅改画布位置会返回原执行版本。`GET /api/editor/observe/{device_id}` 返回原图数据与屏幕宽高、显示屏标识，用于标注，不发送触控命令。新编排步骤序列化为 `{"type":"canvas","step":{...}}`，其出口由 `step.targets` 决定，不能同时声明 `next`。坐标标注绑定手机与屏幕形态；无法确认多屏手机的触控显示编号时拒绝标注。
 
-自动化任务卡片直接提供“编辑”：有草稿的任务打开画布，其余任务从最新版本制作新版。`GET /api/workflows` 的每个版本带有 `archived` 布尔状态。所有已保存任务可通过 `PUT /api/workflows/{id}/archive` 归档、`DELETE /api/workflows/{id}/archive` 恢复；归档保留草稿、版本与执行记录，停用相关定时。归档中拒绝启动、继续、试跑、启用和新建定时；恢复后定时仍需手动开启。详情见 [编辑与归档方案](workflow-edit-archive.md)。
+自动化任务卡片直接提供“编辑”：有草稿的任务打开画布，其余任务从最新版本制作新版。`GET /api/workflows` 的每个版本带有 `archived` 布尔状态。所有已保存任务可通过 `PUT /api/workflows/{id}/archive` 归档、`DELETE /api/workflows/{id}/archive` 恢复；归档保留草稿、版本与执行记录，停用相关定时。归档中拒绝启动、继续和新建定时；恢复后定时仍需手动开启。详情见 [编辑与归档方案](workflow-edit-archive.md)。
 
 所有接口前缀 `/api`；Agent 使用 `Authorization: Bearer <令牌>`。响应错误提供 `error` 字段。
 
@@ -96,8 +95,7 @@ python3 scripts/studio.py request POST /workflows/编号@版本/publish
 | GET / POST `/workflows` | 查询版本 / 提交新版 |
 | PUT / DELETE `/workflows/{id}/archive` | 归档 / 恢复任务 |
 | DELETE `/workflows/{id}` | 彻底移除任务的全部版本、关联草稿与定时；未结束时拒绝。保留历史执行记录，禁止续跑已移除版本；内置任务重启后不再生成 |
-| POST `/workflows/{id}@{version}/validate` | 校验与文本样本验证 |
-| POST `/workflows/{id}@{version}/publish` | 启用或回退版本 |
+| POST `/workflows/{id}@{version}/validate` | 可选样本诊断，不影响运行资格 |
 | GET / POST `/runs` | 查询 / 运行，参数见下方 |
 | DELETE `/runs/{id}` | 清理已结束的记录，归档与截图保留；进行中的任务拒绝清理 |
 | POST `/runs/{id}/stop` | 停止，包括等待中与已暂停的任务 |
@@ -112,7 +110,7 @@ python3 scripts/studio.py request POST /workflows/编号@版本/publish
 | GET `/shots/{run}/{file}` | 关键截图 PNG |
 | GET `/ws` | 设备与运行变更事件；事件到达后重新查询 |
 
-运行参数：`device_id`, `workflow_id`, `trial`；试跑额外指定 `version`。普通运行使用当前启用版本。
+运行参数：`device_id`, `workflow_id`；可选 `version`。不传版本时使用最新保存版本；传入版本时直接运行该历史版本。`publish` 接口已移除。正在运行的任务始终使用启动时的快照。
 
 定时参数：`name`, `device_id`, `workflow_id`, `enabled`, `rule`。
 
@@ -138,7 +136,7 @@ python3 scripts/studio.py request POST /workflows/编号@版本/publish
 | 每周 | `{"kind":"weekly","time":"09:00","days":[1,3,5]}`，周一为 1 |
 | 间隔 | `{"kind":"interval","minutes":60}` |
 
-定时绑定工作流编号，下次执行读取已启用版本；运行中的任务版本固定。离线、忙碌、后台停机错过的定时点都跳过，不积压。间隔规则以保存时间为起点。
+定时绑定工作流编号，下次执行读取最新保存版本；运行中的任务版本固定。离线、忙碌、后台停机错过的定时点都跳过，不积压。间隔规则以保存时间为起点。
 
 网页定时页支持搜索与开启状态筛选，卡片显示下次执行和最近触发结果；“新建定时”／“修改”打开表单，删除需确认。单次已到期时需修改时间再开启。创建、修改和启停均沿用现有接口：更新后重新计算下次时间并清空 `last_result`，固定间隔重新计时。删除规则不会停止已开始的任务。
 
@@ -178,7 +176,7 @@ python3 scripts/studio.py request GET /devices/手机自身编号/screenshot --o
 
 网页「执行记录」默认显示最新一条详情。详情中的“清理这条记录”处理单条，顶部“清理已结束”处理点击时已结束的记录；两种操作均需确认。已完成、已停止和需要处理的记录可清理，执行中、等待手机、恢复中和已暂停的任务会保留。
 
-批量清理逐条调用 `DELETE /api/runs/{id}`。清理后从列表移除，原始运行、判断记录和截图保留在本机；该接口不删除定时规则或改变工作流启用状态。部分记录清理失败时，网页显示成功数量与失败原因，可重新清理剩余记录。
+批量清理逐条调用 `DELETE /api/runs/{id}`。清理后从列表移除，原始运行、判断记录和截图保留在本机；该接口不删除定时规则或改变工作流版本。部分记录清理失败时，网页显示成功数量与失败原因，可重新清理剩余记录。
 
 ## 截图标注与定点点击
 
@@ -186,7 +184,7 @@ python3 scripts/studio.py request GET /devices/手机自身编号/screenshot --o
 
 截图缩放后的点选位置换算为原图像素；各台手机单独保存坐标和原图尺寸，重启保留。定点点击开始时将坐标和尺寸写入运行快照，循环执行时不截图、不识别；暂停后继续时会获取一张截图核对尺寸。换屏、旋转或页面布局变化后应重新标注。
 
-首次点“试跑此版本”；通过后启用，随后可直接运行或设置定时。定时触发使用该手机当时保存的位置。设备修改接口接受 `"tap_point":{"x":528,"y":1866,"width":1060,"height":2376}`，坐标必须在原图范围内。
+保存后即可点“运行”或设置定时。定时触发使用该手机当时保存的位置。设备修改接口接受 `"tap_point":{"x":528,"y":1866,"width":1060,"height":2376}`，坐标必须在原图范围内。
 
 ## 唤醒与锁屏
 
@@ -196,7 +194,7 @@ python3 scripts/studio.py request GET /devices/手机自身编号/screenshot --o
 
 ## 纯视觉任务
 
-工作流可声明 `recognition: "vision"`，使用 `vision_check`、`vision_tap` 与 `vision_route`；省略时沿用本地优先。纯视觉步骤需要截图样本验证，定位、复查和结果检查均计入模型预算；更换模型后需重新验证与试跑。不能用纯视觉方式直接运行尚未适配的本地读字或高频步骤。
+工作流可声明 `recognition: "vision"`，使用 `vision_check`、`vision_tap` 与 `vision_route`；省略时沿用本地优先。截图样本检查可选；定位、复查和结果检查均计入模型预算，更换模型后可直接运行。不能用纯视觉方式直接运行尚未适配的本地读字或高频步骤。
 
 需要按画面状态选择不同后续步骤时，可用 `vision_route`。每个分流项填写互斥的 `condition` 和目标步骤 `next`；无法确认时任务停止，所有分流状态都要提供截图样本。
 

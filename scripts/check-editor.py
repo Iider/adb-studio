@@ -116,7 +116,7 @@ def main():
                 edited_swipe = {**original_swipe, "version": original_swipe["version"] + 1, "name": "修改后的滑动任务"}
                 created_swipe = call("/workflows", "POST", edited_swipe)[1]
                 assert created_swipe["version"] == original_swipe["version"] + 1
-                assert not created_swipe["active"]
+                assert "active" not in created_swipe
                 assert next(item for item in call("/workflows")[1] if item["id"] == "swipe" and item["version"] == original_swipe["version"])["name"] == original_swipe["name"]
                 commands = (fake / "commands").read_text()
                 assert '"input"' not in commands
@@ -148,13 +148,13 @@ def main():
                 def node(id, kind, targets=None, **config):
                     return {"id":id,"kind":kind,"label":id,"config":config,"targets":targets or {},"position":[0,0]}
 
-                def publish(nodes, entry, expected=200):
+                def save_version(nodes, entry, expected=200):
                     body = {"id":str(uuid.uuid4()),"revision":0,"name":"编排执行检查","description":"","entry":entry,"viewport":[0,0,1],"nodes":nodes}
                     saved = call("/workflow-drafts/" + body["id"], "PUT", body)[1]
                     return call("/workflow-drafts/" + body["id"] + "/version", "POST", {"revision":saved["revision"]},expected=expected)[1], saved
 
-                def trial(workflow, device="mock-phone"):
-                    return call("/runs","POST",{"device_id":device,"workflow_id":workflow["id"],"version":workflow["version"],"trial":True})[1]
+                def run_workflow(workflow, device="mock-phone"):
+                    return call("/runs","POST",{"device_id":device,"workflow_id":workflow["id"],"version":workflow["version"]})[1]
 
                 def record(id):
                     return next(row for row in call("/runs")[1] if row["id"] == id)
@@ -173,8 +173,11 @@ def main():
                     node("swipe","swipe",{"next":"loop"},count=1,interval=0,duration_ms=250,profiles=[profile]),
                     node("end","end",result="succeeded"),
                 ]
-                workflow, source = publish(flow, "loop")
-                run = trial(workflow)
+                workflow, source = save_version(flow, "loop")
+                first_schedule = call("/schedules", "POST", {"name":"无需预运行", "device_id":"mock-phone", "workflow_id":workflow["id"], "enabled":False,"rule":{"kind":"interval","minutes":60}})[1]
+                assert first_schedule["workflow_id"] == workflow["id"]
+                call("/schedules/" + first_schedule["id"], "DELETE")
+                run = run_workflow(workflow)
                 result = finish(run["id"])
                 assert result["state"] == "succeeded", result
                 assert taps() == 6
@@ -187,16 +190,16 @@ def main():
                 same = call("/workflow-drafts/" + source["id"] + "/version","POST",{"revision":source["revision"]})[1]
                 assert same["version"] == workflow["version"]
                 (fake / "screen.png").write_bytes(helpers["png"](800,400))
-                result = finish(trial(workflow)["id"])
+                result = finish(run_workflow(workflow)["id"])
                 assert result["state"] == "needs_help" and taps() == 6
                 (fake / "screen.png").write_bytes(helpers["png"]())
                 print("通过：循环轮数、重复点击、滑动路线、画布布局不增加版本、屏幕变化拒绝动作")
 
-                busy_workflow, _ = publish([
+                busy_workflow, _ = save_version([
                     node("wait", "wait", {"next":"end"}, seconds=8),
                     node("end", "end", result="succeeded"),
                 ], "wait")
-                busy_run = trial(busy_workflow)
+                busy_run = run_workflow(busy_workflow)
                 busy_archive_path = "/workflows/" + busy_workflow["id"] + "/archive"
                 call(busy_archive_path, "PUT", expected=400)
                 call("/workflows/" + busy_workflow["id"], "DELETE", expected=400)
@@ -216,9 +219,8 @@ def main():
                 assert call(archive_path, "PUT")[1]["ok"]
                 assert next(w for w in call("/workflows")[1] if w["id"] == workflow["id"])["archived"]
                 assert not next(s for s in call("/schedules")[1] if s["id"] == scheduled["id"])["enabled"]
-                call("/runs", "POST", {"device_id":"mock-phone","workflow_id":workflow["id"],"trial":False}, expected=400)
-                call("/runs", "POST", {"device_id":"mock-phone","workflow_id":workflow["id"],"version":workflow["version"],"trial":True}, expected=400)
-                call("/workflows/" + workflow["id"] + "@" + str(workflow["version"]) + "/publish", "POST", expected=400)
+                call("/runs", "POST", {"device_id":"mock-phone","workflow_id":workflow["id"]}, expected=400)
+                call("/runs", "POST", {"device_id":"mock-phone","workflow_id":workflow["id"],"version":workflow["version"]}, expected=400)
                 call("/schedules", "POST", schedule_body, expected=400)
                 stop(process, data)
                 process.wait(timeout=10)
@@ -227,52 +229,51 @@ def main():
                 assert call(archive_path, "DELETE")[1]["ok"]
                 assert call(archive_path, "DELETE")[1]["ok"]
                 restored = next(w for w in call("/workflows")[1] if w["id"] == workflow["id"])
-                assert not restored["archived"] and restored["active"]
+                assert not restored["archived"]
                 assert not next(s for s in call("/schedules")[1] if s["id"] == scheduled["id"])["enabled"]
                 assert any(r["workflow"]["id"] == workflow["id"] for r in call("/runs")[1])
-                print("通过：归档阻止运行、试跑、启用和定时；重启保留；恢复后版本与记录仍在，定时不自动恢复")
+                print("通过：归档阻止运行和定时；重启保留；恢复后版本与记录仍在，定时不自动恢复")
                 call("/workflows/" + workflow["id"], "DELETE")
                 assert not any(item["id"] == workflow["id"] for item in call("/workflows")[1])
                 assert not any(item["id"] == scheduled["id"] for item in call("/schedules")[1])
                 call("/workflow-drafts/" + source["id"], expected=404)
-                call("/workflows/" + workflow["id"] + "@" + str(workflow["version"]) + "/publish", "POST", expected=400)
                 assert any(item["workflow"]["id"] == workflow["id"] for item in call("/runs")[1])
-                print("通过：运行中拒绝移除，移除后不能续跑；关联草稿、定时与启用版本一并清除，保留历史记录")
+                print("通过：运行中拒绝移除，移除后不能续跑；关联草稿、定时与全部版本一并清除，保留历史记录")
 
                 samples = [{"text":"","app":"","round":2,"expected":"yes"},{"text":"","app":"","round":1,"expected":"no"}]
                 for control, expected in [("continue",2),("break",1)]:
                     before = taps()
                     flow = [
                         node("loop","loop",{"body":"condition","done":"end"},count=3,interval=0.01),
-                        node("condition","condition",{"yes":"control","no":"tap"},mode="all",conditions=[{"source":"round","operator":"eq","value":"2","guard":""}],samples=samples),
+                        node("condition","condition",{"yes":"control","no":"tap"},mode="all",conditions=[{"source":"round","operator":"eq","value":"2","guard":""}]),
                         node("control",control,loop="loop"),
                         node("tap","tap",{"next":"loop"},count=1,interval=0,profiles=[profile]),
                         node("end","end",result="succeeded"),
                     ]
-                    workflow, _ = publish(flow,"loop")
-                    result = finish(trial(workflow)["id"])
+                    workflow, _ = save_version(flow,"loop")
+                    result = finish(run_workflow(workflow)["id"])
                     assert result["state"] == "succeeded" and taps() - before == expected, result
                 print("通过：轮次判断、进入下一轮、提前退出循环")
 
                 for control, round_number, expected in [("continue", 3, 2), ("break", 1, 0)]:
                     before = taps()
-                    workflow, _ = publish([
+                    workflow, _ = save_version([
                         node("loop", "loop", {"body":"check", "done":"end"}, count=3, interval=0.01),
                         node("check", "condition", {"yes":"control", "no":"tap"}, mode="all", conditions=[{"source":"round", "operator":"eq", "value":str(round_number), "guard":""}], samples=[{"round":round_number,"expected":"yes"},{"round":2 if round_number == 1 else 1,"expected":"no"}]),
                         node("control", control, loop="loop"),
                         node("tap", "tap", {"next":"loop"}, count=1, interval=0, profiles=[profile]),
                         node("end", "end", result="succeeded"),
                     ], "loop")
-                    result = finish(trial(workflow)["id"])
+                    result = finish(run_workflow(workflow)["id"])
                     assert result["state"] == "succeeded" and taps() - before == expected
                     if control == "continue":
                         assert result["canvas_progress"]["loops"]["loop"]["ended"] == 3
                 print("通过：最后一轮跳过直接完成、第一轮提前退出")
 
                 before = taps()
-                workflow, _ = publish([node("tap","tap",{"next":"end"},count=2,interval=0,profiles=[profile]),node("end","end",result="succeeded")],"tap")
+                workflow, _ = save_version([node("tap","tap",{"next":"end"},count=2,interval=0,profiles=[profile]),node("end","end",result="succeeded")],"tap")
                 (fake / "reject-input").touch()
-                run = trial(workflow)
+                run = run_workflow(workflow)
                 wait_value(lambda: record(run["id"])["state"] == "paused")
                 call("/runs/" + run["id"] + "/resume","POST",expected=400)
                 call("/runs/" + run["id"] + "/stop","POST")
@@ -285,36 +286,36 @@ def main():
                 def words(text):
                     (fake / "words").write_text(json.dumps([{"text":text,"x":200,"y":400,"confidence":1}]))
 
-                workflow, _ = publish([
+                workflow, _ = save_version([
                     node("await","wait_condition",{"yes":"end","timeout":"timeout"},mode="all",conditions=text_condition,samples=text_samples,interval=0.1,timeout=0.4),
                     node("end","end",result="succeeded"),node("timeout","end",result="needs_help")
                 ],"await")
                 words("任务页 领取")
-                assert finish(trial(workflow)["id"])["state"] == "succeeded"
+                assert finish(run_workflow(workflow)["id"])["state"] == "succeeded"
                 words("任务页")
-                result = finish(trial(workflow)["id"])
+                result = finish(run_workflow(workflow)["id"])
                 assert result["state"] == "needs_help" and result["node"] == "timeout", result
                 words("陌生页面")
-                result = finish(trial(workflow)["id"])
+                result = finish(run_workflow(workflow)["id"])
                 assert result["state"] == "needs_help" and result["node"] == "await", result
                 print("通过：等待条件立即满足、已知页面超时、陌生页面停止")
 
                 (fake / "words").write_text("invalid OCR output")
-                result = finish(trial(workflow)["id"])
+                result = finish(run_workflow(workflow)["id"])
                 assert result["state"] == "needs_help" and result["node"] == "await"
                 (fake / "words").write_text(json.dumps([{"text":"任务页 领取", "x":200, "y":400, "confidence":0.1}]))
-                result = finish(trial(workflow)["id"])
+                result = finish(run_workflow(workflow)["id"])
                 assert result["state"] == "needs_help" and result["node"] == "await"
                 print("通过：识别失败、低可信文字不会误走超时或符合分支")
 
                 app_condition = [{"source":"app", "operator":"is", "value":"com.example.ready", "guard":""}]
                 app_samples = [{"app":"com.example.ready", "expected":"yes"}, {"app":"com.luna.music", "expected":"no"}]
-                workflow, _ = publish([
+                workflow, _ = save_version([
                     node("await", "wait_condition", {"yes":"end", "timeout":"timeout"}, mode="all", conditions=app_condition, samples=app_samples, interval=0.2, timeout=2),
                     node("end", "end", result="succeeded"), node("timeout", "end", result="needs_help"),
                 ], "await")
                 started = time.monotonic()
-                run = trial(workflow)
+                run = run_workflow(workflow)
                 wait_value(lambda: record(run["id"])["checkpoint"].get("condition_elapsed", 0) >= 0.2)
                 call("/runs/" + run["id"] + "/pause", "POST")
                 wait_value(lambda: record(run["id"])["state"] == "paused")
@@ -325,12 +326,12 @@ def main():
                 result = finish(run["id"])
                 assert result["node"] == "timeout" and time.monotonic() - started >= 2.4
                 (fake / "foreground").write_text("com.example.ready")
-                result = finish(trial(workflow)["id"])
+                result = finish(run_workflow(workflow)["id"])
                 assert result["state"] == "succeeded"
                 (fake / "foreground").unlink()
                 print("通过：当前应用条件、等待条件暂停期间不计时")
 
-                workflow, _ = publish([
+                workflow, _ = save_version([
                     node("back","back",{"next":"wait"}),
                     node("wait","wait",{"next":"home"},seconds=2),
                     node("home","home",{"next":"recents"}),
@@ -339,7 +340,7 @@ def main():
                 ],"back")
                 offset = len((fake / "commands").read_text().splitlines())
                 started = time.monotonic()
-                run = trial(workflow)
+                run = run_workflow(workflow)
                 wait_value(lambda: record(run["id"])["node"] == "wait" and record(run["id"])["checkpoint"].get("wait_elapsed", 0) >= 0.5)
                 call("/runs/" + run["id"] + "/pause", "POST")
                 wait_value(lambda: record(run["id"])["state"] == "paused")
@@ -353,25 +354,24 @@ def main():
                 assert time.monotonic() - started >= 2.3
                 commands = [json.loads(line) for line in (fake / "commands").read_text().splitlines()[offset:]]
                 assert [command[-1] for command in commands if command[2:5] == ["shell", "input", "keyevent"]] == ["KEYCODE_BACK", "KEYCODE_HOME", "KEYCODE_APP_SWITCH"]
-                assert next(item for item in call("/workflows")[1] if item["id"] == workflow["id"])["active"]
-                print("通过：三种按键顺序与次数、等待时长、暂停续接不补按、试跑成功启用")
+                print("通过：三种按键顺序与次数、等待时长、暂停续接不补按、首次直接运行")
 
-                workflow, _ = publish([node("back", "back", {"next":"end"}), node("end", "end", result="succeeded")], "back")
+                workflow, _ = save_version([node("back", "back", {"next":"end"}), node("end", "end", result="succeeded")], "back")
                 (fake / "uncertain-key").touch()
-                result = finish(trial(workflow)["id"])
+                result = finish(run_workflow(workflow)["id"])
                 assert result["state"] == "needs_help" and result["pending"] == "canvas_key"
                 call("/runs/" + result["id"] + "/resume", "POST", expected=400)
                 (fake / "uncertain-key").unlink()
                 print("通过：按键未获确认时保留证据，不继续后续动作")
 
                 before = taps()
-                workflow, _ = publish([
+                workflow, _ = save_version([
                     node("loop","loop",{"body":"tap","done":"end"},count=2,interval=0.01),
                     node("tap","tap",{"next":"wait"},count=1,interval=0,profiles=[profile]),
                     node("wait","wait",{"next":"loop"},seconds=2),
                     node("end","end",result="succeeded")
                 ],"loop")
-                run = trial(workflow)
+                run = run_workflow(workflow)
                 wait_value(lambda: record(run["id"])["node"] == "wait" and record(run["id"])["checkpoint"].get("wait_elapsed",0) >= 0.5)
                 call("/runs/" + run["id"] + "/pause","POST")
                 wait_value(lambda: record(run["id"])["state"] == "paused")
@@ -393,17 +393,17 @@ def main():
                     {"text":"任务页","x":300,"y":200,"confidence":1},
                     {"text":"领取","x":100,"y":400,"confidence":1},
                 ]))
-                workflow, _ = publish([
+                workflow, _ = save_version([
                     node("check","condition",{"yes":"unexpected","no":"end"},mode="all",conditions=[{**text_condition[0],"regions":[right_half]}],samples=text_samples),
                     node("end","end",result="succeeded"),node("unexpected","end",result="needs_help")
                 ],"check")
-                result = finish(trial(workflow)["id"])
+                result = finish(run_workflow(workflow)["id"])
                 assert result["state"] == "succeeded" and result["node"] == "end", result
                 screen = call("/editor/observe/mock-phone")[1]
                 assert screen["screen"]["width"] == 400 and screen["image"].startswith("data:image/png;base64,")
-                rejected, _ = publish([node("wait","wait",{"next":"wait"},seconds=0),node("end","end",result="succeeded")],"wait",expected=400)
+                rejected, _ = save_version([node("wait","wait",{"next":"wait"},seconds=0),node("end","end",result="succeeded")],"wait",expected=400)
                 assert "回线" in rejected["error"]
-                rejected, _ = publish([node("loop","loop",{"body":"wait","done":"end"},count=10000,interval=0),node("wait","wait",{"next":"loop"},seconds=0),node("end","end",result="succeeded")],"loop",expected=400)
+                rejected, _ = save_version([node("loop","loop",{"body":"wait","done":"end"},count=10000,interval=0),node("wait","wait",{"next":"loop"},seconds=0),node("end","end",result="succeeded")],"loop",expected=400)
                 assert "10000" in rejected["error"]
                 print("通过：按手机框选文字区域、标注原图接口、非法回线和超大循环拒绝保存版本")
 
@@ -411,23 +411,21 @@ def main():
                     {**profile, "x":0.25, "y":0.75},
                     {**profile, "device_id":"mock-phone-2", "width":800, "height":400, "x":0.75, "y":0.25},
                 ]
-                workflow, _ = publish([
+                workflow, _ = save_version([
                     node("tap", "tap", {"next":"end"}, count=1, interval=0, profiles=locations),
                     node("end", "end", result="succeeded"),
                 ], "tap")
-                assert finish(trial(workflow)["id"])["state"] == "succeeded"
+                assert finish(run_workflow(workflow)["id"])["state"] == "succeeded"
                 assert json.loads((fake / "taps").read_text().splitlines()[-1])[-2:] == ["100", "600"]
-                assert not next(w for w in call("/workflows")[1] if w["id"] == workflow["id"])["active"]
                 (fake / "identity").write_text("mock-phone-2")
                 (fake / "screen.png").write_bytes(helpers["png"](800,400))
                 call("/devices/refresh", "POST")
-                assert finish(trial(workflow, "mock-phone-2")["id"])["state"] == "succeeded"
+                assert finish(run_workflow(workflow, "mock-phone-2")["id"])["state"] == "succeeded"
                 assert json.loads((fake / "taps").read_text().splitlines()[-1])[-2:] == ["600", "100"]
-                assert next(w for w in call("/workflows")[1] if w["id"] == workflow["id"])["active"]
                 (fake / "identity").unlink()
                 (fake / "screen.png").write_bytes(helpers["png"]())
                 call("/devices/refresh", "POST")
-                print("通过：不同手机与尺寸使用独立坐标，全部设备通过才启用")
+                print("通过：不同手机与尺寸使用独立坐标，各台手机均可首次直接运行")
 
                 (fake / "displays").write_text('\n'.join([
                     'DisplayDeviceInfo{uniqueId="local:100", type INTERNAL, state OFF,}',
@@ -438,17 +436,17 @@ def main():
                 (fake / "expected-display").write_text("200")
                 observed = call("/editor/observe/mock-phone")[1]
                 assert observed["screen"]["display"] == "200" and observed["screen"]["input_display"] == 3
-                workflow, _ = publish([
+                workflow, _ = save_version([
                     node("tap", "tap", {"next":"end"}, count=1, interval=0, profiles=[{**profile,"display":"200"}]),
                     node("end", "end", result="succeeded"),
                 ], "tap")
                 offset = len((fake / "commands").read_text().splitlines())
-                assert finish(trial(workflow)["id"])["state"] == "succeeded"
+                assert finish(run_workflow(workflow)["id"])["state"] == "succeeded"
                 commands = [json.loads(line) for line in (fake / "commands").read_text().splitlines()[offset:]]
                 assert any(command[2:] == ["shell","input","-d","3","tap","200","400"] for command in commands)
                 (fake / "displays").write_text((fake / "displays").read_text().replace('mDisplayId=3\n', ''))
                 before = taps()
-                assert finish(trial(workflow)["id"])["state"] == "needs_help" and taps() == before
+                assert finish(run_workflow(workflow)["id"])["state"] == "needs_help" and taps() == before
                 (fake / "displays").unlink()
                 (fake / "expected-display").unlink()
                 print("通过：截图与点击使用同一显示屏，无法确认触控编号时拒绝动作")

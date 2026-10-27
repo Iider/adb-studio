@@ -124,7 +124,7 @@ def main():
             return (fake / "taps").read_text().count("\n") if (fake / "taps").exists() else 0
 
         def start(id):
-            return call("/runs", "POST", {"device_id": "mock-phone", "workflow_id": id, "version": 1, "trial": True})
+            return call("/runs", "POST", {"device_id": "mock-phone", "workflow_id": id, "version": 1})
 
         try:
             wait(lambda: urllib.request.urlopen(BASE + "/api/session", timeout=2))
@@ -169,15 +169,20 @@ def main():
                         "nodes": [{"id": "tap", "label": "视觉点击", "type": "vision_tap", "package": "com.luna.music", "guard": "before", "target": "button", "region": [0.1, 0.1, 0.9, 0.9], "verify": "after", "next": "end"}, {"id": "end", "label": "结束", "type": "end", "result": "succeeded"}],
                         "tests": [{"node": "tap", "image": before_sample, "expected": "confirmed", "target_region": [0.2, 0.2, 0.3, 0.3]}, {"node": "tap", "image": negative_sample, "expected": "unknown"}, {"node": "tap", "image": before_sample, "expected": "confirmed", "after": True}, {"node": "tap", "image": negative_sample, "expected": "unknown", "after": True}]}
             call("/workflows", "POST", workflow)
+            call("/workflows/vision-test@1/validate", "POST")
+            no_samples = {**workflow, "id":"vision-no-samples", "tests":[]}
+            call("/workflows", "POST", no_samples)
+            model["model"] = "changed-before-first-run"
+            call("/settings/model", "PUT", model)
             baseline = taps()
             Model.calls = []
-            run = start("vision-test")
+            run = start("vision-no-samples")
             result = done(run["id"])
             assert result["state"] == "succeeded", result
             assert result["model_calls"] == 3 and taps() == baseline + 1 and result["model_settings"] == model
             assert not (data / "bin/ocr").exists()
             assert not any('"swift"' in line for line in (fake / "commands").read_text().splitlines())
-            print("通过：截图样本验证、三次看图单次点击、操作后新图与配置快照，无本地识别依赖", flush=True)
+            print("通过：样本检查可选、无样本首次运行、更换模型直接运行、三次看图单次点击、操作后新图与配置快照，无本地识别依赖", flush=True)
 
             route_no = png(450, 800)
             route_no_sample = inspect(route_no)["image"]
@@ -228,29 +233,17 @@ def main():
             Model.route_images = {}
             print("通过：默认保留前台应用，仅 restart=true 先结束再启动", flush=True)
 
-            def prevalidated_start(mode, budget=5):
+            def direct_start(mode, budget=5):
                 nonlocal workflow
-                workflow = {**workflow, "id": "vision-" + mode + str(time.monotonic_ns()), "model_limit": budget}
-                Model.mode = "valid"
+                workflow = {**workflow, "id": "vision-" + mode + str(time.monotonic_ns()), "model_limit": budget, "tests": []}
                 call("/workflows", "POST", workflow)
-                call(f"/workflows/{workflow['id']}@1/validate", "POST")
-                # 正常启动需重新验证截图样本，运行开始后才注入故障。
                 Model.calls = []
-                old = Model.do_POST
-                sample_count = len(workflow["tests"])
-                def injected(handler):
-                    Model.mode = mode if len(Model.calls) >= sample_count else "valid"
-                    if len(Model.calls) == sample_count:
-                        Model.calls = []
-                        Model.mode = mode
-                        Model.do_POST = old
-                    old(handler)
-                Model.do_POST = injected
+                Model.mode = mode
                 return start(workflow["id"])
 
             for mode in ["outside", "unknown", "shift", "budget"]:
                 baseline = taps()
-                run = prevalidated_start(mode, 3 if mode == "budget" else 5)
+                run = direct_start(mode, 3 if mode == "budget" else 5)
                 result = done(run["id"])
                 assert result["state"] == "needs_help" and taps() == baseline, (mode, result)
                 assert result["model_calls"] <= result["workflow"]["model_limit"]
@@ -259,7 +252,7 @@ def main():
             Model.started.clear()
             Model.release.clear()
             baseline = taps()
-            run = prevalidated_start("blocked")
+            run = direct_start("blocked")
             assert Model.started.wait(5)
             newer = {**model, "model": "changed-after-start"}
             call("/settings/model", "PUT", newer)

@@ -184,13 +184,10 @@ pub fn compile(draft: &Draft, version: u32) -> Result<Workflow> {
         entry: draft.entry.clone(),
         nodes,
         model_limit: 0,
-        active: false,
-        sample_validated: false,
         tests,
         recognition: RecognitionMode::Local,
     };
     engine::validate(&workflow)?;
-    engine::samples(&workflow)?;
     Ok(workflow)
 }
 

@@ -64,10 +64,6 @@ pub struct Workflow {
     #[serde(default = "ten")]
     pub model_limit: u32,
     #[serde(default)]
-    pub active: bool,
-    #[serde(default)]
-    pub sample_validated: bool,
-    #[serde(default)]
     pub tests: Vec<SampleCase>,
     #[serde(default)]
     pub recognition: RecognitionMode,
@@ -220,7 +216,6 @@ pub struct Run {
     pub ended_at: Option<String>,
     pub reason: String,
     pub model_calls: u32,
-    pub trial: bool,
     pub checkpoint: Value,
     pub pending: Option<String>,
     pub last_shot: Option<String>,

@@ -80,8 +80,6 @@ export interface Workflow {
   devices: string[];
   entry: string;
   nodes: Node[];
-  active: boolean;
-  sample_validated: boolean;
   model_limit: number;
   tests?: { image?: string }[];
   recognition?: "local" | "vision";
@@ -96,7 +94,6 @@ export interface Run {
   ended_at: string | null;
   reason: string;
   model_calls: number;
-  trial: boolean;
   checkpoint: Record<string, unknown>;
   last_shot: string | null;
   pending?: string | null;
