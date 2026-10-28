@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "id": "douyin-checkin-claim",
-  "version": 1,
   "name": "抖音极速版 · 天天领金币试跑",
   "description": "从天天领金币页面，核对今日可领后由工作台点击领取，并保存结果。",
   "devices": ["3430131496001EB"],

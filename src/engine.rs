@@ -28,7 +28,6 @@ pub fn validate(w: &Workflow) -> Result<()> {
         return crate::canvas::validate(w);
     }
     if w.schema_version != 1
-        || w.version == 0
         || w.id.is_empty()
         || w.id.len() > 80
         || !w
@@ -36,7 +35,7 @@ pub fn validate(w: &Workflow) -> Result<()> {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "_-".contains(c))
     {
-        bail!("工作流编号或版本无效")
+        bail!("工作流编号无效")
     }
     if w.name.trim().is_empty()
         || w.name.len() > 240
@@ -414,16 +413,13 @@ pub fn samples(w: &Workflow) -> Result<()> {
     }
     Ok(())
 }
-pub async fn latest(app: &App, id: &str) -> Result<Workflow> {
+pub async fn workflow(app: &App, id: &str) -> Result<Workflow> {
     if archived(app, id).await? {
         bail!("任务已归档，请先恢复")
     }
     app.db
-        .list::<Workflow>("workflows")
+        .get::<Workflow>("workflows", id)
         .await?
-        .into_iter()
-        .filter(|workflow| workflow.id == id)
-        .max_by_key(|workflow| workflow.version)
         .context("工作流不存在")
 }
 pub async fn archived(app: &App, id: &str) -> Result<bool> {
@@ -502,13 +498,8 @@ pub fn with_swipe_settings(mut w: Workflow, settings: Option<&SwipeSettings>) ->
 
 pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow) -> Result<Run> {
     let _gate = app.run_gate.lock().await;
-    if app
-        .db
-        .get::<Workflow>("workflows", &w.key())
-        .await?
-        .is_none()
-    {
-        bail!("任务版本已移除，请重新创建")
+    if app.db.get::<Workflow>("workflows", &w.id).await?.is_none() {
+        bail!("任务已移除，请重新创建")
     }
     if archived(&app, &w.id).await? {
         bail!("任务已归档，请先恢复")
@@ -534,7 +525,7 @@ pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow) -> Result<Ru
     }
     let model_settings = Some(recognition::settings(&app).await?);
     if w.recognition == RecognitionMode::Vision {
-        recognition::ensure_key(&app, model_settings.as_ref().context("缺少模型快照")?)?;
+        recognition::ensure_key(&app, model_settings.as_ref().context("缺少模型设置")?)?;
     }
     let d = app
         .db
@@ -628,11 +619,11 @@ pub async fn resume(app: Arc<App>, id: &str) -> Result<Run> {
     let mut r = app.db.get::<Run>("runs", id).await?.context("任务不存在")?;
     if app
         .db
-        .get::<Workflow>("workflows", &r.workflow.key())
+        .get::<Workflow>("workflows", &r.workflow.id)
         .await?
         .is_none()
     {
-        bail!("任务版本已移除，无法继续")
+        bail!("任务已移除，无法继续")
     }
     if archived(&app, &r.workflow.id).await? {
         bail!("任务已归档，请先恢复")

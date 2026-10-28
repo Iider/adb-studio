@@ -220,7 +220,7 @@
       </div>
     {/each}
     {#if !c.profiles?.length}<p class="inspector-hint">
-        保存可运行版本前，请先完成手机位置标注。
+        保存工作流前，请先完成手机位置标注。
       </p>{/if}
   {/if}
   {#each fields.filter((field) => !field.percent) as field (field.key)}

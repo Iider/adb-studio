@@ -89,7 +89,7 @@ fn canvas_node<'a>(w: &'a Workflow, id: &str) -> Result<&'a DraftNode> {
     }
 }
 
-pub fn compile(draft: &Draft, version: u32) -> Result<Workflow> {
+pub fn compile(draft: &Draft) -> Result<Workflow> {
     crate::drafts::validate(draft)?;
     let mut devices: Option<HashSet<String>> = None;
     for step in &draft.nodes {
@@ -177,7 +177,6 @@ pub fn compile(draft: &Draft, version: u32) -> Result<Workflow> {
     let workflow = Workflow {
         schema_version: 1,
         id: format!("manual-{}", draft.id),
-        version,
         name: draft.name.clone(),
         description: draft.description.clone(),
         devices,
@@ -193,11 +192,8 @@ pub fn compile(draft: &Draft, version: u32) -> Result<Workflow> {
 
 pub fn validate(w: &Workflow) -> Result<()> {
     ensure!(
-        w.schema_version == 1
-            && w.version > 0
-            && !w.name.trim().is_empty()
-            && w.name.chars().count() <= 80,
-        "工作流名称或版本无效"
+        w.schema_version == 1 && !w.name.trim().is_empty() && w.name.chars().count() <= 80,
+        "工作流名称无效"
     );
     ensure!(
         !w.id.is_empty()
@@ -407,7 +403,7 @@ pub fn validate(w: &Workflow) -> Result<()> {
                 );
                 links.insert(node.id.clone(), outgoing);
             }
-            _ => bail!("人工编排版本不能混入未适配的旧步骤"),
+            _ => bail!("人工编排任务不能混入未适配的旧步骤"),
         }
     }
     let mut membership = HashMap::<String, String>::new();

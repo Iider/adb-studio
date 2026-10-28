@@ -33,7 +33,6 @@
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import RunFeedback from "$lib/components/RunFeedback.svelte";
   import { notify } from "$lib/notifications";
-  import { latestWorkflows } from "$lib/tasks";
   import { resumeBlocked } from "$lib/run-feedback";
   import { scheduleInput } from "$lib/schedules";
   import type { Draft } from "$lib/workflow-editor";
@@ -110,7 +109,6 @@
   let rename = $state("");
   let pictures = $state<Record<string, string>>({});
   let selectedWorkflow = $state("swipe");
-  let selectedVersion = $state(0);
   let targetDevice = $state("3430131496001EB");
   let pointDialog = $state<HTMLDialogElement>();
   let pointDevice = $state<Device | null>(null);
@@ -133,7 +131,6 @@
       deviceDetailTab,
       workflowOpen,
       selectedWorkflow,
-      selectedVersion,
       selectedRun,
     };
     untrack(() => {
@@ -156,13 +153,7 @@
   });
   const activeRuns = $derived(runs.filter(busy));
   const finishedRuns = $derived(runs.filter((r) => !busy(r)));
-  const flow = $derived(
-    tab === "devices" || selectedVersion === 0
-      ? latestWorkflows(workflows).find((w) => w.id === selectedWorkflow)
-      : workflows.find(
-          (w) => w.id === selectedWorkflow && w.version === selectedVersion,
-        ),
-  );
+  const flow = $derived(workflows.find((w) => w.id === selectedWorkflow));
   const deviceRun = $derived(
     runs.find((r) => r.device_id === selectedDeviceId && busy(r)) ||
       runs.find((r) => r.device_id === selectedDeviceId),
@@ -185,7 +176,7 @@
     }
   });
   const taskChoices = $derived(
-    latestWorkflows(workflows)
+    workflows
       .filter((w) => !w.archived)
       .map((workflow) => ({
         value: workflow.id,
@@ -202,7 +193,6 @@
     taskSetupDevice = selectedDeviceId;
     const previous = deviceRun;
     selectedWorkflow = previous?.workflow.id || "swipe";
-    selectedVersion = previous?.workflow.version || 0;
     const swipe = previous?.workflow.nodes.find(
       (node) => node.type === "swipe_loop",
     );
@@ -312,7 +302,7 @@
         ]);
         if (!alive) return;
         devices = d;
-        workflows = w.sort((a, b) => b.version - a.version);
+        workflows = w;
         drafts = savedDrafts;
         runs = r;
         reconcileRunSelection();
@@ -430,7 +420,6 @@
         await api(`/devices/${deviceId}`, "PUT", { tap_point: point });
         targetDevice = deviceId;
         selectedWorkflow = "point-click";
-        selectedVersion = 0;
         if (pointOrigin === "devices") {
           selectedDeviceId = deviceId;
           deviceDetailTab = "task";
@@ -467,7 +456,6 @@
         const r = await api<Run>("/runs", "POST", {
           device_id: targetDevice,
           workflow_id: flow.id,
-          version: embedded ? undefined : flow.version,
           tap: flow.nodes.some((n) =>
             ["tap_loop", "fixed_tap_loop"].includes(n.type),
           )
@@ -598,7 +586,6 @@
     deviceDetailTab = navigation.deviceDetailTab;
     workflowOpen = navigation.workflowOpen;
     selectedWorkflow = navigation.selectedWorkflow;
-    selectedVersion = navigation.selectedVersion;
     selectedRun = navigation.selectedRun;
     navigationReady = true;
     theme =
@@ -740,18 +727,6 @@
       {:else}
         <div class="flow-controls">
           <label
-            >版本<Dropdown
-              items={workflows
-                .filter((w) => w.id === flow.id)
-                .map((w) => ({
-                  value: String(w.version),
-                  label: `第 ${w.version} 版`,
-                }))}
-              value={String(flow.version)}
-              label="任务版本"
-              onchange={(value) => (selectedVersion = Number(value))}
-            /></label
-          ><label
             >执行手机<Dropdown
               items={devices
                 .filter(
@@ -765,7 +740,7 @@
               label="执行手机"
             /></label
           ><Button disabled={!!working || !!launchBlocked} type="submit"
-            ><Play size={16} />运行此版本</Button
+            ><Play size={16} />运行</Button
           >
         </div>
       {/if}
@@ -787,7 +762,7 @@
       <div>
         <h2>{run.workflow.name}</h2>
         <p>
-          {deviceName} · 第 {run.workflow.version} 版
+          {deviceName}
         </p>
       </div>
       <Badge variant={run.state === "needs_help" ? "destructive" : "default"}
@@ -922,7 +897,6 @@
           bind:value={selectedWorkflow}
           label="选择自动化任务"
           placeholder="暂无可用任务"
-          onchange={() => (selectedVersion = 0)}
         />
       </label>
       {#if deviceRun && busy(deviceRun)}<p class="hint">
@@ -1072,7 +1046,6 @@
             {working}
             onOpen={(workflow) => {
               selectedWorkflow = workflow.id;
-              selectedVersion = workflow.version;
               workflowOpen = true;
             }}
             onRefresh={() => {
@@ -1162,9 +1135,7 @@
             <ol class="flow-nodes">
               {#each flow.nodes as n, i}
                 {@const nodeRun =
-                  launchRun?.workflow.id === flow.id &&
-                  launchRun.workflow.version === flow.version &&
-                  launchRun.node === n.id
+                  launchRun?.workflow.id === flow.id && launchRun.node === n.id
                     ? launchRun
                     : null}
                 <li class:executing={!!nodeRun}>

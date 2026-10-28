@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "id": "feed-duck",
-  "version": 1,
   "name": "招财鸭 · 点击喂鸭",
   "description": "在当前招财鸭页面点击底部喂鸭按钮；页面变化时停止。先点击一次，再等待设定间隔。",
   "devices": [

@@ -55,7 +55,6 @@ impl Device {
 pub struct Workflow {
     pub schema_version: u32,
     pub id: String,
-    pub version: u32,
     pub name: String,
     pub description: String,
     pub devices: Vec<String>,
@@ -77,11 +76,6 @@ pub enum RecognitionMode {
 }
 fn ten() -> u32 {
     10
-}
-impl Workflow {
-    pub fn key(&self) -> String {
-        format!("{}@{}", self.id, self.version)
-    }
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Node {

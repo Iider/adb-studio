@@ -15,7 +15,7 @@ test("所有主页栏目都能从刷新后的网址恢复", () => {
   }
 });
 
-test("设备任务面板、任务版本、执行记录保留当前选择", () => {
+test("设备任务面板、任务详情、执行记录保留当前选择", () => {
   for (const query of [
     "?device=phone%20%26%20one&section=task",
     "?tab=workflows&workflow=task%2Fone&version=3",
@@ -38,17 +38,21 @@ test("切换栏目清理旧页面参数，保留其他参数与锚点", () => {
   assert.equal(homeNavigationUrl(next, state).href, next.href);
 });
 
-test("未知栏目和无效版本安全回退，不带入其他栏目的选择", () => {
+test("旧链接的版本参数被忽略，未知栏目安全回退", () => {
   assert.deepEqual(
     readHomeNavigation(new URL("?tab=unknown&run=old&workflow=old", base)),
     readHomeNavigation(base),
   );
-  for (const version of ["-1", "1.5", "oops", "Infinity", "9007199254740992"]) {
+  for (const version of ["3", "-1", "oops"]) {
+    const url = new URL(
+      `?tab=workflows&workflow=task&version=${version}`,
+      base,
+    );
+    const state = readHomeNavigation(url);
+    assert.equal(state.selectedWorkflow, "task");
     assert.equal(
-      readHomeNavigation(
-        new URL(`?tab=workflows&workflow=task&version=${version}`, base),
-      ).selectedVersion,
-      0,
+      homeNavigationUrl(url, state).searchParams.has("version"),
+      false,
     );
   }
 });

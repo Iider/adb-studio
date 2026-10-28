@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "id": "feed-duck",
-  "version": 2,
   "name": "招财鸭 · 点击喂鸭",
   "description": "固定点击外屏底部喂鸭按钮；不识别、不校验页面。请先打开正确页面并保持外屏。",
   "devices": [

@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "id": "douyin-ad-exit-probe",
-  "version": 2,
   "name": "抖音极速版 · 广告结束检查",
   "description": "确认当前为广告直播间，由工作台点击右上角关闭并保存返回页面。",
   "devices": ["3430131496001EB"],

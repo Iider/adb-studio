@@ -51,7 +51,7 @@ pub fn router(app: Arc<App>) -> Router {
             "/workflows/{id}/archive",
             put(archive_workflow).delete(restore_workflow),
         )
-        .route("/workflow-drafts/{id}/version", post(draft_version))
+        .route("/workflow-drafts/{id}/save", post(save_draft))
         .route("/editor/observe/{id}", get(editor_observe))
         .route("/workflows/{key}/validate", post(validate))
         .route("/runs", get(runs).post(start))
@@ -392,15 +392,7 @@ async fn remove_workflow(
 ) -> Result<Json<Value>> {
     let _schedule_gate = app.schedule_gate.lock().await;
     let _run_gate = app.run_gate.lock().await;
-    let versions: Vec<String> = app
-        .db
-        .list::<Workflow>("workflows")
-        .await?
-        .into_iter()
-        .filter(|workflow| workflow.id == id)
-        .map(|workflow| workflow.key())
-        .collect();
-    if versions.is_empty() {
+    if app.db.get::<Workflow>("workflows", &id).await?.is_none() {
         return Err(anyhow::anyhow!("任务不存在").into());
     }
     if app
@@ -416,19 +408,19 @@ async fn remove_workflow(
         .strip_prefix("manual-")
         .filter(|value| uuid::Uuid::parse_str(value).is_ok())
         .unwrap_or("");
-    app.db.remove_workflow(&id, &versions, draft_id).await?;
+    app.db.remove_workflow(&id, draft_id).await?;
     let _ = app.events.send(json!({"type":"changed"}));
-    Ok(Json(json!({"ok":true,"removed_versions":versions.len()})))
+    Ok(Json(json!({"ok":true})))
 }
 
 #[derive(Deserialize)]
-struct DraftVersion {
+struct DraftSave {
     revision: u32,
 }
-async fn draft_version(
+async fn save_draft(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
-    Json(input): Json<DraftVersion>,
+    Json(input): Json<DraftSave>,
 ) -> Result<Json<Workflow>> {
     let _gate = app.run_gate.lock().await;
     let draft = app
@@ -439,31 +431,8 @@ async fn draft_version(
     if draft.revision != input.revision {
         return Err(anyhow::anyhow!("草稿已变化，请先保存并重新读取").into());
     }
-    let workflow_id = format!("manual-{id}");
-    let previous = app
-        .db
-        .list::<Workflow>("workflows")
-        .await?
-        .into_iter()
-        .filter(|w| w.id == workflow_id)
-        .max_by_key(|w| w.version);
-    let version = previous
-        .as_ref()
-        .map_or(0, |w| w.version)
-        .checked_add(1)
-        .context("版本号超出范围")?;
-    let workflow = crate::canvas::compile(&draft, version)?;
-    if let Some(previous) = previous {
-        let definition = |w: &Workflow| -> anyhow::Result<Value> {
-            let mut value = serde_json::to_value(w)?;
-            value.as_object_mut().unwrap().remove("version");
-            Ok(value)
-        };
-        if definition(&previous)? == definition(&workflow)? {
-            return Ok(Json(previous));
-        }
-    }
-    app.db.put("workflows", &workflow.key(), &workflow).await?;
+    let workflow = crate::canvas::compile(&draft)?;
+    app.db.put("workflows", &workflow.id, &workflow).await?;
     let _ = app.events.send(json!({"type":"changed"}));
     Ok(Json(workflow))
 }
@@ -487,15 +456,7 @@ async fn editor_observe(
 async fn submit(State(app): State<Arc<App>>, Json(w): Json<Workflow>) -> Result<Json<Workflow>> {
     let _gate = app.run_gate.lock().await;
     engine::validate(&w)?;
-    if app
-        .db
-        .get::<Workflow>("workflows", &w.key())
-        .await?
-        .is_some()
-    {
-        return Err(anyhow::anyhow!("版本已存在，请增加版本号").into());
-    }
-    app.db.put("workflows", &w.key(), &w).await?;
+    app.db.put("workflows", &w.id, &w).await?;
     let _ = app.events.send(json!({"type":"changed"}));
     Ok(Json(w))
 }
@@ -507,7 +468,7 @@ async fn validate(State(app): State<Arc<App>>, Path(key): Path<String>) -> Resul
         .ok_or_else(|| anyhow::anyhow!("工作流不存在"))?;
     validate_workflow_samples(&app, &w).await?;
     let _gate = app.run_gate.lock().await;
-    ensure_workflow_version(&app, &w).await?;
+    ensure_workflow(&app, &w).await?;
     Ok(Json(json!({"ok":true,"samples":w.tests.len()})))
 }
 #[derive(Deserialize)]
@@ -518,18 +479,9 @@ struct Start {
     tap: Option<TapSettings>,
     device_id: String,
     workflow_id: String,
-    #[serde(default)]
-    version: Option<u32>,
 }
 async fn start(State(app): State<Arc<App>>, Json(s): Json<Start>) -> Result<Json<Run>> {
-    let w = if let Some(version) = s.version {
-        app.db
-            .get::<Workflow>("workflows", &format!("{}@{version}", s.workflow_id))
-            .await?
-            .context("版本不存在")?
-    } else {
-        engine::latest(&app, &s.workflow_id).await?
-    };
+    let w = engine::workflow(&app, &s.workflow_id).await?;
     let w = engine::with_swipe_settings(w, s.swipe.as_ref())?;
     let w = engine::with_tap_settings(w, s.tap.as_ref())?;
     Ok(Json(engine::start(app, &s.device_id, w).await?))
@@ -669,7 +621,10 @@ async fn schedule_from(app: &App, s: ScheduleInput, id: String) -> Result<Schedu
         return Err(anyhow::anyhow!("手机未登记").into());
     }
     engine::with_tap_settings(
-        engine::with_swipe_settings(engine::latest(app, &s.workflow_id).await?, s.swipe.as_ref())?,
+        engine::with_swipe_settings(
+            engine::workflow(app, &s.workflow_id).await?,
+            s.swipe.as_ref(),
+        )?,
         s.tap.as_ref(),
     )?;
     if s.name.trim().is_empty() || s.name.chars().count() > 80 {
@@ -778,13 +733,13 @@ async fn ws(State(app): State<Arc<App>>, upgrade: WebSocketUpgrade) -> Response 
     upgrade.on_upgrade(move|mut socket|async move{let mut rx=app.events.subscribe();loop{tokio::select!{event=rx.recv()=>{match event{Ok(v)=>if socket.send(Message::Text(v.to_string().into())).await.is_err(){break},Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>{if socket.send(Message::Text(json!({"type":"changed"}).to_string().into())).await.is_err(){break}},Err(_)=>break}},msg=socket.recv()=>if !matches!(msg,Some(Ok(Message::Ping(_)|Message::Pong(_)|Message::Text(_)))){break},_=app.stop.cancelled()=>break}}}).into_response()
 }
 
-async fn ensure_workflow_version(app: &App, workflow: &Workflow) -> anyhow::Result<()> {
+async fn ensure_workflow(app: &App, workflow: &Workflow) -> anyhow::Result<()> {
     anyhow::ensure!(
         app.db
-            .get::<Workflow>("workflows", &workflow.key())
+            .get::<Workflow>("workflows", &workflow.id)
             .await?
             .is_some(),
-        "任务版本已移除，请重新创建"
+        "任务已移除，请重新创建"
     );
     Ok(())
 }

@@ -13,24 +13,24 @@
   } from "$lib/api";
   let {
     workflowId,
-    version,
+    savedWorkflow,
     devices,
     device = $bindable(""),
     changed,
     onstate,
     disabled = false,
-    savingVersion = false,
-    onsaveversion,
+    savingWorkflow = false,
+    onsave,
   }: {
     workflowId: string;
-    version: Workflow | null;
+    savedWorkflow: Workflow | null;
     devices: Device[];
     device: string;
     changed: boolean;
     onstate: (node: string) => void;
     disabled?: boolean;
-    savingVersion?: boolean;
-    onsaveversion: () => Promise<Workflow | null>;
+    savingWorkflow?: boolean;
+    onsave: () => Promise<Workflow | null>;
   } = $props();
   let run = $state<Run | null>(null);
   let events = $state<Event[]>([]);
@@ -41,7 +41,7 @@
   let open = $state(false);
   $effect(() => {
     const allowed = (item: Device) =>
-      !version?.devices.length || version.devices.includes(item.id);
+      !savedWorkflow?.devices.length || savedWorkflow.devices.includes(item.id);
     if (
       (!device ||
         !devices.some((item) => item.id === device && allowed(item))) &&
@@ -117,11 +117,10 @@
     working = true;
     error = "";
     try {
-      const saved = !version || changed ? await onsaveversion() : version;
+      const saved = !savedWorkflow || changed ? await onsave() : savedWorkflow;
       if (!saved || saved.id !== workflowId) return;
       run = await api<Run>("/runs", "POST", {
         workflow_id: saved.id,
-        version: saved.version,
         device_id: device,
       });
       await refresh();
@@ -157,7 +156,7 @@
     class="run-trigger"
     class:attention={!!error}
     {disabled}
-    aria-label="版本与运行"
+    aria-label="运行设置"
     aria-haspopup="dialog"
     aria-expanded={open}
     popovertarget="editor-run"
@@ -171,19 +170,19 @@
     popover="auto"
     role="dialog"
     tabindex="-1"
-    aria-label="版本与运行设置"
+    aria-label="运行设置"
     ontoggle={(event) => (open = event.newState === "open")}
   >
     <header>
-      <h2>版本与运行</h2>
+      <h2>运行设置</h2>
       <button
         class="close-button"
         aria-label="关闭运行设置"
         onclick={() => popup?.hidePopover()}><X size={18} /></button
       >
     </header>
-    <p class="version-label">
-      {version ? "已保存第 " + version.version + " 版" : "运行时保存新版本"}
+    <p class="save-label">
+      {savedWorkflow ? "工作流已保存" : "运行时自动保存工作流"}
     </p>
     <label
       >运行手机<Dropdown
@@ -197,13 +196,15 @@
             label: `${item.name}${
               !item.online
                 ? "（离线）"
-                : version?.devices.length && !version.devices.includes(item.id)
+                : savedWorkflow?.devices.length &&
+                    !savedWorkflow.devices.includes(item.id)
                   ? "（未标注）"
                   : ""
             }`,
             disabled:
               !item.online ||
-              (!!version?.devices.length && !version.devices.includes(item.id)),
+              (!!savedWorkflow?.devices.length &&
+                !savedWorkflow.devices.includes(item.id)),
           })),
         ]}
       /></label
@@ -212,17 +213,16 @@
       <button
         disabled={disabled ||
           restoring ||
-          savingVersion ||
+          savingWorkflow ||
           working ||
           (!!run && busy(run))}
-        onclick={onsaveversion}
-        >{savingVersion ? "正在保存…" : "保存新版本"}</button
+        onclick={onsave}>{savingWorkflow ? "正在保存…" : "保存工作流"}</button
       >
       <button
         class="start-button"
         disabled={disabled ||
           restoring ||
-          savingVersion ||
+          savingWorkflow ||
           !device ||
           working ||
           (!!run && busy(run))}
@@ -236,16 +236,14 @@
         >{/if}
     </div>
     <p>
-      {!version || changed
+      {!savedWorkflow || changed
         ? "运行时自动保存当前修改。"
         : ""}请先将手机置于预期页面。
     </p>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     {#if restoring}<p role="status">正在找回运行记录…</p>{/if}
     {#if run}<details>
-        <summary
-          >第 {run.workflow.version} 版 · {runLabel(run)} · {run.reason}</summary
-        >
+        <summary>{runLabel(run)} · {run.reason}</summary>
         <ol>
           {#each events.slice(-30) as event}<li>{event.message}</li>{/each}
         </ol>
@@ -314,7 +312,7 @@
     padding: 5px;
     border-color: transparent;
   }
-  .version-label {
+  .save-label {
     color: var(--text);
     font-weight: 600;
   }

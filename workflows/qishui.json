@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "id": "qishui",
-  "version": 1,
   "name": "汽水音乐 · 连续刷视频赚金币",
   "description": "进入任务页，金币暂停后上滑；多次复查确认无法继续后完成。",
   "devices": [

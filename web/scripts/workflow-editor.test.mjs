@@ -115,7 +115,7 @@ test("不完整连线、普通回线与嵌套循环不显示确定次数", () =>
   );
 });
 
-test("服务器改变字段顺序不会把已存版本误报为草稿修改", () => {
+test("服务器改变字段顺序不会把已存内容误报为草稿修改", () => {
   assert.equal(
     canonical({ name: "测试", config: { interval: 1, count: 2 } }),
     canonical({ config: { count: 2, interval: 1 }, name: "测试" }),

@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "id": "point-click",
-  "version": 1,
   "name": "定点点击",
   "description": "先选择手机并标注点击位置，再设置次数和间隔。按确认的坐标直接点击，不识别页面。",
   "devices": [],

@@ -14,7 +14,6 @@ export interface HomeNavigation {
   deviceDetailTab: "parameters" | "task";
   workflowOpen: boolean;
   selectedWorkflow: string;
-  selectedVersion: number;
   selectedRun: string;
 }
 
@@ -23,7 +22,6 @@ export function readHomeNavigation(url: URL): HomeNavigation {
   const candidate = params.get("tab");
   const tab = homeTabs.find((item) => item === candidate) ?? "devices";
   const workflow = tab === "workflows" ? params.get("workflow") : null;
-  const version = Number(params.get("version"));
   return {
     tab,
     selectedDeviceId: tab === "devices" ? (params.get("device") ?? "") : "",
@@ -33,8 +31,6 @@ export function readHomeNavigation(url: URL): HomeNavigation {
         : "parameters",
     workflowOpen: !!workflow,
     selectedWorkflow: workflow || "swipe",
-    selectedVersion:
-      workflow && Number.isSafeInteger(version) && version > 0 ? version : 0,
     selectedRun: tab === "runs" ? (params.get("run") ?? "") : "",
   };
 }
@@ -51,8 +47,6 @@ export function homeNavigationUrl(url: URL, state: HomeNavigation): URL {
   }
   if (state.tab === "workflows" && state.workflowOpen) {
     params.set("workflow", state.selectedWorkflow);
-    if (state.selectedVersion > 0)
-      params.set("version", String(state.selectedVersion));
   }
   if (state.tab === "runs" && state.selectedRun)
     params.set("run", state.selectedRun);

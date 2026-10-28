@@ -81,7 +81,7 @@ pub async fn monitor(app: Arc<App>) {
                 // 先保存已消费的时间点，异常重启也不会再次派发。
                 app.db.put("schedules", &s.id, &s).await?;
                 if !missed {
-                    let result = engine::latest(&app, &s.workflow_id).await;
+                    let result = engine::workflow(&app, &s.workflow_id).await;
                     s.last_result = Some(match result {
                         Ok(w) => match engine::with_swipe_settings(w, s.swipe.as_ref())
                             .and_then(|w| engine::with_tap_settings(w, s.tap.as_ref()))

@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "id": "daily-checkin",
-  "version": 2,
   "name": "每日签到 · 三个应用",
   "description": "第二阶段试跑：快手极速版视频已看完，自动点击立即签到并观察结果。",
   "devices": ["3430131496001EB"],

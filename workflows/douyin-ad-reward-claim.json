@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "id": "douyin-ad-reward-claim",
-  "version": 1,
   "name": "抖音极速版 · 广告奖励试跑",
   "description": "确认惊喜奖励窗口，由工作台点击领取奖励并等待广告。",
   "devices": ["3430131496001EB"],

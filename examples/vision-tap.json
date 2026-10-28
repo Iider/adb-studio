@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "id": "vision-settings-wlan",
-  "version": 1,
   "name": "视觉点击 · WLAN 入口",
   "description": "示例：仅打开设置中的 WLAN 页面，不切换网络。使用前按目标手机补齐样本和按钮区域。",
   "devices": [],

@@ -123,13 +123,8 @@ async fn main() -> Result<()> {
         {
             continue;
         }
-        if app
-            .db
-            .get::<Workflow>("workflows", &wf.key())
-            .await?
-            .is_none()
-        {
-            app.db.put("workflows", &wf.key(), &wf).await?;
+        if app.db.get::<Workflow>("workflows", &wf.id).await?.is_none() {
+            app.db.put("workflows", &wf.id, &wf).await?;
         }
     }
     if let Err(error) = adb::refresh(&app).await {

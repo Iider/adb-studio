@@ -64,9 +64,9 @@
   let deviceId = $state("");
   let markNode = $state<CanvasNode | null>(null);
   let markCondition = $state<number | null>(null);
-  let version = $state<WorkflowDefinition | null>(null);
-  let versionContent = $state("");
-  let savingVersion = $state(false);
+  let savedWorkflow = $state<WorkflowDefinition | null>(null);
+  let workflowContent = $state("");
+  let savingWorkflow = $state(false);
   let executionError = $state("");
   let id = $state("");
   let draftChoice = $state("");
@@ -183,16 +183,14 @@
     const { revision: _revision, updated_at: _updated, ...value } = draft;
     return canonical(value);
   }
-  async function restoreVersion(draftId: string) {
+  async function restoreWorkflow(draftId: string) {
     try {
-      const versions = await api<WorkflowDefinition[]>("/workflows");
-      if (id !== draftId || version || savingVersion) return;
-      const latest = versions
-        .filter((item) => item.id === `manual-${draftId}`)
-        .sort((a, b) => b.version - a.version)[0];
+      const workflows = await api<WorkflowDefinition[]>("/workflows");
+      if (id !== draftId || savedWorkflow || savingWorkflow) return;
+      const latest = workflows.find((item) => item.id === `manual-${draftId}`);
       if (!latest) return;
-      version = latest;
-      versionContent = canonical({
+      savedWorkflow = latest;
+      workflowContent = canonical({
         name: latest.name,
         description: latest.description,
         entry: latest.entry,
@@ -232,8 +230,8 @@
     issues = [];
     checksOpen = false;
     updatedAt = draft.updated_at;
-    version = null;
-    versionContent = "";
+    savedWorkflow = null;
+    workflowContent = "";
     executionError = "";
     saveError = "";
     savedContent = saved ? content : "";
@@ -253,7 +251,7 @@
       /* 后台保存仍可使用。 */
     }
     ready = true;
-    void restoreVersion(draft.id);
+    void restoreWorkflow(draft.id);
   }
 
   async function boot() {
@@ -449,28 +447,28 @@
         : node,
     );
   }
-  async function saveVersion(): Promise<WorkflowDefinition | null> {
-    savingVersion = true;
+  async function saveWorkflow(): Promise<WorkflowDefinition | null> {
+    savingWorkflow = true;
     executionError = "";
     try {
       if (!(await flush())) return null;
       const submitted = executionContent,
         submittedId = id;
       const result = await api<WorkflowDefinition>(
-        "/workflow-drafts/" + id + "/version",
+        "/workflow-drafts/" + id + "/save",
         "POST",
         { revision },
       );
       if (id !== submittedId) return null;
-      version = result;
-      versionContent = submitted;
-      notify.success("第 " + version.version + " 版已保存，可直接运行");
+      savedWorkflow = result;
+      workflowContent = submitted;
+      notify.success("工作流已保存，可直接运行");
       return result;
     } catch (error) {
       executionError = message(error);
       return null;
     } finally {
-      savingVersion = false;
+      savingWorkflow = false;
     }
   }
   function showProgress(nodeId: string) {
@@ -796,29 +794,24 @@
       >
       <button
         class="editor-button primary"
-        title="保存草稿"
-        aria-label="保存草稿"
-        disabled={!ready || saving || switching || !!recovery}
-        onclick={async () => {
-          if (await flush()) notify.success("草稿已保存");
-        }}><Save size={16} /><span class="save-label">保存草稿</span></button
-      >
-      <button
-        class="editor-button wide-action"
-        disabled={!ready || saving || switching || savingVersion || !!recovery}
-        onclick={saveVersion}
-        >{savingVersion ? "正在保存…" : "保存新版本"}</button
+        title="保存工作流"
+        aria-label="保存工作流"
+        disabled={!ready || saving || switching || savingWorkflow || !!recovery}
+        onclick={saveWorkflow}
+        ><Save size={16} /><span class="save-label"
+          >{savingWorkflow ? "正在保存…" : "保存"}</span
+        ></button
       >
       <EditorRunPanel
         workflowId={id ? `manual-${id}` : ""}
-        {version}
+        {savedWorkflow}
         {devices}
         bind:device={deviceId}
-        changed={versionContent !== executionContent}
+        changed={workflowContent !== executionContent}
         onstate={showProgress}
         disabled={!ready || switching || !!recovery}
-        {savingVersion}
-        onsaveversion={saveVersion}
+        {savingWorkflow}
+        onsave={saveWorkflow}
       />
       <button
         class="editor-button more-trigger"
@@ -897,12 +890,12 @@
           disabled={!ready ||
             saving ||
             switching ||
-            savingVersion ||
+            savingWorkflow ||
             !!recovery}
           onclick={() => {
             morePopover?.hidePopover();
-            void saveVersion();
-          }}>保存新版本</button
+            void saveWorkflow();
+          }}>保存工作流</button
         >
       </div>
       <button class="editor-button theme-action" onclick={toggleTheme}
@@ -1255,7 +1248,7 @@
 <dialog bind:this={deleteDialog}>
   <h2>删除这份草稿？</h2>
   <p>
-    “{name}”的草稿删除后无法恢复。任务版本仍保留，可从任务卡片继续修改，但原画布布局无法恢复。
+    “{name}”的草稿删除后无法恢复。任务内容仍保留，可从任务卡片继续修改，但原画布布局无法恢复。
   </p>
   <div class="dialog-actions">
     <button

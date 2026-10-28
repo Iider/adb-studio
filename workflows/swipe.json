@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "id": "swipe",
-  "version": 1,
   "name": "定时滑动",
   "description": "保持当前页面，先等待，再按间隔上滑。默认试跑 3 次。",
   "devices": [],

@@ -124,7 +124,7 @@ def main():
             return (fake / "taps").read_text().count("\n") if (fake / "taps").exists() else 0
 
         def start(id):
-            return call("/runs", "POST", {"device_id": "mock-phone", "workflow_id": id, "version": 1})
+            return call("/runs", "POST", {"device_id": "mock-phone", "workflow_id": id})
 
         try:
             wait(lambda: urllib.request.urlopen(BASE + "/api/session", timeout=2))
@@ -165,11 +165,11 @@ def main():
             call("/settings/model", "PUT", model)
             print("通过：两类模型接口、纯看图、数字、未知画面、格式与坐标边界", flush=True)
 
-            workflow = {"schema_version": 1, "id": "vision-test", "version": 1, "name": "模拟视觉点击", "description": "只在隔离服务运行", "devices": ["mock-phone"], "recognition": "vision", "entry": "tap", "model_limit": 5,
+            workflow = {"schema_version": 1, "id": "vision-test", "name": "模拟视觉点击", "description": "只在隔离服务运行", "devices": ["mock-phone"], "recognition": "vision", "entry": "tap", "model_limit": 5,
                         "nodes": [{"id": "tap", "label": "视觉点击", "type": "vision_tap", "package": "com.luna.music", "guard": "before", "target": "button", "region": [0.1, 0.1, 0.9, 0.9], "verify": "after", "next": "end"}, {"id": "end", "label": "结束", "type": "end", "result": "succeeded"}],
                         "tests": [{"node": "tap", "image": before_sample, "expected": "confirmed", "target_region": [0.2, 0.2, 0.3, 0.3]}, {"node": "tap", "image": negative_sample, "expected": "unknown"}, {"node": "tap", "image": before_sample, "expected": "confirmed", "after": True}, {"node": "tap", "image": negative_sample, "expected": "unknown", "after": True}]}
             call("/workflows", "POST", workflow)
-            call("/workflows/vision-test@1/validate", "POST")
+            call("/workflows/vision-test/validate", "POST")
             no_samples = {**workflow, "id":"vision-no-samples", "tests":[]}
             call("/workflows", "POST", no_samples)
             model["model"] = "changed-before-first-run"
@@ -187,7 +187,7 @@ def main():
             route_no = png(450, 800)
             route_no_sample = inspect(route_no)["image"]
             Model.route_images = {positive: "route_yes", route_no: "route_no"}
-            route = {"schema_version": 1, "id": "vision-route-test", "version": 1,
+            route = {"schema_version": 1, "id": "vision-route-test",
                      "name": "模拟视觉分流", "description": "按画面选择唯一去向", "devices": ["mock-phone"],
                      "recognition": "vision", "entry": "route", "model_limit": 2,
                      "nodes": [{"id": "route", "label": "看图分流", "type": "vision_route", "package": "com.luna.music",
@@ -199,7 +199,7 @@ def main():
                                {"node": "route", "image": route_no_sample, "expected": "route_no"},
                                {"node": "route", "image": negative_sample, "expected": "unknown"}]}
             call("/workflows", "POST", route)
-            call("/workflows/vision-route-test@1/validate", "POST")
+            call("/workflows/vision-route-test/validate", "POST")
             baseline = taps()
             result = done(start("vision-route-test")["id"])
             assert result["state"] == "succeeded" and result["model_calls"] == 1 and taps() == baseline, result

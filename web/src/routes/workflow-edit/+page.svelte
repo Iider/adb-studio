@@ -81,7 +81,6 @@
 
   let workflow = $state<Workflow | null>(null);
   let devices = $state<Device[]>([]);
-  let sourceVersion = $state(0);
   let selectedNodeId = $state("");
   let rawStep = $state("");
   let rawDirty = $state(false);
@@ -92,7 +91,7 @@
   let saving = $state(false);
   let error = $state("");
   let advancedError = $state("");
-  let savedVersion = $state(0);
+  let saved = $state(false);
 
   const selectedNode = $derived(
     workflow?.nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -122,17 +121,14 @@
       await session();
       const id = new URLSearchParams(location.search).get("id");
       if (!id) throw new Error("没有指定要编辑的任务");
-      const [versions, availableDevices] = await Promise.all([
+      const [workflows, availableDevices] = await Promise.all([
         api<Workflow[]>("/workflows"),
         api<Device[]>("/devices"),
       ]);
-      const latest = versions
-        .filter((item) => item.id === id)
-        .sort((a, b) => b.version - a.version)[0];
+      const latest = workflows.find((item) => item.id === id);
       if (!latest) throw new Error("任务不存在，请返回任务列表");
       devices = availableDevices;
       workflow = JSON.parse(JSON.stringify(latest));
-      sourceVersion = latest.version;
       selectedNodeId = latest.nodes[0]?.id ?? "";
       rawStep = JSON.stringify(latest.nodes[0] ?? {}, null, 2);
       sampleText = JSON.stringify(latest.tests ?? [], null, 2);
@@ -212,7 +208,7 @@
   async function save() {
     if (!workflow || saving) return;
     if (rawDirty || samplesDirty) {
-      error = "请先应用高级修改，再保存新版本";
+      error = "请先应用高级修改，再保存工作流";
       return;
     }
     if (
@@ -225,21 +221,11 @@
     saving = true;
     error = "";
     try {
-      const versions = await api<Workflow[]>("/workflows");
-      const latest = Math.max(
-        ...versions
-          .filter((item) => item.id === workflow?.id)
-          .map((item) => item.version),
-      );
-      if (latest !== sourceVersion)
-        throw new Error("这项任务已有新版，请刷新页面后再编辑");
       const candidate = JSON.parse(JSON.stringify(workflow));
       delete candidate.archived;
-      candidate.version = sourceVersion + 1;
       const result = await api<Workflow>("/workflows", "POST", candidate);
       workflow = result;
-      sourceVersion = result.version;
-      savedVersion = result.version;
+      saved = true;
       initialContent = JSON.stringify(result);
       syncStepText();
     } catch (cause) {
@@ -272,22 +258,20 @@
     <div class="state-message" role="alert">{error}</div>
   {:else}
     <div class="revision-toolbar">
-      <span>当前从第 {sourceVersion} 版修改</span>
       <span>{changed ? "有尚未保存的修改" : "尚未修改"}</span>
       <Button
         disabled={saving || !changed || !!workflow.archived}
         onclick={save}
-        ><Save size={16} />{saving ? "正在保存…" : "保存新版本"}</Button
+        ><Save size={16} />{saving ? "正在保存…" : "保存工作流"}</Button
       >
     </div>
     {#if workflow.archived}<p class="notice" role="alert">
-        任务已归档，请先恢复再保存新版。
+        任务已归档，请先恢复再保存。
       </p>{/if}
     {#if error}<p class="notice error" role="alert">{error}</p>{/if}
-    {#if savedVersion}<p class="notice success" role="status">
-        <Check size={16} />第 {savedVersion} 版已保存。
-        <a
-          href={`/?tab=workflows&workflow=${encodeURIComponent(workflow.id)}&version=${savedVersion}`}
+    {#if saved}<p class="notice success" role="status">
+        <Check size={16} />工作流已保存。
+        <a href={`/?tab=workflows&workflow=${encodeURIComponent(workflow.id)}`}
           >前往运行</a
         >
       </p>{/if}
@@ -491,7 +475,7 @@
     <div class="bottom-actions">
       <Button
         disabled={saving || !changed || !!workflow.archived}
-        onclick={save}><Save size={16} />保存新版本</Button
+        onclick={save}><Save size={16} />保存工作流</Button
       >
       <a href="/?tab=workflows">返回任务列表</a>
     </div>

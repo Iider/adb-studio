@@ -23,7 +23,6 @@ python3 scripts/studio.py stop 运行编号
 {
   "schema_version": 1,
   "id": "short-swipe",
-  "version": 1,
   "name": "滑动两次",
   "description": "在当前页面先等待，再上滑。",
   "devices": [],
@@ -37,7 +36,9 @@ python3 scripts/studio.py stop 运行编号
 }
 ```
 
-`devices` 为空表示通用工作流；专用界面应填写已适配手机编号。版本不可覆盖；改动需增加 `version`。保存后即可运行，默认选择最大版本号；可用 `version` 指定历史版本。旧数据中的 `active`、`sample_validated` 和 `trial` 字段会被忽略，不再决定运行资格。
+`devices` 为空表示通用工作流；专用界面应填写已适配手机编号。同一个 `id` 只保存一份工作流，`POST /workflows` 直接覆盖当前内容，保存后即可运行。不接受历史版本选择，不生成快照；旧请求里的 `version` 字段会被忽略。
+
+已有数据升级时，每个工作流仅保留原来版本号最高的内容，并以工作流编号作为存储键；重复启动不会重新产生旧版本。草稿、定时和执行记录保留。正在运行的任务继续按启动时的步骤执行，下次运行使用覆盖保存后的内容。
 
 步骤说明与编号会直接显示在网页，使用用户能读懂的中文说明。
 
@@ -66,22 +67,22 @@ python3 scripts/studio.py stop 运行编号
 运行不触发样本检查；各台适用手机均可首次直接运行，更换模型后也不需要重新试跑。样本检查可单独调用，只返回诊断结果，不产生启用标记。
 
 ```sh
-python3 scripts/studio.py request POST /workflows/编号@版本/validate
+python3 scripts/studio.py request POST /workflows/编号/validate
 ```
 
 恢复任务时，重新识别当前页面。一般点击、按键只有在验证结果通过后才向后执行，无法确认则标记需要处理；无法验证的固定点击和单次滑动不重放。定时滑动不补发待确认动作，并检查原来的应用是否仍在前台；汽水任务重新观察金币和视频状态。
 
 ## HTTP 接口
 
-编排器的草稿独立于可运行版本保存，允许缺少连线或尚未填完参数，不会进入 `/workflows`、定时或执行队列。接口 `GET /api/workflow-drafts` 列出草稿，`GET /api/workflow-drafts/{id}` 读取单份，`PUT /api/workflow-drafts/{id}` 保存，`DELETE /api/workflow-drafts/{id}?revision={revision}` 删除。
+编排器的草稿独立于可运行内容保存，允许缺少连线或尚未填完参数，不会进入 `/workflows`、定时或执行队列。接口 `GET /api/workflow-drafts` 列出草稿，`GET /api/workflow-drafts/{id}` 读取单份，`PUT /api/workflow-drafts/{id}` 保存，`DELETE /api/workflow-drafts/{id}?revision={revision}` 删除。
 
-草稿字段为 `id`（UUID）、`revision`、`name`、`description`、`entry`、`nodes`、`viewport` 和服务生成的 `updated_at`。每个节点保存 `id`、`kind`、`label`、`config`、`targets` 和 `position`；`targets` 是出口编号到目标节点编号的映射，`position` 为画布位置 `[x,y]`，`viewport` 为 `[x,y,zoom]`。新草稿以 `revision: 0` 提交；保存响应返回递增后的版本。更新与删除必须带上最后读取的版本，冲突返回 HTTP 409，客户端应保留当前编辑并提示重新读取或保存副本。草稿的完整执行校验仍需在后续提交正式版本时完成。
+草稿字段为 `id`（UUID）、`revision`、`name`、`description`、`entry`、`nodes`、`viewport` 和服务生成的 `updated_at`。每个节点保存 `id`、`kind`、`label`、`config`、`targets` 和 `position`；`targets` 是出口编号到目标节点编号的映射，`position` 为画布位置 `[x,y]`，`viewport` 为 `[x,y,zoom]`。新草稿以 `revision: 0` 提交；保存响应返回递增后的并发校对编号。更新与删除必须带上最后读取的 `revision`，冲突返回 HTTP 409，客户端应保留当前编辑并提示重新读取或保存副本。草稿的完整执行校验仍需在手动保存工作流时完成。
 
-`POST /api/workflow-drafts/{id}/version` 接收 `{"revision":当前草稿版本}`，校验连线、循环范围与坐标标注后创建不可覆盖的正式版本；仅改画布位置会返回原执行版本。`GET /api/editor/observe/{device_id}` 返回原图数据与屏幕宽高、显示屏标识，用于标注，不发送触控命令。新编排步骤序列化为 `{"type":"canvas","step":{...}}`，其出口由 `step.targets` 决定，不能同时声明 `next`。坐标标注绑定手机与屏幕形态；无法确认多屏手机的触控显示编号时拒绝标注。
+`POST /api/workflow-drafts/{id}/save` 接收 `{"revision":当前草稿校对编号}`，校验连线、循环范围与坐标标注后覆盖对应的工作流本体；不累积历史记录。`GET /api/editor/observe/{device_id}` 返回原图数据与屏幕宽高、显示屏标识，用于标注，不发送触控命令。新编排步骤序列化为 `{"type":"canvas","step":{...}}`，其出口由 `step.targets` 决定，不能同时声明 `next`。坐标标注绑定手机与屏幕形态；无法确认多屏手机的触控显示编号时拒绝标注。
 
 编排器文字条件中的 `guard`（页面依据）可省略，默认留空。未填或仅有空格时直接判断文字条件；填写后先匹配整页文字，再判断指定区域，依据不匹配时请求处理。条件判断与等待条件使用同一规则。
 
-自动化任务卡片直接提供“编辑”：有草稿的任务打开画布，其余任务从最新版本制作新版。`GET /api/workflows` 的每个版本带有 `archived` 布尔状态。所有已保存任务可通过 `PUT /api/workflows/{id}/archive` 归档、`DELETE /api/workflows/{id}/archive` 恢复；归档保留草稿、版本与执行记录，停用相关定时。归档中拒绝启动、继续和新建定时；恢复后定时仍需手动开启。详情见 [编辑与归档方案](workflow-edit-archive.md)。
+自动化任务卡片直接提供“编辑”：有草稿的任务打开画布，其余任务直接编辑当前内容。`GET /api/workflows` 的每项任务带有 `archived` 布尔状态。所有已保存任务可通过 `PUT /api/workflows/{id}/archive` 归档、`DELETE /api/workflows/{id}/archive` 恢复；归档保留草稿、任务内容与执行记录，停用相关定时。归档中拒绝启动、继续和新建定时；恢复后定时仍需手动开启。详情见 [编辑与归档方案](workflow-edit-archive.md)。
 
 所有接口前缀 `/api`；Agent 使用 `Authorization: Bearer <令牌>`。响应错误提供 `error` 字段。
 
@@ -94,17 +95,17 @@ python3 scripts/studio.py request POST /workflows/编号@版本/validate
 | POST `/devices/connect` | 用 `{"address":"手机IP:连接端口"}` 连接局域网手机；核验自身编号后登记，保存地址供断线重连 |
 | PUT `/devices/{id}` | `name` 或 `keep_awake` |
 | GET `/devices/{id}/screenshot` | 当前截图 PNG |
-| GET / POST `/workflows` | 查询版本 / 提交新版 |
+| GET / POST `/workflows` | 查询任务 / 覆盖保存 |
 | PUT / DELETE `/workflows/{id}/archive` | 归档 / 恢复任务 |
-| DELETE `/workflows/{id}` | 彻底移除任务的全部版本、关联草稿与定时；未结束时拒绝。保留历史执行记录，禁止续跑已移除版本；内置任务重启后不再生成 |
-| POST `/workflows/{id}@{version}/validate` | 可选样本诊断，不影响运行资格 |
+| DELETE `/workflows/{id}` | 彻底移除任务本体、关联草稿与定时；未结束时拒绝。保留历史执行记录，禁止续跑已移除任务；内置任务重启后不再生成 |
+| POST `/workflows/{id}/validate` | 可选样本诊断，不影响运行资格 |
 | GET / POST `/runs` | 查询 / 运行，参数见下方 |
 | DELETE `/runs/{id}` | 清理已结束的记录，归档与截图保留；进行中的任务拒绝清理 |
 | POST `/runs/{id}/stop` | 停止，包括等待中与已暂停的任务 |
 | POST `/runs/{id}/pause` | 请求人工接管，等待 `state=paused` 后可独占手机操作 |
 | POST `/runs/{id}/resume` | 检查同机任务、连接、解锁、原应用与待确认动作后，继续已暂停或已停止的原记录 |
 | GET `/runs/{id}/events` | 判断与行动记录 |
-| GET `/runs/{id}/export` | 工作流快照、结果、记录和截图路径 |
+| GET `/runs/{id}/export` | 本次运行的步骤与参数、结果、记录和截图路径 |
 | GET / POST `/schedules` | 查询 / 创建定时 |
 | PUT / DELETE `/schedules/{id}` | 更新 / 删除定时 |
 | GET `/settings` | 后台与模型设置 |
@@ -112,7 +113,7 @@ python3 scripts/studio.py request POST /workflows/编号@版本/validate
 | GET `/shots/{run}/{file}` | 关键截图 PNG |
 | GET `/ws` | 设备与运行变更事件；事件到达后重新查询 |
 
-运行参数：`device_id`, `workflow_id`；可选 `version`。不传版本时使用最新保存版本；传入版本时直接运行该历史版本。`publish` 接口已移除。正在运行的任务始终使用启动时的快照。
+运行参数：`device_id`, `workflow_id`。运行当前保存内容；不再提供版本参数或 `publish` 接口。已启动任务的步骤与进度不随后续保存改变。
 
 定时参数：`name`, `device_id`, `workflow_id`, `enabled`, `rule`。
 
@@ -123,10 +124,10 @@ python3 scripts/studio.py request POST /workflows/编号@版本/validate
 投屏操作可与任务并行，不自动暂停或继续任务；需要暂停任务、独占手机时才请求人工接管。手动改变应用或页面后，任务原有的检查仍可能暂停或停止任务。
 
 - `paused` 是未结束状态，保留步骤、参数与进度；继续占用手机，拒绝新任务和记录清理，定时触发会跳过。后台重启保持暂停。暂停后可通过设备页唤醒或锁屏。
-- `cancelled` 表示用户已停止，释放手机且不会自动恢复；可显式调用 `resume` 保留原编号、开始时间、工作流快照、模型调用次数与进度继续，恢复时清空 `ended_at`。同机另有未结束任务时拒绝继续。已完成和需要处理的记录不接受继续。
-- 暂停、停止时记录原应用。旧停止记录可使用 `checkpoint.foreground` 中的原应用信息；缺少原应用依据时拒绝继续。停止后继续仍检查解锁、原应用、尺寸与未确认动作，不重新创建任务或改用新版本。
+- `cancelled` 表示用户已停止，释放手机且不会自动恢复；可显式调用 `resume` 保留原编号、开始时间、本次运行的步骤与参数、模型调用次数与进度继续，恢复时清空 `ended_at`。同机另有未结束任务时拒绝继续。已完成和需要处理的记录不接受继续。
+- 暂停、停止时记录原应用。旧停止记录可使用 `checkpoint.foreground` 中的原应用信息；缺少原应用依据时拒绝继续。停止后继续仍检查解锁、原应用、尺寸与未确认动作，不重新创建任务或改用新步骤。
 - ADB 超时、`INJECT_EVENTS` 触控拒绝会转为暂停，不自动重试。`reason` 为简短说明，`error_detail` 保留原始错误；旧记录的长报错由网页折叠展示。
-- 继续前读取手机当前状态并检查原应用；同一应用内的具体页面仍需用户确认。无法确认原应用时保持暂停。网页定点点击额外核对启动时保存的屏幕尺寸，暂停后重新标注不会覆盖当前任务的快照。
+- 继续前读取手机当前状态并检查原应用；同一应用内的具体页面仍需用户确认。无法确认原应用时保持暂停。网页定点点击额外核对启动时保存的屏幕尺寸，暂停后重新标注不会覆盖当前任务的步骤与参数。
 - 未确认的固定点击、循环点击及单次滑动拒绝继续，维持原状态，需核对页面后重新开始。带结果验证的点击／按键先验证，不直接重发。循环滑动沿用保守恢复：待确认动作计入尝试次数，不补发；`uncertain_swipes` 记录未确认次数。
 - 普通等待节点保留已等待秒数；循环滑动恢复时重新等待一个间隔，暂停时长不计入任务时长。汽水任务重新观察，不沿用暂停前的完成判断。
 - 工作台不能拦截外部 ADB 或直接触屏。接管、继续都由用户明确发起，不解除系统权限限制。
@@ -138,7 +139,7 @@ python3 scripts/studio.py request POST /workflows/编号@版本/validate
 | 每周 | `{"kind":"weekly","time":"09:00","days":[1,3,5]}`，周一为 1 |
 | 间隔 | `{"kind":"interval","minutes":60}` |
 
-定时绑定工作流编号，下次执行读取最新保存版本；运行中的任务版本固定。离线、忙碌、后台停机错过的定时点都跳过，不积压。间隔规则以保存时间为起点。
+定时绑定工作流编号，下次执行读取当前保存内容；已启动任务按原步骤继续执行。离线、忙碌、后台停机错过的定时点都跳过，不积压。间隔规则以保存时间为起点。
 
 网页定时页支持搜索与开启状态筛选，卡片显示下次执行和最近触发结果；“新建定时”／“修改”打开表单，删除需确认。单次已到期时需修改时间再开启。创建、修改和启停均沿用现有接口：更新后重新计算下次时间并清空 `last_result`，固定间隔重新计时。删除规则不会停止已开始的任务。
 
@@ -148,7 +149,7 @@ python3 scripts/studio.py request POST /workflows/编号@版本/validate
 
 「定时任务」中的同名输入随每条规则保存，修改时自动带回。执行中的任务使用启动时的设置，修改不会影响已开始的任务。
 
-`POST /api/runs` 和定时创建／修改接口接受 `"swipe": {"minutes":15,"interval":25}`。总时长大于 0、最多 10080 分钟，间隔大于 0、最多 86400 秒；支持小数。该参数覆盖运行快照中的次数限制，不改变工作流原版本。省略时沿用原定义。
+`POST /api/runs` 和定时创建／修改接口接受 `"swipe": {"minutes":15,"interval":25}`。总时长大于 0、最多 10080 分钟，间隔大于 0、最多 86400 秒；支持小数。该参数覆盖本次运行的次数限制，不改变工作流本体。省略时沿用原定义。
 
 手机截图兼容多显示屏设备：ADB 输出中的显示屏提示会被移除，图片校验通过后才交给网页和识别流程。截图损坏时返回明确错误，可重新截图。
 
@@ -178,13 +179,13 @@ python3 scripts/studio.py request GET /devices/手机自身编号/screenshot --o
 
 网页「执行记录」默认显示最新一条详情。详情中的“清理这条记录”处理单条，顶部“清理已结束”处理点击时已结束的记录；两种操作均需确认。已完成、已停止和需要处理的记录可清理，执行中、等待手机、恢复中和已暂停的任务会保留。
 
-批量清理逐条调用 `DELETE /api/runs/{id}`。清理后从列表移除，原始运行、判断记录和截图保留在本机；该接口不删除定时规则或改变工作流版本。部分记录清理失败时，网页显示成功数量与失败原因，可重新清理剩余记录。
+批量清理逐条调用 `DELETE /api/runs/{id}`。清理后从列表移除，原始运行、判断记录和截图保留在本机；该接口不删除定时规则或改变工作流内容。部分记录清理失败时，网页显示成功数量与失败原因，可重新清理剩余记录。
 
 ## 截图标注与定点点击
 
 在「设备管理 → 任务详情」选择“定点点击”后点“标注点击位置”，或在「自动化任务 → 定点点击 → 运行」选择手机后标注。弹窗显示当前亮着的屏幕截图，点击目标后出现红点，按“确定位置”保存。标注本身不会操作手机；取消不改变已保存位置。
 
-截图缩放后的点选位置换算为原图像素；各台手机单独保存坐标和原图尺寸，重启保留。定点点击开始时将坐标和尺寸写入运行快照，循环执行时不截图、不识别；暂停后继续时会获取一张截图核对尺寸。换屏、旋转或页面布局变化后应重新标注。
+截图缩放后的点选位置换算为原图像素；各台手机单独保存坐标和原图尺寸，重启保留。定点点击开始时将坐标和尺寸写入运行记录，循环执行时不截图、不识别；暂停后继续时会获取一张截图核对尺寸。换屏、旋转或页面布局变化后应重新标注。
 
 保存后即可点“运行”或设置定时。定时触发使用该手机当时保存的位置。设备修改接口接受 `"tap_point":{"x":528,"y":1866,"width":1060,"height":2376}`，坐标必须在原图范围内。
 

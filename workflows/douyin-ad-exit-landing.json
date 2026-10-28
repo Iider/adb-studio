@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "id": "douyin-ad-exit-landing",
-  "version": 1,
   "name": "抖音极速版 · 广告落地页退出试跑",
   "description": "广告已显示领取成功，由工作台关闭落地页并记录后续奖励状态。",
   "devices": ["3430131496001EB"],

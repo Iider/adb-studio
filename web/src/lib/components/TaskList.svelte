@@ -13,7 +13,6 @@
     ArchiveRestore,
     Clock3,
     FileText,
-    Layers,
     Plus,
     Search,
     Smartphone,
@@ -313,12 +312,6 @@
                 {task.scheduled ? `手动／定时 ${task.scheduled} 条` : "手动"}
               </dd>
             </div>
-            <div>
-              <dt><Layers size={15} aria-hidden="true" />版本</dt>
-              <dd>
-                第 {workflow.version} 版
-              </dd>
-            </div>
           </dl>
 
           <footer class="catalog-footer">
@@ -432,7 +425,7 @@
   {#if archiveTarget}
     <h2>归档“{archiveTarget.name}”？</h2>
     <p>
-      任务将移到“已归档”；相关定时会停用。版本和执行记录仍保留，之后可以恢复。
+      任务将移到“已归档”；相关定时会停用。任务内容和执行记录仍保留，之后可以恢复。
     </p>
     {#if runs.some((run) => run.workflow.id === archiveTarget?.id && busy(run))}
       <p>请先停止正在运行或暂停的任务。</p>

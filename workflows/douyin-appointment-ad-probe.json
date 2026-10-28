@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "id": "douyin-appointment-ad-probe",
-  "version": 1,
   "name": "抖音极速版 · 预约页广告试跑",
   "description": "确认已预约页面的看广告赚钱入口，由工作台点击一次并保存广告画面。",
   "devices": ["3430131496001EB"],

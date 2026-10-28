@@ -1,21 +1,11 @@
 import { busy, type Run, type Schedule, type Workflow } from "./api";
 
-export function latestWorkflows(workflows: Workflow[]): Workflow[] {
-  const latest = new Map<string, Workflow>();
-  for (const workflow of workflows) {
-    const previous = latest.get(workflow.id);
-    if (!previous || previous.version < workflow.version)
-      latest.set(workflow.id, workflow);
-  }
-  return [...latest.values()];
-}
-
 export function summarizeTasks(
   workflows: Workflow[],
   runs: Run[],
   schedules: Schedule[],
 ) {
-  return latestWorkflows(workflows)
+  return workflows
     .map((workflow) => {
       const history = runs
         .filter((run) => run.workflow.id === workflow.id)

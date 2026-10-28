@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { latestWorkflows } from "$lib/tasks";
   import { notify } from "$lib/notifications";
   import { tick } from "svelte";
   import {
@@ -76,7 +75,7 @@
   let swipeInterval = $state(25);
 
   const availableWorkflows = $derived(
-    latestWorkflows(workflows).filter((workflow) => !workflow.archived),
+    workflows.filter((workflow) => !workflow.archived),
   );
   const workflow = $derived(
     availableWorkflows.find((workflow) => workflow.id === workflowId),
@@ -354,7 +353,7 @@
             <span class="schedule-card-hint"
               >{expired
                 ? "修改时间后可再次开启"
-                : "使用执行时最新保存的版本"}</span
+                : "使用执行时保存的任务内容"}</span
             >
             <div class="task-buttons">
               <Button

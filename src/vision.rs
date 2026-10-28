@@ -360,7 +360,7 @@ pub async fn validate_samples(app: &App, workflow: &Workflow) -> Result<()> {
                     && (0.0..=1.0).contains(&answer.confidence)
                     && (test.expected == "unknown" || answer.confidence >= 0.85);
                 let id = uuid::Uuid::new_v4().to_string();
-                app.db.put("vision_validations", &id, &json!({"id":id,"at":now(),"workflow":workflow.key(),"node":node.id,"image":test.image,"expected":test.expected,"result":answer,"passed":passed,"model":settings,"model_ms":clock.elapsed().as_millis()})).await?;
+                app.db.put("vision_validations", &id, &json!({"id":id,"at":now(),"workflow":workflow.id,"node":node.id,"image":test.image,"expected":test.expected,"result":answer,"passed":passed,"model":settings,"model_ms":clock.elapsed().as_millis()})).await?;
                 ensure!(
                     passed,
                     "视觉分流样本未通过：{}，预期 {}",
@@ -420,7 +420,7 @@ pub async fn validate_samples(app: &App, workflow: &Workflow) -> Result<()> {
                     true
                 };
             let id = uuid::Uuid::new_v4().to_string();
-            app.db.put("vision_validations", &id, &json!({"id":id,"at":now(),"workflow":workflow.key(),"node":node.id,"image":test.image,"after":test.after,"expected":test.expected,"result":answer,"passed":passed,"model":settings,"model_ms":start.elapsed().as_millis()})).await?;
+            app.db.put("vision_validations", &id, &json!({"id":id,"at":now(),"workflow":workflow.id,"node":node.id,"image":test.image,"after":test.after,"expected":test.expected,"result":answer,"passed":passed,"model":settings,"model_ms":start.elapsed().as_millis()})).await?;
             ensure!(
                 passed,
                 "视觉样本未通过：{}，预期 {}",
