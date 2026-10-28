@@ -21,6 +21,24 @@ pub fn builtins() -> Vec<Workflow> {
     .collect()
 }
 pub fn validate(w: &Workflow) -> Result<()> {
+    let compatible = match w.launch_mode() {
+        LaunchMode::Standard => true,
+        mode => {
+            w.recognition == RecognitionMode::Local
+                && !w
+                    .nodes
+                    .iter()
+                    .any(|n| matches!(n.action, Action::Canvas { .. }))
+                && w.nodes.iter().any(|n| match mode {
+                    LaunchMode::DevicePoint => matches!(n.action, Action::FixedTapLoop { .. }),
+                    LaunchMode::SwipeSettings => matches!(n.action, Action::SwipeLoop { .. }),
+                    LaunchMode::Standard => unreachable!(),
+                })
+        }
+    };
+    if !compatible {
+        bail!("运行方式与任务步骤不匹配")
+    }
     if w.nodes
         .iter()
         .any(|n| matches!(n.action, Action::Canvas { .. }))
@@ -532,7 +550,7 @@ pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow) -> Result<Ru
         .get::<Device>("devices", device_id)
         .await?
         .context("手机未登记")?;
-    if w.id == "point-click" {
+    if w.launch_mode() == LaunchMode::DevicePoint {
         let point = d.tap_point.as_ref().context("请先为这台手机标注点击位置")?;
         point.validate()?;
         for node in &mut w.nodes {
@@ -558,7 +576,7 @@ pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow) -> Result<Ru
     {
         bail!("这台手机已有任务")
     }
-    let resume_size = if w.id == "point-click" {
+    let resume_size = if w.launch_mode() == LaunchMode::DevicePoint {
         d.tap_point
             .as_ref()
             .map(|point| [point.width, point.height])

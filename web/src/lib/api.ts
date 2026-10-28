@@ -4,12 +4,12 @@ export async function session() {
   if (!response.ok) throw new Error("后台未连接");
   token = (await response.json()).token;
 }
-export async function api<T>(
+export async function apiResponse(
   path: string,
   method = "GET",
   body?: unknown,
   signal?: AbortSignal,
-): Promise<T> {
+): Promise<Response> {
   const response = await fetch(`/api${path}`, {
     method,
     signal,
@@ -23,7 +23,15 @@ export async function api<T>(
     const error = await response.json().catch(() => ({ error: "后台未连接" }));
     throw new Error(error.error || "操作失败");
   }
-  return response.json();
+  return response;
+}
+export async function api<T>(
+  path: string,
+  method = "GET",
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  return (await apiResponse(path, method, body, signal)).json();
 }
 export async function photo(id: string) {
   const r = await fetch(`/api/devices/${encodeURIComponent(id)}/screenshot`, {
@@ -82,6 +90,17 @@ export interface Workflow {
   model_limit: number;
   tests?: { image?: string }[];
   recognition?: "local" | "vision";
+  launch_mode?: "standard" | "device_point" | "swipe_settings";
+}
+export function launchMode(workflow: Workflow | null | undefined) {
+  return (
+    workflow?.launch_mode ??
+    (workflow?.id === "point-click"
+      ? "device_point"
+      : workflow?.id === "swipe"
+        ? "swipe_settings"
+        : "standard")
+  );
 }
 export interface Run {
   id: string;

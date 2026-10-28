@@ -185,6 +185,7 @@ pub fn compile(draft: &Draft) -> Result<Workflow> {
         model_limit: 0,
         tests,
         recognition: RecognitionMode::Local,
+        launch_mode: Some(LaunchMode::Standard),
     };
     engine::validate(&workflow)?;
     Ok(workflow)

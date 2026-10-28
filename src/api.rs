@@ -36,6 +36,7 @@ type Result<T> = std::result::Result<T, Error>;
 pub fn router(app: Arc<App>) -> Router {
     let secured = Router::new()
         .merge(crate::drafts::router())
+        .merge(crate::workflow_transfer::router())
         .route("/devices", get(devices))
         .route("/devices/connect", post(connect_device))
         .route("/devices/discover", get(discover_devices))

@@ -16,7 +16,13 @@
   } from "@lucide/svelte";
   import Button from "$lib/components/ui/button/button.svelte";
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
-  import type { Device, Schedule, Workflow, Rule } from "$lib/api";
+  import {
+    launchMode,
+    type Device,
+    type Schedule,
+    type Workflow,
+    type Rule,
+  } from "$lib/api";
   import {
     onceExpired,
     ruleLabel,
@@ -99,7 +105,7 @@
       ? "请先保存一个自动化任务。"
       : !compatibleDevices.some((device) => device.id === deviceId)
         ? "请选择适用于此任务的已登记手机。"
-        : workflowId === "point-click" && !selectedDevice?.tap_point
+        : launchMode(workflow) === "device_point" && !selectedDevice?.tap_point
           ? "请先到设备详情标注这台手机的点击位置。"
           : kind === "weekly" && !days.length
             ? "请至少选择一天。"
@@ -205,7 +211,7 @@
         ? { count: Number(tapCount), interval: Number(tapInterval) }
         : null,
       swipe:
-        workflowId === "swipe"
+        launchMode(workflow) === "swipe_settings"
           ? { minutes: Number(swipeMinutes), interval: Number(swipeInterval) }
           : null,
     });
@@ -530,7 +536,9 @@
             /></label
           >
         </div>{/if}
-      {#if workflowId === "swipe"}<div class="schedule-field-pair">
+      {#if launchMode(workflow) === "swipe_settings"}<div
+          class="schedule-field-pair"
+        >
           <label
             >总时长（分钟）<input
               type="number"

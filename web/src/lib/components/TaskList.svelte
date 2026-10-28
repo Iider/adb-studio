@@ -13,6 +13,7 @@
     ArchiveRestore,
     Clock3,
     FileText,
+    Download,
     Plus,
     Search,
     Smartphone,
@@ -22,6 +23,7 @@
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import {
     busy,
+    launchMode,
     runLabel,
     time,
     type Device,
@@ -31,6 +33,7 @@
   } from "$lib/api";
   import { summarizeTasks } from "$lib/tasks";
   import type { Draft } from "$lib/workflow-editor";
+  import WorkflowExport from "$lib/components/WorkflowExport.svelte";
 
   let {
     workflows,
@@ -70,6 +73,7 @@
   let filter = $state("all");
   let archiveTarget = $state<Workflow | null>(null);
   let archiveDialog = $state<HTMLDialogElement>();
+  let exportRequest = $state<{ path: string; name: string } | null>(null);
   const tasks = $derived(summarizeTasks(workflows, runs, schedules));
   const currentTasks = $derived(
     tasks.filter((task) => !task.workflow.archived),
@@ -255,7 +259,7 @@
         {@const Icon = taskIcon(workflow)}
         {@const run = currentRun(task.inProgress)}
         {@const description =
-          workflow.id === "swipe"
+          launchMode(workflow) === "swipe_settings"
             ? "保持当前页面，按设置的时长和间隔上滑。"
             : workflow.description ||
               `共 ${workflow.nodes.length} 个步骤，点击任务名称查看详情。`}
@@ -355,6 +359,19 @@
                 >
                 <div class="catalog-more-menu">
                   <button
+                    aria-label={`导出工作流：${workflow.name}`}
+                    disabled={!connected || !!exportRequest}
+                    onkeydown={closeMoreMenuOnEscape}
+                    onclick={(event) => {
+                      closeMoreMenu(event);
+                      exportRequest = {
+                        path: `/workflows/${encodeURIComponent(workflow.id)}/export`,
+                        name: workflow.name,
+                      };
+                    }}
+                    ><Download size={15} aria-hidden="true" />导出工作流</button
+                  >
+                  <button
                     onkeydown={closeMoreMenuOnEscape}
                     onclick={(event) => {
                       closeMoreMenu(event);
@@ -416,6 +433,11 @@
     </div>
   {/if}
 </section>
+
+<WorkflowExport
+  request={exportRequest}
+  onclose={() => (exportRequest = null)}
+/>
 
 <dialog
   bind:this={archiveDialog}

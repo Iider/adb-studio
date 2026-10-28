@@ -13,6 +13,7 @@
     Plus,
     Save,
     Copy,
+    Download,
     Trash2,
     Undo2,
     Redo2,
@@ -56,6 +57,7 @@
   import CoordinatePicker from "./CoordinatePicker.svelte";
   import EditorRunPanel from "./EditorRunPanel.svelte";
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
+  import WorkflowExport from "$lib/components/WorkflowExport.svelte";
 
   const nodeTypes = { step: StepNode };
   const flow = useSvelteFlow<CanvasNode>();
@@ -86,6 +88,7 @@
   let savedContent = $state("");
   let updatedAt = $state("");
   let recovery = $state<Draft | null>(null);
+  let exportRequest = $state<{ path: string; name: string } | null>(null);
   let history = $state<string[]>([]);
   let historyIndex = $state(0);
   let issues = $state<Issue[]>([]);
@@ -341,6 +344,18 @@
       if (!(await persist())) return false;
     }
     return true;
+  }
+
+  async function exportDraft() {
+    morePopover?.hidePopover();
+    if (!(await flush())) {
+      notify.error("当前编辑尚未保存，请处理保存问题后再导出");
+      return;
+    }
+    exportRequest = {
+      path: `/workflow-drafts/${encodeURIComponent(id)}/export?revision=${revision}`,
+      name,
+    };
   }
 
   $effect(() => {
@@ -898,11 +913,23 @@
           }}>保存工作流</button
         >
       </div>
-      <button class="editor-button theme-action" onclick={toggleTheme}
-        >{#if dark}<Sun size={16} />切换日间模式{:else}<Moon
-            size={16}
-          />切换夜间模式{/if}</button
-      >
+      <div class="popover-actions theme-action">
+        <button
+          class="editor-button"
+          disabled={!ready ||
+            saving ||
+            switching ||
+            !!recovery ||
+            !!exportRequest}
+          onclick={exportDraft}
+          ><Download size={16} aria-hidden="true" />导出当前草稿</button
+        >
+        <button class="editor-button" onclick={toggleTheme}
+          >{#if dark}<Sun size={16} />切换日间模式{:else}<Moon
+              size={16}
+            />切换夜间模式{/if}</button
+        >
+      </div>
     </div>
     <div
       id="editor-problems"
@@ -1197,6 +1224,10 @@
     </div>
   {/if}
 </main>
+<WorkflowExport
+  request={exportRequest}
+  onclose={() => (exportRequest = null)}
+/>
 {#if markNode}<CoordinatePicker
     node={markNode}
     conditionIndex={markCondition}

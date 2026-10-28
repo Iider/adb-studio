@@ -39,6 +39,7 @@
   import Badge from "$lib/components/ui/badge/badge.svelte";
   import {
     api,
+    launchMode,
     session,
     photo,
     busy,
@@ -247,7 +248,7 @@
             ? "请先在设备详情中唤醒并解锁手机。"
             : launchRun
               ? `当前任务：${runLabel(launchRun)}。停止后可开始新任务。`
-              : flow?.id === "point-click" && !launchDevice.tap_point
+              : launchMode(flow) === "device_point" && !launchDevice.tap_point
                 ? "请先标注这台手机的点击位置。"
                 : settings &&
                     !settings.local_ocr &&
@@ -444,7 +445,7 @@
   }
   async function startFlow(embedded = false) {
     if (!flow || working || launchBlocked) return;
-    if (flow.id === "swipe") {
+    if (launchMode(flow) === "swipe_settings") {
       localStorage.setItem(
         "swipe-settings",
         JSON.stringify({ minutes: swipeMinutes, interval: swipeInterval }),
@@ -462,7 +463,7 @@
             ? { count: Number(tapCount), interval: Number(tapInterval) }
             : null,
           swipe:
-            flow.id === "swipe"
+            launchMode(flow) === "swipe_settings"
               ? {
                   minutes: Number(swipeMinutes),
                   interval: Number(swipeInterval),
@@ -644,7 +645,7 @@
         void startFlow(embedded);
       }}
     >
-      {#if flow.id === "point-click"}
+      {#if launchMode(flow) === "device_point"}
         <div class="card-actions">
           <Button
             variant="outline"
@@ -689,7 +690,7 @@
         <p class="hint">
           从当前页面开始；先点击，再等待间隔。按已确认的位置直接点击，不识别或校验画面。请保持所标注屏幕及当前页面。
         </p>{/if}
-      {#if flow.id === "swipe"}<div class="flow-controls">
+      {#if launchMode(flow) === "swipe_settings"}<div class="flow-controls">
           <label
             >总时长（分钟）<input
               type="number"
@@ -1108,7 +1109,7 @@
               <div>
                 <h2>{flow.name}</h2>
                 <p>
-                  {flow.id === "swipe"
+                  {launchMode(flow) === "swipe_settings"
                     ? "保持当前页面，按下方时长和间隔滑动。"
                     : flow.description}
                 </p>
@@ -1145,7 +1146,8 @@
                     <div>
                       <small>步骤 {String(i + 1).padStart(2, "0")}</small>
                       <h3>
-                        {flow.id === "swipe" && n.type === "swipe_loop"
+                        {launchMode(flow) === "swipe_settings" &&
+                        n.type === "swipe_loop"
                           ? `每隔 ${swipeInterval} 秒上滑，运行 ${swipeMinutes} 分钟`
                           : n.label}
                       </h3>

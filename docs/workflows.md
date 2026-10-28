@@ -2,6 +2,8 @@
 
 从项目目录运行 `python3 scripts/studio.py`。工具自动读取本机令牌；不要把令牌写进工作流、文档或模型提示。
 
+工作流文件导出已验收并部署；导入仍待开发。范围与验收安排见[导入与导出开发方案](workflow-import-export.md)。
+
 ## 常用命令
 
 ```sh
@@ -42,6 +44,8 @@ python3 scripts/studio.py stop 运行编号
 
 步骤说明与编号会直接显示在网页，使用用户能读懂的中文说明。
 
+可选 `launch_mode` 指定运行方式：`standard` 按步骤执行，`device_point` 使用目标手机的本机点击标注，`swipe_settings` 提供滑动时长与间隔设置。后两项分别要求本地固定点击或滑动循环步骤，不支持画布任务。旧数据未填写时，仅按原 `point-click`／`swipe` 编号兼容识别；明确填写 `standard` 会覆盖编号默认行为。导出文件始终写明运行方式，更换编号也保留原意。
+
 | 步骤类型 | 参数 | 行为 |
 | --- | --- | --- |
 | `wait` | `seconds` | 等待，最大 86400 秒 |
@@ -59,6 +63,21 @@ python3 scripts/studio.py stop 运行编号
 除 `branch`、`vision_route`、`canvas` 与 `end`，每个步骤需要 `next`。分支和 `next` 必须引用存在的步骤；入口需要能够到达结束步骤。`canvas` 的出口与循环范围由编排器另行校验。
 
 模型只选择声明过的分支或导航目标。API 不接收任意脚本、电脑 Shell 或任意 ADB 命令。
+
+## 工作流文件导出
+
+任务卡片“更多 → 导出工作流”下载 `.workflow.json`：包含当前本体、存在的画布草稿和引用的 PNG 样本。草稿与本体不同时，下载前提示分别保留，不自动覆盖本体。编排器“更多 → 导出当前草稿”先保存当前编辑，再仅导出草稿；缺少连线或尚未完成参数也可导出。
+
+```sh
+python3 scripts/studio.py request GET /workflows/任务编号/export --output /绝对路径/任务.workflow.json
+python3 scripts/studio.py request GET '/workflow-drafts/草稿UUID/export?revision=当前校对编号' --output /绝对路径/草稿.workflow.json
+```
+
+接口返回文件 JSON，类型为 `adb-studio.workflow`，文件格式编号 `format_revision: 1`，其中 `content.workflow` 与 `content.draft` 分别存本体与可移植草稿，`assets` 存去重后的 PNG Base64。草稿不含服务校对编号、保存时间；文件不含定时、执行记录或服务配置。定点点击的本机手机标注不随模板打包，换电脑后需重新标注；画布内的设备坐标与文字区域原样保留。
+
+两个 GET 导出接口不写入内容；编排器点击导出前的自动保存仍走现有草稿接口。服务用 `X-Workflow-Draft-State` 返回 `none`、`saved`、`modified`、`incomplete` 或 `draft`，用 `X-Workflow-Launch-Mode` 返回实际运行方式，供网页显示下载说明。任务／草稿不存在返回 404；草稿校对编号已变化返回 409；缺图、无效图片或不合法样本名称返回 400；超限返回 413。
+
+每份本体或可移植草稿不超过 `2 MiB - 1024 字节`，为后续正常编辑请求预留余量。文件总大小最多 32 MiB，最多 40 张图片，原始 PNG 合计最多 20 MiB。单张沿用现有视觉检查规则：PNG 最多 8 MiB，宽高各最多 8192，解码内存上限 128 MiB。缺图时显示具体样本，不静默丢失图片。文件分享前请确认步骤文字、手机编号和样本内容。
 
 ## 运行与可选样本检查
 

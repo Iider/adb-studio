@@ -66,6 +66,26 @@ pub struct Workflow {
     pub tests: Vec<SampleCase>,
     #[serde(default)]
     pub recognition: RecognitionMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_mode: Option<LaunchMode>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum LaunchMode {
+    Standard,
+    DevicePoint,
+    SwipeSettings,
+}
+
+impl Workflow {
+    pub fn launch_mode(&self) -> LaunchMode {
+        self.launch_mode.unwrap_or(match self.id.as_str() {
+            "point-click" => LaunchMode::DevicePoint,
+            "swipe" => LaunchMode::SwipeSettings,
+            _ => LaunchMode::Standard,
+        })
+    }
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]

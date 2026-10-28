@@ -5,6 +5,7 @@
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import {
     api,
+    launchMode,
     session,
     type Device,
     type Node,
@@ -111,7 +112,8 @@
 
   function editableFields(node: Node) {
     const values = fields[node.type] ?? [];
-    return workflow?.id === "point-click" && node.type === "fixed_tap_loop"
+    return launchMode(workflow) === "device_point" &&
+      node.type === "fixed_tap_loop"
       ? values.filter((field) => !["x", "y"].includes(field.key))
       : values;
   }
@@ -413,7 +415,7 @@
                   />
                 </label>
               {/if}
-              {#if workflow.id === "point-click" && selectedNode.type === "fixed_tap_loop"}<p
+              {#if launchMode(workflow) === "device_point" && selectedNode.type === "fixed_tap_loop"}<p
                 >
                   点击位置由设备页标注。
                 </p>{/if}

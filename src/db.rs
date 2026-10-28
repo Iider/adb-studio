@@ -80,6 +80,40 @@ impl Store {
         Ok(())
     }
 
+    pub async fn workflow_export_source(
+        &self,
+        id: &str,
+    ) -> Result<Option<(crate::types::Workflow, Option<crate::drafts::Draft>)>> {
+        let transaction = self.0.begin().await?;
+        let read = |kind: &str, key: &str| {
+            Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT body FROM records WHERE kind=? AND id=?",
+                [kind.into(), key.into()],
+            )
+        };
+        let Some(row) = transaction.query_one(read("workflows", id)).await? else {
+            transaction.commit().await?;
+            return Ok(None);
+        };
+        let workflow = serde_json::from_str(&row.try_get::<String>("", "body")?)?;
+        let draft = if let Some(uuid) = id.strip_prefix("manual-") {
+            transaction
+                .query_one(read("workflow_drafts", uuid))
+                .await?
+                .map(|row| {
+                    Ok::<_, anyhow::Error>(serde_json::from_str(
+                        &row.try_get::<String>("", "body")?,
+                    )?)
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        transaction.commit().await?;
+        Ok(Some((workflow, draft)))
+    }
+
     pub async fn remove_workflow(&self, id: &str, draft_id: &str) -> Result<()> {
         let transaction = self.0.begin().await?;
         transaction

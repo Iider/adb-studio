@@ -12,6 +12,7 @@ mod run_control;
 mod schedule;
 mod types;
 mod vision;
+mod workflow_transfer;
 
 use anyhow::Result;
 use std::{path::PathBuf, sync::Arc};
