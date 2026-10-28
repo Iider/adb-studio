@@ -783,7 +783,7 @@
           role="status"
           title={ready ? saveStatus : "正在读取…"}
           aria-label={ready ? saveStatus : "正在读取…"}
-          ><Check size={16} /><span class="status-label"
+          ><span class="status-label"
             >{ready ? saveStatus : "正在读取…"}</span
           ></span
         >{/if}
@@ -1678,6 +1678,7 @@
   }
   @media (max-width: 1280px) {
     .header-back-label,
+    .save-status,
     .status-label {
       display: none;
     }
