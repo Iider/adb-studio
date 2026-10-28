@@ -581,8 +581,9 @@ async fn settings(State(app): State<Arc<App>>) -> Result<Json<Value>> {
         .get::<ModelSettings>("settings", "model")
         .await?
         .unwrap_or_default();
+    let model_configured = crate::recognition::configured(&app, &s);
     Ok(Json(
-        json!({"model":s,"timezone":"Asia/Shanghai","retention_days":30,"host":format!("{}:{}",std::env::var("ADB_STUDIO_HOST").unwrap_or_else(|_|"127.0.0.1".into()),std::env::var("ADB_STUDIO_PORT").unwrap_or_else(|_|"17841".into())),"autostart":crate::platform::autostart(),"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"local_ocr":crate::platform::has_local_ocr(&app.root,&app.data)}),
+        json!({"model":s,"model_configured":model_configured,"timezone":"Asia/Shanghai","retention_days":30,"host":format!("{}:{}",std::env::var("ADB_STUDIO_HOST").unwrap_or_else(|_|"127.0.0.1".into()),std::env::var("ADB_STUDIO_PORT").unwrap_or_else(|_|"17841".into())),"autostart":crate::platform::autostart(),"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"local_ocr":crate::platform::has_local_ocr(&app.root,&app.data)}),
     ))
 }
 async fn set_model(

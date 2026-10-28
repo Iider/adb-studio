@@ -529,6 +529,17 @@ fn evaluate(
     round: Option<u64>,
     area_text: Option<&HashMap<usize, String>>,
 ) -> Option<bool> {
+    evaluate_with(step, text, app, round, area_text, None)
+}
+
+fn evaluate_with(
+    step: &DraftNode,
+    text: Option<&str>,
+    app: Option<&str>,
+    round: Option<u64>,
+    area_text: Option<&HashMap<usize, String>>,
+    model_values: Option<&HashMap<usize, Option<bool>>>,
+) -> Option<bool> {
     let values: Vec<Option<bool>> = step.config["conditions"]
         .as_array()?
         .iter()
@@ -537,6 +548,9 @@ fn evaluate(
             let value = c["value"].as_str()?;
             match c["source"].as_str()? {
                 "text" => {
+                    if let Some(values) = model_values {
+                        return values.get(&index).copied().flatten();
+                    }
                     let observed = text?;
                     let guard = c["guard"].as_str().unwrap_or("").trim();
                     if !guard.is_empty() && !observed.contains(guard) {
@@ -642,15 +656,58 @@ async fn delay(app: &App, r: &mut Run, seconds: f64) -> Result<()> {
     }
     Ok(())
 }
+async fn condition_delay(app: &App, r: &mut Run, seconds: f64) -> Result<()> {
+    let mut remaining = seconds;
+    while remaining > 0. {
+        let clock = tokio::time::Instant::now();
+        let result = engine::pause(app, r, remaining.min(0.5)).await;
+        let spent = clock.elapsed().as_secs_f64();
+        remaining = (remaining - spent).max(0.);
+        r.checkpoint["condition_elapsed"] =
+            json!(r.checkpoint["condition_elapsed"].as_f64().unwrap_or(0.) + spent);
+        engine::save(app, r).await?;
+        result?;
+    }
+    Ok(())
+}
+
 fn package(activity: &str) -> Option<&str> {
     activity
         .split_whitespace()
         .find_map(|part| part.split_once('/').map(|(p, _)| p.trim_start_matches('{')))
 }
-async fn observe(app: &App, r: &mut Run, step: &DraftNode, record_negative: bool) -> Result<bool> {
+async fn observe(
+    app: &App,
+    r: &mut Run,
+    step: &DraftNode,
+    record_negative: bool,
+    remaining: f64,
+) -> Result<bool> {
+    let control = app
+        .controls
+        .lock()
+        .await
+        .get(&r.id)
+        .cloned()
+        .context("任务控制已结束")?;
+    tokio::select! {
+        biased;
+        _ = control.pause.cancelled() => Err(crate::run_control::PauseRequested.into()),
+        answer = tokio::time::timeout(std::time::Duration::from_secs_f64(remaining.min(60.).max(0.001)), observe_inner(app, r, step, record_negative)) => {
+            answer.context("条件识别超过等待时限，尚未确认结果；请检查模型响应或增加等待时长")?
+        }
+    }
+}
+
+async fn observe_inner(
+    app: &App,
+    r: &mut Run,
+    step: &DraftNode,
+    record_negative: bool,
+) -> Result<bool> {
     let activity = app.adb.foreground(&r.device_id).await?;
-    let frame = if needs_text(step) {
-        recognition::frame(app, &r.device_id).await.ok()
+    let mut frame = if needs_text(step) {
+        Some(recognition::capture(app, &r.device_id).await?)
     } else {
         None
     };
@@ -658,22 +715,18 @@ async fn observe(app: &App, r: &mut Run, step: &DraftNode, record_negative: bool
         .as_object()
         .and_then(|items| items.values().find(|v| v["phase"] == "body"))
         .and_then(|v| v["round"].as_u64());
-    let text = frame
-        .as_ref()
-        .filter(|frame| frame.words.iter().all(|word| word.confidence >= 0.5))
-        .map(|frame| frame.text());
-    let mut area_text = HashMap::new();
+    let mut areas = HashMap::new();
     if let Some(frame) = &frame {
+        let screen = app.adb.canvas_screen(&r.device_id).await?;
         for (index, condition) in step.config["conditions"]
             .as_array()
             .into_iter()
             .flatten()
             .enumerate()
         {
-            let areas = regions(condition)?;
-            if !areas.is_empty() {
-                let screen = app.adb.canvas_screen(&r.device_id).await?;
-                let area = areas
+            let profiles = regions(condition)?;
+            if !profiles.is_empty() {
+                let area = profiles
                     .iter()
                     .find(|area| {
                         area.device_id == r.device_id
@@ -684,13 +737,49 @@ async fn observe(app: &App, r: &mut Run, step: &DraftNode, record_negative: bool
                             && frame.image.height() == screen.height
                     })
                     .context("当前屏幕没有匹配的文字识别区域标注")?;
-                area_text.insert(
-                    index,
-                    frame.region_text([area.x, area.y, area.to_x, area.to_y]),
-                );
+                areas.insert(index, [area.x, area.y, area.to_x, area.to_y]);
             }
         }
     }
+    if let Some(frame) = &frame {
+        if r.text_recognition == Some(TextRecognition::Model) {
+            engine::shot(app, r, frame, "condition-model").await?;
+            let observed = crate::condition_model::observe(app, r, step, frame, &areas).await?;
+            return evaluate_with(
+                step,
+                None,
+                package(&activity),
+                round,
+                None,
+                Some(&observed.values),
+            )
+            .with_context(|| {
+                if observed.uncertain.is_empty() {
+                    "当前应用或轮次无法确认，请检查非文字条件".to_owned()
+                } else {
+                    format!("模型无法确认条件：{}", observed.uncertain)
+                }
+            });
+        }
+    }
+    if let Some(frame) = &mut frame {
+        frame.words = recognition::ocr(app, &frame.png)
+            .await
+            .context("本地文字识别失败，请检查本地读字工具")?;
+    }
+    let text = frame
+        .as_ref()
+        .filter(|frame| frame.words.iter().all(|word| word.confidence >= 0.5))
+        .map(|frame| frame.text());
+    let area_text: HashMap<_, _> = frame
+        .as_ref()
+        .map(|frame| {
+            areas
+                .iter()
+                .map(|(index, area)| (*index, frame.region_text(*area)))
+                .collect()
+        })
+        .unwrap_or_default();
     let choice = evaluate(
         step,
         text.as_deref(),
@@ -703,7 +792,11 @@ async fn observe(app: &App, r: &mut Run, step: &DraftNode, record_negative: bool
             engine::shot(app, r, frame, "condition").await?;
         }
     }
-    choice.context("当前页面或条件无法确认，需要人工处理")
+    choice.context(if frame.is_some() && text.is_none() {
+        "本地文字识别可信度不足，无法确认条件（要求整页文字可信度不低于 0.5）"
+    } else {
+        "当前页面或条件无法确认，请检查页面依据与判断条件"
+    })
 }
 
 pub async fn execute(app: &App, r: &mut Run, step: &DraftNode) -> Result<()> {
@@ -844,18 +937,41 @@ pub async fn execute(app: &App, r: &mut Run, step: &DraftNode) -> Result<()> {
             }
         }
         "condition" => {
-            let pass = observe(app, r, step, true).await?;
+            let pass = observe(app, r, step, true, 60.).await?;
             r.node = target(step, if pass { "yes" } else { "no" })?.into();
         }
         "wait_condition" => {
             let timeout = number(c, "timeout")?;
             loop {
                 engine::ready(app, r).await?;
+                let elapsed = r.checkpoint["condition_elapsed"].as_f64().unwrap_or(0.);
+                if elapsed >= timeout {
+                    ensure!(
+                        r.checkpoint["condition_last_false"] == true,
+                        "等待结束前未能确认条件，不能视为不符合"
+                    );
+                    r.node = target(step, "timeout")?.into();
+                    break;
+                }
+                // 最近一次已确认不符合时，不在不足一次观察的余量里补发请求。
+                if r.checkpoint["condition_last_false"] == true
+                    && timeout - elapsed
+                        <= r.checkpoint["condition_observation_seconds"]
+                            .as_f64()
+                            .unwrap_or(0.)
+                {
+                    condition_delay(app, r, timeout - elapsed).await?;
+                    continue;
+                }
                 let started = tokio::time::Instant::now();
-                let pass = observe(app, r, step, false).await?;
-                let elapsed = r.checkpoint["condition_elapsed"].as_f64().unwrap_or(0.)
-                    + started.elapsed().as_secs_f64();
+                let result = observe(app, r, step, false, timeout - elapsed).await;
+                let elapsed = elapsed + started.elapsed().as_secs_f64();
                 r.checkpoint["condition_elapsed"] = json!(elapsed);
+                engine::save(app, r).await?;
+                let pass = result?;
+                r.checkpoint["condition_last_false"] = json!(!pass);
+                r.checkpoint["condition_observation_seconds"] =
+                    json!(started.elapsed().as_secs_f64());
                 engine::save(app, r).await?;
                 if pass {
                     r.node = target(step, "yes")?.into();
@@ -868,23 +984,7 @@ pub async fn execute(app: &App, r: &mut Run, step: &DraftNode) -> Result<()> {
                     r.node = target(step, "timeout")?.into();
                     break;
                 }
-                let wait = number(c, "interval")?.min(timeout - elapsed);
-                let clock = tokio::time::Instant::now();
-                let result = engine::pause(app, r, wait.min(0.5)).await;
-                r.checkpoint["condition_elapsed"] = json!(elapsed + clock.elapsed().as_secs_f64());
-                engine::save(app, r).await?;
-                result?;
-                let mut remaining = (wait - clock.elapsed().as_secs_f64()).max(0.);
-                while remaining > 0. {
-                    let clock = tokio::time::Instant::now();
-                    let result = engine::pause(app, r, remaining.min(0.5)).await;
-                    let spent = clock.elapsed().as_secs_f64();
-                    remaining = (remaining - spent).max(0.);
-                    r.checkpoint["condition_elapsed"] =
-                        json!(r.checkpoint["condition_elapsed"].as_f64().unwrap_or(0.) + spent);
-                    engine::save(app, r).await?;
-                    result?;
-                }
+                condition_delay(app, r, number(c, "interval")?.min(timeout - elapsed)).await?;
             }
         }
         _ => bail!("步骤尚未适配执行"),

@@ -126,7 +126,16 @@ pub struct Run {
     pub resume_size: Option<[u32; 2]>,
     #[serde(default)]
     pub model_settings: Option<ModelSettings>,
+    #[serde(default)]
+    pub text_recognition: Option<TextRecognition>,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum TextRecognition {
+    Local,
+    Model,
+}
+
 fn empty_object() -> Value {
     serde_json::json!({})
 }

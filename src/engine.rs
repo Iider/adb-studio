@@ -41,22 +41,31 @@ pub async fn workflow(app: &App, id: &str) -> Result<Workflow> {
         .await?
         .context("工作流不存在")
 }
-pub async fn start(app: Arc<App>, device_id: &str, w: Workflow) -> Result<Run> {
+pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow) -> Result<Run> {
     let _gate = app.run_gate.lock().await;
     if app.db.get::<Workflow>("workflows", &w.id).await?.is_none() {
         bail!("任务已移除，请重新创建")
     }
     validate(&w)?;
-    let needs_ocr = w.nodes.iter().any(|n| {
+    let needs_text = w.nodes.iter().any(|n| {
         if let Action::Canvas { step } = &n.action {
             return crate::canvas::needs_text(step);
         }
         false
     });
-    if needs_ocr && !crate::platform::has_local_ocr(&app.root, &app.data) {
-        bail!("此任务需要本地文字识别，当前平台未安装；请先安装本地读字工具")
-    }
-    let model_settings = Some(recognition::settings(&app).await?);
+    let settings = recognition::settings(&app).await?;
+    let text_recognition = if needs_text && recognition::configured(&app, &settings) {
+        if w.model_limit == 0 {
+            w.model_limit = 10;
+        }
+        TextRecognition::Model
+    } else {
+        if needs_text && !crate::platform::has_local_ocr(&app.root, &app.data) {
+            bail!("此任务需要文字判断，请配置模型密钥，或安装本地读字工具")
+        }
+        TextRecognition::Local
+    };
+    let model_settings = Some(settings);
     let d = app
         .db
         .get::<Device>("devices", device_id)
@@ -95,9 +104,21 @@ pub async fn start(app: Arc<App>, device_id: &str, w: Workflow) -> Result<Run> {
         resume_app: None,
         resume_size: None,
         model_settings,
+        text_recognition: Some(text_recognition),
     };
     app.db.put("runs", &r.id, &r).await?;
     app.event(&r, "开始执行").await?;
+    if needs_text {
+        app.event(
+            &r,
+            if text_recognition == TextRecognition::Model {
+                "文字条件优先使用已配置模型；无法确认时停止，不切换本地识别"
+            } else {
+                "未配置模型，文字条件使用本地识别"
+            },
+        )
+        .await?;
+    }
     spawn(app.clone(), r.clone()).await;
     Ok(r)
 }
@@ -270,6 +291,7 @@ pub(crate) async fn pause(app: &App, r: &Run, seconds: f64) -> Result<()> {
 
 async fn execute(app: Arc<App>, mut r: Run, control: Arc<RunControl>) {
     let outcome = tokio::select! {
+        biased;
         _=control.stop.cancelled()=>Ok("cancelled"),
         _=app.stop.cancelled()=>if control.pause.is_cancelled() {Err(PauseRequested.into())} else {Ok("recovering")},
         result=run_steps(&app,&mut r)=>result,

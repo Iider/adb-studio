@@ -68,6 +68,7 @@ def main():
                     raise AssertionError("检查后台未能启动")
                 try:
                     call("/session", auth=False)
+                    call("/settings/model", "PUT", {"endpoint":"http://127.0.0.1:1", "model":"unused", "api":"responses", "key_env":"UNCONFIGURED_EDITOR_TEST_KEY"})
                     return process
                 except (OSError, urllib.error.URLError):
                     time.sleep(0.1)
@@ -279,7 +280,7 @@ def main():
                         if guard is not None:
                             condition["guard"] = guard
                         workflow, _ = save_workflow([
-                            node("check", kind, {"yes":"yes", "no" if kind == "condition" else "timeout":"no"}, mode="all", conditions=[condition], interval=0.1, timeout=0.2),
+                            node("check", kind, {"yes":"yes", "no" if kind == "condition" else "timeout":"no"}, mode="all", conditions=[condition], interval=0.1, timeout=2),
                             node("yes", "end", result="succeeded"), node("no", "end", result="succeeded"),
                         ], "check")
                         for text, target in [("奖励", "yes"), ("其他页面", "no")]:
@@ -289,7 +290,7 @@ def main():
                 print("通过：条件判断与等待条件不填页面依据即可保存、运行，正常分流与超时")
 
                 workflow, _ = save_workflow([
-                    node("await","wait_condition",{"yes":"end","timeout":"timeout"},mode="all",conditions=text_condition,samples=text_samples,interval=0.1,timeout=0.4),
+                    node("await","wait_condition",{"yes":"end","timeout":"timeout"},mode="all",conditions=text_condition,samples=text_samples,interval=0.1,timeout=2),
                     node("end","end",result="succeeded"),node("timeout","end",result="needs_help")
                 ],"await")
                 words("任务页 领取")

@@ -125,6 +125,7 @@ export interface Settings {
   platform: string;
   arch: string;
   local_ocr: boolean;
+  model_configured: boolean;
   timezone: string;
   retention_days: number;
   host: string;

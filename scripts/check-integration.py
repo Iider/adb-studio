@@ -114,6 +114,7 @@ def main():
                 lambda: urllib.request.urlopen(BASE + "/api/session", timeout=2).status
                 == 200
             )
+            call("/settings/model", "PUT", {"endpoint":"http://127.0.0.1:1", "model":"unused", "api":"responses", "key_env":"UNCONFIGURED_INTEGRATION_TEST_KEY"})
             return p
 
         def call(path, method="GET", body=None, expected=200, auth=True):

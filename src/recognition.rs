@@ -2,7 +2,7 @@ use crate::{App, types::*};
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use image::{DynamicImage, GenericImageView};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use std::{process::Stdio, time::Duration};
 use tokio::{io::AsyncWriteExt, process::Command};
@@ -80,11 +80,6 @@ pub async fn capture(app: &App, id: &str) -> Result<Frame> {
         words: vec![],
     })
 }
-pub async fn frame(app: &App, id: &str) -> Result<Frame> {
-    let mut frame = capture(app, id).await?;
-    frame.words = ocr(app, &frame.png).await?;
-    Ok(frame)
-}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Verdict {
@@ -116,6 +111,12 @@ fn key(app: &App, name: &str) -> Result<String> {
     }
     bail!("模型密钥未配置")
 }
+pub fn configured(app: &App, settings: &ModelSettings) -> bool {
+    !settings.endpoint.trim().is_empty()
+        && !settings.model.trim().is_empty()
+        && key(app, &settings.key_env).is_ok_and(|key| !key.trim().is_empty())
+}
+
 pub async fn settings(app: &App) -> Result<ModelSettings> {
     Ok(app.db.get("settings", "model").await?.unwrap_or_default())
 }
@@ -126,6 +127,16 @@ pub async fn request(
     images: &[&[u8]],
     prompt: &str,
 ) -> Result<Verdict> {
+    request_json(app, settings, images, prompt, 512).await
+}
+
+pub async fn request_json<T: DeserializeOwned>(
+    app: &App,
+    settings: &ModelSettings,
+    images: &[&[u8]],
+    prompt: &str,
+    output_tokens: u32,
+) -> Result<T> {
     let secret = key(app, &settings.key_env)?;
     let content: Vec<Value> = if settings.api == "responses" {
         images.iter().map(|b|json!({"type":"input_image","image_url":format!("data:image/png;base64,{}",STANDARD.encode(b)),"detail":"high"})).chain(std::iter::once(json!({"type":"input_text","text":prompt}))).collect()
@@ -133,9 +144,9 @@ pub async fn request(
         images.iter().map(|b|json!({"type":"image_url","image_url":{"url":format!("data:image/png;base64,{}",STANDARD.encode(b))}})).chain(std::iter::once(json!({"type":"text","text":prompt}))).collect()
     };
     let mut payload = if settings.api == "responses" {
-        json!({"model":settings.model,"max_output_tokens":512,"input":[{"role":"user","content":content}]})
+        json!({"model":settings.model,"max_output_tokens":output_tokens,"input":[{"role":"user","content":content}]})
     } else {
-        json!({"model":settings.model,"max_tokens":512,"messages":[{"role":"user","content":content}]})
+        json!({"model":settings.model,"max_tokens":output_tokens,"messages":[{"role":"user","content":content}]})
     };
     if settings.endpoint.starts_with("https://ark.") {
         payload["thinking"] = json!({"type":"disabled"});
@@ -164,6 +175,21 @@ pub async fn request(
             bytes.extend_from_slice(&chunk);
         }
         let value: Value = serde_json::from_slice(&bytes).context("模型响应格式错误")?;
+        if settings.api == "responses" {
+            anyhow::ensure!(
+                value
+                    .get("status")
+                    .is_none_or(|status| status == "completed"),
+                "模型响应未完成"
+            );
+        } else {
+            anyhow::ensure!(
+                value["choices"][0]
+                    .get("finish_reason")
+                    .is_none_or(|reason| reason == "stop"),
+                "模型响应未完成或已截断"
+            );
+        }
         let raw = if settings.api == "responses" {
             value["output"]
                 .as_array()

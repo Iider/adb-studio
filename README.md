@@ -44,7 +44,7 @@ Windows 安装与连接手机见 [Windows 部署](docs/deployment.md#windows-部
 
 已验证的飞牛 Linux x86_64 部署包与用法见 [本地部署包](releases/linux-x86_64/2026-10-23/README.md)。
 
-开发环境需要 Rust 1.96+、Node.js 22.19+、Python 3.10+ 与本机 ADB。Mac 本地识别需要 Swift；Linux／Windows 可运行不依赖读字的工作流，读字需配置本地工具。以下为 Mac 源码安装步骤，其他平台与发行包见 [部署说明](docs/deployment.md)。
+开发环境需要 Rust 1.96+、Node.js 22.19+、Python 3.10+ 与本机 ADB。Mac 本地识别需要 Swift；Linux／Windows 的文字条件可配置模型，或安装本地读字工具。以下为 Mac 源码安装步骤，其他平台与发行包见 [部署说明](docs/deployment.md)。
 
 ```sh
 cd web
@@ -75,7 +75,7 @@ python3 scripts/install-service.py install
 - 未手动清理的记录和关键截图：保留 30 天；正在执行或等待的任务不会自动清理。
 - 安装自启时，已有 `MODEL_KEY` 复制到后台目录 `.env`，仅当前用户可读；重新安装不会覆盖已有密钥。
 - 更换后台密钥时编辑后台目录 `.env`；手动开发可使用环境变量、本项目或上一层 `.env`。
-- macOS、Linux 与 Windows 保留独立模型看图检查；画布文字条件当前使用本地读字。模型替代读字待实施，见 [整改方案](docs/recognition-fallback-plan.md)。
+- macOS、Linux 与 Windows 保留独立模型看图检查；画布文字条件优先使用已配置模型，未配置时使用本地读字。直接填写 Key／Base URL 仍待实施，见 [整改方案](docs/recognition-fallback-plan.md)。
 - 默认模型：`doubao-seed-2-1-lite-260915`，Responses 接口。
 - Mac／Linux 安装的后台服务监听 `0.0.0.0:17841`，局域网可通过运行电脑的 IP 访问。Windows 登录后台与开发启动默认只允许本机访问 `127.0.0.1:17841`。网页和 Agent 接口验证访问凭据并检查同源请求；手动启动可用 `ADB_STUDIO_HOST` 修改监听地址。
 

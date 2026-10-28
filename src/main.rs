@@ -2,6 +2,7 @@ mod access;
 mod adb;
 mod api;
 mod canvas;
+mod condition_model;
 mod db;
 mod drafts;
 mod engine;

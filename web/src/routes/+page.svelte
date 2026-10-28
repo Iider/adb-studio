@@ -913,7 +913,7 @@
               适用：{flow.devices.length
                 ? flow.devices.map(name).join("、")
                 : "所有已登记手机"}
-              <span>模型上限：{flow.model_limit} 次 / 运行</span>
+              <span>模型上限：{flow.model_limit || 10} 次 / 使用模型时</span>
             </div>
           </article>
         {/if}
@@ -1037,7 +1037,9 @@
           >
             <h2>识别模型</h2>
             <p class="hint">
-              本地优先任务用模型辅助判断；纯视觉任务直接看图。本地文字识别：{settings?.local_ocr
+              页面文字条件优先使用已配置模型，未配置时使用本地识别。模型密钥：{settings?.model_configured
+                ? "已配置（看图能力以实际调用为准）"
+                : "未配置"}。本地文字识别：{settings?.local_ocr
                 ? "可用"
                 : "未安装"}。
             </p>
