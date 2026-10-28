@@ -388,14 +388,6 @@
               <dd>{time(device.last_seen)}</dd>
             </div>
             <div>
-              <dt>点击位置</dt>
-              <dd>
-                {device.tap_point
-                  ? `${device.tap_point.x}，${device.tap_point.y}`
-                  : "尚未标注"}
-              </dd>
-            </div>
-            <div>
               <dt>投屏尺寸</dt>
               <dd>{screenDimensions || "未投屏"}</dd>
             </div>

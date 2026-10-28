@@ -199,8 +199,11 @@ def main():
                 def swipes():
                     return len((fake / "swipes").read_text().splitlines()) if (fake / "swipes").exists() else 0
                 fixture = runpy.run_path(str(ROOT / "scripts/check-integration.py"))["workflow"]
-                call("/workflows",fixture("mirror-parallel",count=100,interval=0.3))
-                body={"device_id":"mock-phone","workflow_id":"mirror-parallel"}
+                draft = fixture("mirror-parallel", count=100, interval=0.3)
+                path = "/workflow-drafts/" + draft["id"]
+                saved = call(path, draft, method="PUT")
+                workflow = call(path + "/save", {"revision":saved["revision"]})
+                body={"device_id":"mock-phone","workflow_id":workflow["id"]}
                 manual=viewer()
                 assert control_message(manual,True)["enabled"]
                 run = call("/runs",body)

@@ -185,7 +185,6 @@ pub fn compile(draft: &Draft) -> Result<Workflow> {
         model_limit: 0,
         tests,
         recognition: RecognitionMode::Local,
-        launch_mode: Some(LaunchMode::Standard),
     };
     engine::validate(&workflow)?;
     Ok(workflow)
@@ -404,7 +403,6 @@ pub fn validate(w: &Workflow) -> Result<()> {
                 );
                 links.insert(node.id.clone(), outgoing);
             }
-            _ => bail!("人工编排任务不能混入未适配的旧步骤"),
         }
     }
     let mut membership = HashMap::<String, String>::new();

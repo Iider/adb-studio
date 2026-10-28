@@ -1,10 +1,8 @@
 <script lang="ts">
   import { tick } from "svelte";
   import {
-    Hand,
     History,
     LoaderCircle,
-    MousePointer2,
     Play,
     RefreshCw,
     Square,
@@ -24,7 +22,6 @@
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import {
     busy,
-    launchMode,
     runLabel,
     time,
     type Device,
@@ -77,7 +74,6 @@
   let deleteTrigger: HTMLElement | null = null;
   let exportRequest = $state<{ path: string; name: string } | null>(null);
   const tasks = $derived(summarizeTasks(workflows, runs, schedules));
-  const draftIds = $derived(new Set(drafts.map((draft) => draft.id)));
   const visibleTasks = $derived(
     tasks.filter((task) => {
       const workflow = task.workflow;
@@ -120,9 +116,7 @@
 
   function editHref(workflow: Workflow) {
     const id = draftId(workflow);
-    return id && draftIds.has(id)
-      ? `/editor?draft=${encodeURIComponent(id)}`
-      : `/workflow-edit?id=${encodeURIComponent(workflow.id)}`;
+    return `/editor?draft=${encodeURIComponent(id)}`;
   }
 
   async function confirmDelete() {
@@ -163,17 +157,6 @@
     )) {
       if (!menu.contains(event.target)) menu.open = false;
     }
-  }
-
-  function taskIcon(workflow: Workflow) {
-    if (workflow.nodes.some((node) => node.type === "swipe_loop")) return Hand;
-    if (
-      workflow.nodes.some((node) =>
-        ["tap_loop", "fixed_tap_loop"].includes(node.type),
-      )
-    )
-      return MousePointer2;
-    return FlowIcon;
   }
 </script>
 
@@ -266,13 +249,11 @@
     <div class="catalog-grid">
       {#each visibleTasks as task (task.workflow.id)}
         {@const workflow = task.workflow}
-        {@const Icon = taskIcon(workflow)}
+        {@const Icon = FlowIcon}
         {@const run = currentRun(task.inProgress)}
         {@const description =
-          launchMode(workflow) === "swipe_settings"
-            ? "保持当前页面，按设置的时长和间隔上滑。"
-            : workflow.description ||
-              `共 ${workflow.nodes.length} 个步骤，点击任务名称查看详情。`}
+          workflow.description ||
+          `共 ${workflow.nodes.length} 个步骤，点击任务名称查看详情。`}
         {@const status = run ? runLabel(run) : "已保存"}
         <article class="catalog-card" aria-label={workflow.name}>
           <div class="catalog-card-heading">

@@ -5,6 +5,7 @@ mod canvas;
 mod db;
 mod drafts;
 mod engine;
+mod legacy_cleanup;
 mod mirror;
 mod platform;
 mod recognition;
@@ -116,19 +117,6 @@ async fn main() -> Result<()> {
         d.online = false;
         d.endpoints.clear();
         app.db.put("devices", &d.id, &d).await?;
-    }
-    for wf in engine::builtins() {
-        if app
-            .db
-            .get::<String>("removed_workflows", &wf.id)
-            .await?
-            .is_some()
-        {
-            continue;
-        }
-        if app.db.get::<Workflow>("workflows", &wf.id).await?.is_none() {
-            app.db.put("workflows", &wf.id, &wf).await?;
-        }
     }
     if let Err(error) = adb::refresh(&app).await {
         tracing::warn!("初次设备检查：{error}");

@@ -42,7 +42,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/devices/{id}/screenshot", get(screenshot))
         .route("/devices/{id}/screen", post(screen_control))
         .route("/devices/{id}/mirror", get(mirror))
-        .route("/workflows", get(workflows).post(submit))
+        .route("/workflows", get(workflows))
         .route("/workflows/{id}", axum::routing::delete(remove_workflow))
         .route("/workflow-drafts/{id}/save", post(save_draft))
         .route("/editor/observe/{id}", get(editor_observe))
@@ -178,9 +178,8 @@ async fn pair_device(
     Ok(Json(json!({"ok":true})))
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DeviceUpdate {
-    #[serde(default)]
-    tap_point: Option<TapPoint>,
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
@@ -197,10 +196,6 @@ async fn update_device(
         .get::<Device>("devices", &id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("手机未登记"))?;
-    if let Some(point) = u.tap_point {
-        point.validate()?;
-        d.tap_point = Some(point);
-    }
     if let Some(name) = u.name {
         if name.trim().is_empty() || name.chars().count() > 40 {
             return Err(anyhow::anyhow!("名称需为 1 至 40 字").into());
@@ -380,27 +375,6 @@ async fn editor_observe(
         json!({"screen":screen,"image":format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png))}),
     ))
 }
-async fn submit(
-    State(app): State<Arc<App>>,
-    headers: HeaderMap,
-    Json(w): Json<Workflow>,
-) -> Result<Json<Workflow>> {
-    let _gate = app.run_gate.lock().await;
-    if headers
-        .get(header::IF_MATCH)
-        .is_some_and(|value| value == "*")
-        && app.db.get::<Workflow>("workflows", &w.id).await?.is_none()
-    {
-        return Err(Error(
-            anyhow::anyhow!("任务已删除，当前编辑仍保留；请返回任务列表"),
-            StatusCode::PRECONDITION_FAILED,
-        ));
-    }
-    engine::validate(&w)?;
-    app.db.put("workflows", &w.id, &w).await?;
-    let _ = app.events.send(json!({"type":"changed"}));
-    Ok(Json(w))
-}
 async fn validate(State(app): State<Arc<App>>, Path(key): Path<String>) -> Result<Json<Value>> {
     let w = app
         .db
@@ -413,18 +387,13 @@ async fn validate(State(app): State<Arc<App>>, Path(key): Path<String>) -> Resul
     Ok(Json(json!({"ok":true,"samples":w.tests.len()})))
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Start {
-    #[serde(default)]
-    swipe: Option<SwipeSettings>,
-    #[serde(default)]
-    tap: Option<TapSettings>,
     device_id: String,
     workflow_id: String,
 }
 async fn start(State(app): State<Arc<App>>, Json(s): Json<Start>) -> Result<Json<Run>> {
     let w = engine::workflow(&app, &s.workflow_id).await?;
-    let w = engine::with_swipe_settings(w, s.swipe.as_ref())?;
-    let w = engine::with_tap_settings(w, s.tap.as_ref())?;
     Ok(Json(engine::start(app, &s.device_id, w).await?))
 }
 async fn runs(State(app): State<Arc<App>>) -> Result<Json<Vec<Value>>> {
@@ -537,11 +506,8 @@ async fn schedules(State(app): State<Arc<App>>) -> Result<Json<Vec<Schedule>>> {
     Ok(Json(app.db.list("schedules").await?))
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ScheduleInput {
-    #[serde(default)]
-    swipe: Option<SwipeSettings>,
-    #[serde(default)]
-    tap: Option<TapSettings>,
     name: String,
     device_id: String,
     workflow_id: String,
@@ -561,13 +527,7 @@ async fn schedule_from(app: &App, s: ScheduleInput, id: String) -> Result<Schedu
     {
         return Err(anyhow::anyhow!("手机未登记").into());
     }
-    engine::with_tap_settings(
-        engine::with_swipe_settings(
-            engine::workflow(app, &s.workflow_id).await?,
-            s.swipe.as_ref(),
-        )?,
-        s.tap.as_ref(),
-    )?;
+    engine::validate(&engine::workflow(app, &s.workflow_id).await?)?;
     if s.name.trim().is_empty() || s.name.chars().count() > 80 {
         return Err(anyhow::anyhow!("请输入定时名称，最多 80 字").into());
     }
@@ -578,8 +538,6 @@ async fn schedule_from(app: &App, s: ScheduleInput, id: String) -> Result<Schedu
         name: s.name.trim().into(),
         device_id: s.device_id,
         workflow_id: s.workflow_id,
-        swipe: s.swipe,
-        tap: s.tap,
         rule: s.rule,
         enabled: s.enabled,
         next_at: next.to_rfc3339(),
@@ -685,11 +643,8 @@ async fn ensure_workflow(app: &App, workflow: &Workflow) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn validate_workflow_samples(app: &App, workflow: &Workflow) -> anyhow::Result<()> {
+async fn validate_workflow_samples(_app: &App, workflow: &Workflow) -> anyhow::Result<()> {
     engine::samples(workflow)?;
-    if workflow.recognition == RecognitionMode::Vision {
-        crate::vision::validate_samples(app, workflow).await?;
-    }
     Ok(())
 }
 async fn inspect_vision(

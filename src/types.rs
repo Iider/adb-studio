@@ -7,8 +7,6 @@ pub fn now() -> String {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Device {
     pub id: String,
-    #[serde(default)]
-    pub tap_point: Option<TapPoint>,
     pub name: String,
     pub model: String,
     pub online: bool,
@@ -31,7 +29,6 @@ impl Device {
     pub fn new(id: &str, name: &str, model: &str) -> Self {
         Self {
             id: id.into(),
-            tap_point: None,
             name: name.into(),
             model: model.into(),
             online: false,
@@ -66,26 +63,6 @@ pub struct Workflow {
     pub tests: Vec<SampleCase>,
     #[serde(default)]
     pub recognition: RecognitionMode,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub launch_mode: Option<LaunchMode>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum LaunchMode {
-    Standard,
-    DevicePoint,
-    SwipeSettings,
-}
-
-impl Workflow {
-    pub fn launch_mode(&self) -> LaunchMode {
-        self.launch_mode.unwrap_or(match self.id.as_str() {
-            "point-click" => LaunchMode::DevicePoint,
-            "swipe" => LaunchMode::SwipeSettings,
-            _ => LaunchMode::Standard,
-        })
-    }
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -109,100 +86,8 @@ pub struct Node {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
-    Canvas {
-        step: crate::drafts::DraftNode,
-    },
-    VisionRoute {
-        package: String,
-        cases: Vec<VisionRouteCase>,
-    },
-    VisionCheck {
-        package: String,
-        condition: String,
-    },
-    VisionTap {
-        package: String,
-        guard: String,
-        target: String,
-        region: [f64; 4],
-        verify: String,
-    },
-    Wait {
-        seconds: f64,
-    },
-    Launch {
-        package: String,
-        #[serde(default)]
-        restart: bool,
-    },
-    TapText {
-        text: String,
-        verify: String,
-    },
-    TapPoint {
-        x: f64,
-        y: f64,
-        guard: String,
-        verify: String,
-    },
-    Swipe {
-        from: [f64; 2],
-        to: [f64; 2],
-        duration_ms: u32,
-    },
-    Key {
-        key: String,
-        verify: String,
-    },
-    Branch {
-        cases: Vec<Branch>,
-        otherwise: String,
-        #[serde(default)]
-        guard: Option<String>,
-    },
-    FixedTapLoop {
-        x: u32,
-        y: u32,
-        count: u32,
-        interval: f64,
-    },
-    TapLoop {
-        text: String,
-        guard: String,
-        package: String,
-        region: [f64; 4],
-        count: u32,
-        interval: f64,
-    },
-    SwipeLoop {
-        interval: f64,
-        count: Option<u32>,
-        minutes: Option<f64>,
-        #[serde(default)]
-        long: bool,
-    },
-    QishuiNavigate,
-    QishuiLoop {
-        coin_region: [f64; 4],
-        identity_region: [f64; 4],
-        warmup: f64,
-        stall: f64,
-        finish_stall: f64,
-        finish_swipes: u32,
-    },
-    End {
-        result: String,
-    },
-}
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct VisionRouteCase {
-    pub condition: String,
-    pub next: String,
-}
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct Branch {
-    pub contains: String,
-    pub next: String,
+    Canvas { step: crate::drafts::DraftNode },
+    End { result: String },
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SampleCase {
@@ -254,49 +139,11 @@ impl Run {
     }
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct TapPoint {
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-}
-impl TapPoint {
-    pub fn validate(&self) -> anyhow::Result<()> {
-        if self.width == 0
-            || self.height == 0
-            || self.width > 10000
-            || self.height > 10000
-            || self.x >= self.width
-            || self.y >= self.height
-        {
-            anyhow::bail!("点击位置超出截图范围")
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct TapSettings {
-    pub count: u32,
-    pub interval: f64,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct SwipeSettings {
-    pub minutes: f64,
-    pub interval: f64,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Schedule {
     pub id: String,
     pub name: String,
     pub device_id: String,
     pub workflow_id: String,
-    #[serde(default)]
-    pub swipe: Option<SwipeSettings>,
-    #[serde(default)]
-    pub tap: Option<TapSettings>,
     pub enabled: bool,
     pub rule: ScheduleRule,
     pub next_at: String,

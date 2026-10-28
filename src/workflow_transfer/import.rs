@@ -55,40 +55,8 @@ fn validate(bytes: &[u8]) -> anyhow::Result<Validated> {
         "导入操作编号无效"
     );
     let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&request)?));
-    let mut file: WorkflowFile = if request.file.get("format").is_some() {
-        serde_json::from_value(request.file).context("工作流文件字段无效或包含不支持的字段")?
-    } else {
-        let object = request.file.as_object().context("文件不是工作流")?;
-        ensure!(
-            object.keys().all(|key| [
-                "schema_version",
-                "id",
-                "name",
-                "description",
-                "devices",
-                "entry",
-                "nodes",
-                "model_limit",
-                "tests",
-                "recognition",
-                "launch_mode"
-            ]
-            .contains(&key.as_str())),
-            "裸工作流包含不支持的字段"
-        );
-        WorkflowFile {
-            format: "adb-studio.workflow".into(),
-            format_revision: 1,
-            content: Content {
-                workflow: Some(
-                    serde_json::from_value(request.file)
-                        .context("文件不是工作流，请使用工作台导出的文件")?,
-                ),
-                draft: None,
-            },
-            assets: vec![],
-        }
-    };
+    let mut file: WorkflowFile = serde_json::from_value(request.file)
+        .context("请使用工作流编辑器导出的文件；不支持旧任务文件")?;
     ensure!(
         file.format == "adb-studio.workflow" && file.format_revision == 1,
         "不支持此工作流文件格式"
@@ -97,8 +65,11 @@ fn validate(bytes: &[u8]) -> anyhow::Result<Validated> {
         file.content.workflow.is_some() || file.content.draft.is_some(),
         "文件没有工作流或草稿"
     );
+    ensure!(
+        file.content.draft.is_some(),
+        "文件缺少画布草稿；不支持旧任务文件"
+    );
     if let Some(workflow) = file.content.workflow.as_mut() {
-        *workflow = explicit_workflow(workflow.clone());
         engine::validate(workflow)?;
     }
     if let Some(draft) = &file.content.draft {
@@ -271,14 +242,6 @@ async fn preview(
             json!({"id":id,"name":device.map(|d|d.name.as_str()).unwrap_or(&id),"status":status})
         })
         .collect();
-    if parsed
-        .content
-        .workflow
-        .as_ref()
-        .is_some_and(|w| w.launch_mode() == LaunchMode::DevicePoint)
-    {
-        warnings.push("定点点击依赖目标手机的本机标注，换电脑或手机后请重新标注。".into());
-    }
     if let (Some(workflow), Some(draft)) = (&parsed.content.workflow, &parsed.content.draft) {
         if draft_state(workflow, Some(&make_draft(draft).map_err(internal)?)) != "saved" {
             warnings.push("文件同时包含已保存任务和待保存编辑；导入后分别保留。".into());
@@ -334,11 +297,7 @@ async fn save(
         return Ok(Json(result));
     }
     let draft_id = uuid::Uuid::new_v4().to_string();
-    let workflow_id = if parsed.content.draft.is_some() {
-        format!("manual-{draft_id}")
-    } else {
-        format!("import-{draft_id}")
-    };
+    let workflow_id = format!("manual-{draft_id}");
     if let Some(workflow) = parsed.content.workflow.as_mut() {
         workflow.id = workflow_id.clone();
     }

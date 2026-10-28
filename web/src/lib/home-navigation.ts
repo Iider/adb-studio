@@ -30,7 +30,7 @@ export function readHomeNavigation(url: URL): HomeNavigation {
         ? "task"
         : "parameters",
     workflowOpen: !!workflow,
-    selectedWorkflow: workflow || "swipe",
+    selectedWorkflow: workflow || "",
     selectedRun: tab === "runs" ? (params.get("run") ?? "") : "",
   };
 }

@@ -6,7 +6,7 @@ use sea_orm::{
 use serde::{Serialize, de::DeserializeOwned};
 use std::path::Path;
 
-pub struct Store(DatabaseConnection);
+pub struct Store(pub(crate) DatabaseConnection);
 impl Store {
     pub async fn open(path: &Path) -> Result<Self> {
         let mut options = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
@@ -22,21 +22,9 @@ impl Store {
             db.execute(Statement::from_string(DbBackend::Sqlite, sql))
                 .await?;
         }
-        let migration = db.begin().await?;
-        for sql in [
-            // 旧数据按版本号保留最新内容，改为每个任务编号只存一份。
-            "DELETE FROM records WHERE rowid IN (SELECT rowid FROM (SELECT rowid, ROW_NUMBER() OVER (PARTITION BY json_extract(body,'$.id') ORDER BY COALESCE(json_extract(body,'$.version'),0) DESC,rowid DESC) AS position FROM records WHERE kind='workflows') WHERE position>1)",
-            "UPDATE records SET id=json_extract(body,'$.id'),body=json_remove(body,'$.version','$.active','$.sample_validated') WHERE kind='workflows'",
-            "DELETE FROM records WHERE kind IN ('active','vision_validated')",
-            // 取消任务归档后保留任务和定时内容，不重新开启已停用的定时。
-            "DELETE FROM records WHERE kind='archived_workflows'",
-        ] {
-            migration
-                .execute(Statement::from_string(DbBackend::Sqlite, sql))
-                .await?;
-        }
-        migration.commit().await?;
-        Ok(Self(db))
+        let store = Self(db);
+        crate::legacy_cleanup::purge(&store, path).await?;
+        Ok(store)
     }
     pub async fn put<T: Serialize>(&self, kind: &str, id: &str, value: &T) -> Result<()> {
         let body = serde_json::to_string(value)?;
@@ -197,14 +185,6 @@ impl Store {
                 [id.into(), draft_id.into(), id.into()],
             ))
             .await?;
-        // 防止重启时重新生成用户已经移除的内置任务。
-        transaction
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT INTO records(kind,id,body) VALUES ('removed_workflows',?,?) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body",
-                [id.into(), serde_json::to_string(id)?.into()],
-            ))
-            .await?;
         if !run_ids.is_empty() {
             let pending = crate::workflow_cleanup::Pending {
                 workflow_id: id.into(),
@@ -363,89 +343,12 @@ mod tests {
                 .await?
                 .is_some()
         );
-        store.0.close().await?;
-        let store = Store::open(&path).await?;
         let pending = store
             .get::<crate::workflow_cleanup::Pending>("workflow_cleanup", "target")
             .await?
             .unwrap();
         assert_eq!(pending.run_ids.len(), 2);
         assert!(pending.run_ids.contains(&current) && pending.run_ids.contains(&archived));
-        assert!(
-            store
-                .get::<Value>("removed_workflows", "target")
-                .await?
-                .is_some()
-        );
-        store.0.close().await?;
-        std::fs::remove_dir_all(folder)?;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn legacy_workflows_keep_only_latest_and_overwrite_in_place() -> Result<()> {
-        let folder = std::env::temp_dir().join(format!("adb-workflow-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&folder)?;
-        let path = folder.join("data.sqlite");
-        let store = Store::open(&path).await?;
-        store
-            .put(
-                "workflows",
-                "task@10",
-                &json!({"id":"task","version":10,"name":"最新内容"}),
-            )
-            .await?;
-        store
-            .put(
-                "workflows",
-                "task@2",
-                &json!({"id":"task","version":2,"name":"旧内容"}),
-            )
-            .await?;
-        store
-            .put(
-                "workflows",
-                "other",
-                &json!({"id":"other","name":"另一项任务"}),
-            )
-            .await?;
-        let history = json!({"workflow":{"id":"task","version":2},"state":"succeeded"});
-        store.put("runs", "history", &history).await?;
-        store.put("archived_workflows", "task", &"task").await?;
-        let schedule = json!({"workflow_id":"task","enabled":false});
-        store.put("schedules", "schedule", &schedule).await?;
-        store.0.close().await?;
-
-        let store = Store::open(&path).await?;
-        assert_eq!(store.list::<Value>("workflows").await?.len(), 2);
-        assert_eq!(
-            store.get::<Value>("workflows", "task").await?,
-            Some(json!({"id":"task","name":"最新内容"}))
-        );
-        assert!(store.get::<Value>("workflows", "task@10").await?.is_none());
-        assert_eq!(store.get::<Value>("runs", "history").await?, Some(history));
-        assert_eq!(
-            store
-                .get::<String>("archived_workflows", "task")
-                .await?
-                .as_deref(),
-            None
-        );
-        assert_eq!(
-            store.get::<Value>("schedules", "schedule").await?,
-            Some(schedule)
-        );
-        store
-            .put("workflows", "task", &json!({"id":"task","name":"覆盖保存"}))
-            .await?;
-        store.0.close().await?;
-
-        let store = Store::open(&path).await?;
-        assert_eq!(store.list::<Value>("workflows").await?.len(), 2);
-        assert_eq!(
-            store.get::<Value>("workflows", "task").await?,
-            Some(json!({"id":"task","name":"覆盖保存"}))
-        );
         store.0.close().await?;
         std::fs::remove_dir_all(folder)?;
         Ok(())

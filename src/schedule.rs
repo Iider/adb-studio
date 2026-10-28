@@ -83,13 +83,8 @@ pub async fn monitor(app: Arc<App>) {
                 if !missed {
                     let result = engine::workflow(&app, &s.workflow_id).await;
                     s.last_result = Some(match result {
-                        Ok(w) => match engine::with_swipe_settings(w, s.swipe.as_ref())
-                            .and_then(|w| engine::with_tap_settings(w, s.tap.as_ref()))
-                        {
-                            Ok(w) => match engine::start(app.clone(), &s.device_id, w).await {
-                                Ok(_) => "已开始".into(),
-                                Err(e) => format!("已跳过：{e}"),
-                            },
+                        Ok(w) => match engine::start(app.clone(), &s.device_id, w).await {
+                            Ok(_) => "已开始".into(),
                             Err(e) => format!("已跳过：{e}"),
                         },
                         Err(e) => format!("已跳过：{e}"),

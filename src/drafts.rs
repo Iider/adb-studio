@@ -133,6 +133,18 @@ async fn remove(
             "草稿已在其他页面修改，请重新读取后再删除",
         ));
     }
+    if app
+        .db
+        .get::<Value>("workflows", &format!("manual-{id}"))
+        .await
+        .map_err(internal)?
+        .is_some()
+    {
+        return Err(failure(
+            StatusCode::CONFLICT,
+            "这份草稿关联已保存任务，请到任务列表删除整个任务",
+        ));
+    }
     app.db
         .delete("workflow_drafts", &id)
         .await

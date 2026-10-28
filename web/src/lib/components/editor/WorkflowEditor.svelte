@@ -869,7 +869,12 @@
             morePopover?.hidePopover();
             deleteDialog?.showModal();
           }}
-          disabled={!ready || saving || switching || !!recovery}
+          disabled={!ready ||
+            saving ||
+            switching ||
+            !!recovery ||
+            !!savedWorkflow}
+          title={savedWorkflow ? "已保存任务请从任务列表整体删除" : undefined}
           ><Trash2 size={16} />删除草稿</button
         >
       </div>
@@ -1260,7 +1265,7 @@
 <dialog bind:this={deleteDialog}>
   <h2>删除这份草稿？</h2>
   <p>
-    “{name}”的草稿删除后无法恢复。任务内容仍保留，可从任务卡片继续修改，但原画布布局无法恢复。
+    “{name}”的草稿删除后无法恢复。已保存为任务的草稿不能单独删除，请到任务列表删除整个任务。
   </p>
   <div class="dialog-actions">
     <button

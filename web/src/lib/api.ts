@@ -48,14 +48,7 @@ export async function photo(id: string) {
   }
   return URL.createObjectURL(await r.blob());
 }
-export interface TapPoint {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
 export interface Device {
-  tap_point?: TapPoint | null;
   id: string;
   name: string;
   model: string;
@@ -94,17 +87,6 @@ export interface Workflow {
   model_limit: number;
   tests?: { image?: string }[];
   recognition?: "local" | "vision";
-  launch_mode?: "standard" | "device_point" | "swipe_settings";
-}
-export function launchMode(workflow: Workflow | null | undefined) {
-  return (
-    workflow?.launch_mode ??
-    (workflow?.id === "point-click"
-      ? "device_point"
-      : workflow?.id === "swipe"
-        ? "swipe_settings"
-        : "standard")
-  );
 }
 export interface Run {
   id: string;
@@ -128,8 +110,6 @@ export type Rule =
   | { kind: "weekly"; time: string; days: number[] }
   | { kind: "interval"; minutes: number };
 export interface Schedule {
-  tap?: { count: number; interval: number } | null;
-  swipe?: { minutes: number; interval: number } | null;
   id: string;
   name: string;
   device_id: string;

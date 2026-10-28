@@ -154,7 +154,7 @@
   const editHref = $derived(
     result?.draft_id
       ? `/editor?draft=${encodeURIComponent(result.draft_id)}`
-      : `/workflow-edit?id=${encodeURIComponent(result?.workflow_id ?? "")}`,
+      : "/editor",
   );
 </script>
 

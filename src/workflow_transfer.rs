@@ -1,7 +1,7 @@
 use crate::{
     App, canvas,
     drafts::{Draft, DraftNode},
-    types::{LaunchMode, Workflow},
+    types::Workflow,
     vision,
 };
 use anyhow::{Context, ensure};
@@ -91,13 +91,8 @@ pub fn router() -> Router<Arc<App>> {
         .route("/workflow-drafts/{id}/export", get(export_draft))
 }
 
-fn explicit_workflow(mut workflow: Workflow) -> Workflow {
-    workflow.launch_mode = Some(workflow.launch_mode());
-    workflow
-}
-
 fn normalized_workflow(workflow: Workflow) -> anyhow::Result<Value> {
-    let mut workflow = explicit_workflow(workflow);
+    let mut workflow = workflow;
     workflow.devices.sort();
     Ok(serde_json::to_value(workflow)?)
 }
@@ -205,7 +200,7 @@ async fn build_file(app: &App, content: Content) -> Result<WorkflowFile, Failure
     Ok(file)
 }
 
-fn download_headers(state: &'static str, mode: LaunchMode) -> HeaderMap {
+fn download_headers(state: &'static str) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_DISPOSITION,
@@ -214,12 +209,6 @@ fn download_headers(state: &'static str, mode: LaunchMode) -> HeaderMap {
             .unwrap(),
     );
     headers.insert("x-workflow-draft-state", state.parse().unwrap());
-    let mode = match mode {
-        LaunchMode::DevicePoint => "device_point",
-        LaunchMode::SwipeSettings => "swipe_settings",
-        LaunchMode::Standard => "standard",
-    };
-    headers.insert("x-workflow-launch-mode", mode.parse().unwrap());
     headers
 }
 
@@ -231,13 +220,12 @@ async fn export_workflow(State(app): State<Arc<App>>, Path(id): Path<String>) ->
         .map_err(storage_error)?
         .ok_or_else(|| failure(StatusCode::NOT_FOUND, "任务不存在"))?;
     let state = draft_state(&workflow, draft.as_ref());
-    let mode = workflow.launch_mode();
     let content = Content {
-        workflow: Some(explicit_workflow(workflow)),
+        workflow: Some(workflow),
         draft: draft.as_ref().map(PortableDraft::from),
     };
     Ok((
-        download_headers(state, mode),
+        download_headers(state),
         Json(build_file(&app, content).await?),
     ))
 }
@@ -269,7 +257,7 @@ async fn export_draft(
         draft: Some(PortableDraft::from(&draft)),
     };
     Ok((
-        download_headers("draft", LaunchMode::Standard),
+        download_headers("draft"),
         Json(build_file(&app, content).await?),
     ))
 }
@@ -304,23 +292,6 @@ mod tests {
         assert_eq!(draft_state(&workflow, Some(&draft)), "modified");
         draft.nodes[0].targets.clear();
         assert_eq!(draft_state(&workflow, Some(&draft)), "incomplete");
-    }
-
-    #[test]
-    fn explicit_modes_survive_new_ids_and_override_builtin_ids() {
-        for mut workflow in crate::engine::builtins() {
-            let expected = workflow.launch_mode();
-            workflow = explicit_workflow(workflow);
-            workflow.id = "import-new-id".into();
-            assert_eq!(workflow.launch_mode(), expected);
-            crate::engine::validate(&workflow).unwrap();
-        }
-        let mut workflow = canvas::compile(&draft()).unwrap();
-        workflow.id = "point-click".into();
-        assert_eq!(workflow.launch_mode(), LaunchMode::Standard);
-        crate::engine::validate(&workflow).unwrap();
-        workflow.launch_mode = Some(LaunchMode::DevicePoint);
-        assert!(crate::engine::validate(&workflow).is_err());
     }
 
     #[test]

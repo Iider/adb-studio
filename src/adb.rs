@@ -462,33 +462,6 @@ impl Adb {
         }
         Ok(())
     }
-    pub async fn tap(&self, id: &str, x: u32, y: u32) -> Result<()> {
-        self.phone(
-            id,
-            &["shell", "input", "tap", &x.to_string(), &y.to_string()],
-        )
-        .await?;
-        Ok(())
-    }
-    pub async fn swipe(&self, id: &str, from: [f64; 2], to: [f64; 2], ms: u32) -> Result<()> {
-        let (w, h) = self.size(id).await?;
-        let p = |v: f64, n: u32| ((v * n as f64).round() as u32).min(n - 1).to_string();
-        self.phone(
-            id,
-            &[
-                "shell",
-                "input",
-                "swipe",
-                &p(from[0], w),
-                &p(from[1], h),
-                &p(to[0], w),
-                &p(to[1], h),
-                &ms.to_string(),
-            ],
-        )
-        .await?;
-        Ok(())
-    }
     pub async fn size(&self, id: &str) -> Result<(u32, u32)> {
         let png = self.shot(id).await?;
         screen_size(&png)

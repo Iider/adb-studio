@@ -62,14 +62,13 @@ def main():
             shutil.copy2(adb, folder / "bin/adb")
         shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", folder / "THIRD_PARTY_NOTICES.md")
         launch = r".\adb-studio.exe" if system == "Windows" else "./adb-studio"
-        (folder / "README.md").write_text(f"# ADB 工作台\n\n进入解压目录运行 `{launch}`，打开 http://127.0.0.1:17841 。\n\n安装、自启、环境变量与迁移见 [部署说明](docs/deployment.md)。\n\n[纯视觉识别](docs/vision-recognition.md) · [投屏与操作](docs/realtime-screen.md) · [工作流接口](docs/workflows.md)\n", encoding="utf-8")
+        (folder / "README.md").write_text(f"# ADB 工作台\n\n进入解压目录运行 `{launch}`，打开 http://127.0.0.1:17841 。\n\n安装、自启、环境变量与迁移见 [部署说明](docs/deployment.md)。\n\n[模型看图检查](docs/vision-recognition.md) · [投屏与操作](docs/realtime-screen.md) · [工作流接口](docs/workflows.md)\n", encoding="utf-8")
         (folder / "docs").mkdir()
         for file in ["deployment.md", "feiniu-native.md", "vision-recognition.md", "realtime-screen.md", "workflows.md", "screenshot-performance.md", "ui-components.md"]:
             shutil.copy2(ROOT / "docs" / file, folder / "docs" / file)
         shutil.copytree(ROOT / "licenses", folder / "licenses")
         if system == "Windows":
             shutil.copy2(adb_folder / "NOTICE.txt", folder / "licenses/adb-NOTICE")
-        shutil.copytree(ROOT / "examples", folder / "examples")
         if system == "Darwin":
             adb_folder = Path(adb).resolve().parent
             if (adb_folder / "lib64").is_dir():

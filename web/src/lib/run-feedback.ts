@@ -17,9 +17,5 @@ export function runFeedback(message: string, detail?: string | null) {
 
 export function resumeBlocked(run: import("./api").Run) {
   const node = run.workflow.nodes.find((node) => node.id === run.node);
-  return (
-    !!run.pending &&
-    !!node &&
-    ["fixed_tap_loop", "tap_loop", "swipe", "vision_tap"].includes(node.type)
-  );
+  return !!run.pending && !!node && node.type === "canvas";
 }

@@ -80,6 +80,7 @@ def main():
             try:
                 call("/workflow-drafts", expected=401, auth=False)
                 initial_workflows = call("/workflows")[1]
+                assert initial_workflows == []
                 assert all("archived" not in item for item in initial_workflows)
                 call("/workflows/swipe/archive", "PUT", expected=404)
                 call("/workflows/swipe/archive", "DELETE", expected=404)
@@ -111,31 +112,6 @@ def main():
                 call(path, expected=404)
                 call(path, "PUT", latest, expected=409)
                 assert call("/workflow-drafts")[1] == []
-                original_swipe = next(item for item in initial_workflows if item["id"] == "swipe")
-                edited_swipe = {**original_swipe, "name": "修改后的滑动任务"}
-                created_swipe = call("/workflows", "POST", edited_swipe)[1]
-                assert "version" not in created_swipe
-                assert "active" not in created_swipe
-                assert len([item for item in call("/workflows")[1] if item["id"] == "swipe"]) == 1
-                assert next(item for item in call("/workflows")[1] if item["id"] == "swipe")["name"] == created_swipe["name"]
-                commands = (fake / "commands").read_text()
-                assert '"input"' not in commands
-                print("通过：草稿保存与冲突、归档接口移除、覆盖保存仅保留一份")
-                stop(process, data)
-                process.wait(timeout=10)
-                process = boot(log)
-                assert next(item for item in call("/workflows")[1] if item["id"] == "swipe")["name"] == created_swipe["name"]
-                call("/workflows/swipe", "DELETE", expected=401, auth=False)
-                assert call("/workflows/swipe", "DELETE")[1]["ok"]
-                assert not any(item["id"] == "swipe" for item in call("/workflows")[1])
-                call("/workflows", "POST", original_swipe, expected=412, extra_headers={"If-Match":"*"})
-                call("/workflows/swipe/archive", "DELETE", expected=404)
-                stop(process, data)
-                process.wait(timeout=10)
-                process = boot(log)
-                assert not any(item["id"] == "swipe" for item in call("/workflows")[1])
-                assert any(item["id"] == "point-click" for item in call("/workflows")[1])
-                print("通过：永久移除任务内容，重启不再生成已移除的内置任务")
                 (fake / "online").touch()
                 (fake / "stay_on_while_plugged_in").write_text("3")
                 (fake / "screen_off_timeout").write_text("600000")
@@ -179,6 +155,7 @@ def main():
                     node("end","end",result="succeeded"),
                 ]
                 workflow, source = save_workflow(flow, "loop")
+                call("/workflow-drafts/" + source["id"] + "?revision=" + str(source["revision"]), "DELETE", expected=409)
                 first_schedule = call("/schedules", "POST", {"name":"无需预运行", "device_id":"mock-phone", "workflow_id":workflow["id"], "enabled":False,"rule":{"kind":"interval","minutes":60}})[1]
                 assert first_schedule["workflow_id"] == workflow["id"]
                 call("/schedules/" + first_schedule["id"], "DELETE")

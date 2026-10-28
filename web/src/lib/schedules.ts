@@ -2,7 +2,7 @@ import type { Rule, Schedule } from "./api";
 
 export type ScheduleInput = Pick<
   Schedule,
-  "name" | "device_id" | "workflow_id" | "enabled" | "rule" | "tap" | "swipe"
+  "name" | "device_id" | "workflow_id" | "enabled" | "rule"
 >;
 
 export const weekdays = [
@@ -57,7 +57,5 @@ export function scheduleInput(schedule: Schedule): ScheduleInput {
     workflow_id: schedule.workflow_id,
     enabled: schedule.enabled,
     rule: schedule.rule,
-    tap: schedule.tap ?? null,
-    swipe: schedule.swipe ?? null,
   };
 }

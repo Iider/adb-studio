@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""隔离验证纯视觉流程、模型边界、HTTPS 来源与取消；不操作真机。"""
+"""隔离验证只读模型检查、坐标边界与 HTTPS 来源；不操作真机。"""
 
 import base64
 import http.server
@@ -28,9 +28,6 @@ class Model(http.server.BaseHTTPRequestHandler):
     mode = "valid"
     calls = []
     negative = b""
-    route_images = {}
-    started = threading.Event()
-    release = threading.Event()
 
     def log_message(self, *args):
         pass
@@ -45,25 +42,14 @@ class Model(http.server.BaseHTTPRequestHandler):
         image = base64.b64decode(image.split(",")[1])
         answer = {"choice": "unknown" if image == Model.negative or Model.mode == "unknown" else "confirmed",
                   "reason": "模拟页面依据", "confidence": 1, "target": [250, 250], "coin": 123}
-        prompt = content[-1].get("text", "")
-        if "只根据当前截图选择一个明确符合的页面状态" in prompt:
-            answer = {"choice": Model.route_images.get(image, "unknown"), "reason": "模拟页面分流",
-                      "confidence": 1, "target": None, "coin": None}
         if Model.mode == "outside":
             answer["target"] = [9999, 200]
-        if Model.mode == "shift" and len(Model.calls) > 1:
-            answer["target"] = [375, 250]
         if Model.mode == "missing":
             answer.pop("target")
         if Model.mode == "foreign":
             answer["choice"] = "run-shell"
         if Model.mode == "low":
             answer["confidence"] = 0.2
-        if Model.mode == "budget" and len(Model.calls) == 1:
-            answer["choice"] = "invalid"
-        if Model.mode == "blocked":
-            Model.started.set()
-            Model.release.wait(10)
         raw = "invalid-json" if Model.mode == "malformed" else json.dumps(answer)
         data = {"output": [{"content": [{"text": raw}]}]} if "input" in body else {"choices": [{"message": {"content": raw}}]}
         try:
@@ -111,20 +97,11 @@ def main():
             assert status == expected, (path, status, result)
             return result
 
-        def record(id):
-            return next(r for r in call("/runs") if r["id"] == id)
-
-        def done(id):
-            return wait(lambda: (r if (r := record(id))["state"] not in {"running", "recovering", "waiting_device"} else None))
-
         def inspect(image=positive, **query):
             return call("/recognition/check", "POST", {"image_base64": base64.b64encode(image).decode(), "query": {"condition": "before", **query}})
 
         def taps():
             return (fake / "taps").read_text().count("\n") if (fake / "taps").exists() else 0
-
-        def start(id):
-            return call("/runs", "POST", {"device_id": "mock-phone", "workflow_id": id})
 
         try:
             wait(lambda: urllib.request.urlopen(BASE + "/api/session", timeout=2))
@@ -145,8 +122,6 @@ def main():
 
             answer = inspect(target="button", read_number=True)
             assert answer["result"]["target"] == [100, 200] and answer["result"]["coin"] == 123 and answer["calls"] == 1
-            before_sample = answer["image"]
-            negative_sample = inspect(Model.negative)["image"]
             answer = inspect(Model.negative)
             assert answer["result"]["choice"] == "unknown" and answer["result"]["target"] is None
             for mode in ["outside", "missing", "foreign", "low", "malformed"]:
@@ -165,114 +140,24 @@ def main():
             call("/settings/model", "PUT", model)
             print("通过：两类模型接口、纯看图、数字、未知画面、格式与坐标边界", flush=True)
 
-            workflow = {"schema_version": 1, "id": "vision-test", "name": "模拟视觉点击", "description": "只在隔离服务运行", "devices": ["mock-phone"], "recognition": "vision", "entry": "tap", "model_limit": 5,
-                        "nodes": [{"id": "tap", "label": "视觉点击", "type": "vision_tap", "package": "com.luna.music", "guard": "before", "target": "button", "region": [0.1, 0.1, 0.9, 0.9], "verify": "after", "next": "end"}, {"id": "end", "label": "结束", "type": "end", "result": "succeeded"}],
-                        "tests": [{"node": "tap", "image": before_sample, "expected": "confirmed", "target_region": [0.2, 0.2, 0.3, 0.3]}, {"node": "tap", "image": negative_sample, "expected": "unknown"}, {"node": "tap", "image": before_sample, "expected": "confirmed", "after": True}, {"node": "tap", "image": negative_sample, "expected": "unknown", "after": True}]}
-            call("/workflows", "POST", workflow)
-            call("/workflows/vision-test/validate", "POST")
-            no_samples = {**workflow, "id":"vision-no-samples", "tests":[]}
-            call("/workflows", "POST", no_samples)
-            model["model"] = "changed-before-first-run"
-            call("/settings/model", "PUT", model)
-            baseline = taps()
-            Model.calls = []
-            run = start("vision-no-samples")
-            result = done(run["id"])
-            assert result["state"] == "succeeded", result
-            assert result["model_calls"] == 3 and taps() == baseline + 1 and result["model_settings"] == model
-            assert not (data / "bin/ocr").exists()
-            assert not any('"swift"' in line for line in (fake / "commands").read_text().splitlines())
-            print("通过：样本检查可选、无样本首次运行、更换模型直接运行、三次看图单次点击、操作后新图与配置快照，无本地识别依赖", flush=True)
-
-            route_no = png(450, 800)
-            route_no_sample = inspect(route_no)["image"]
-            Model.route_images = {positive: "route_yes", route_no: "route_no"}
-            route = {"schema_version": 1, "id": "vision-route-test",
-                     "name": "模拟视觉分流", "description": "按画面选择唯一去向", "devices": ["mock-phone"],
-                     "recognition": "vision", "entry": "route", "model_limit": 2,
-                     "nodes": [{"id": "route", "label": "看图分流", "type": "vision_route", "package": "com.luna.music",
-                                "cases": [{"condition": "可操作状态", "next": "route_yes"},
-                                          {"condition": "已完成状态", "next": "route_no"}]},
-                               {"id": "route_yes", "label": "可操作", "type": "end", "result": "succeeded"},
-                               {"id": "route_no", "label": "已完成", "type": "end", "result": "succeeded"}],
-                     "tests": [{"node": "route", "image": before_sample, "expected": "route_yes"},
-                               {"node": "route", "image": route_no_sample, "expected": "route_no"},
-                               {"node": "route", "image": negative_sample, "expected": "unknown"}]}
-            call("/workflows", "POST", route)
-            call("/workflows/vision-route-test/validate", "POST")
-            baseline = taps()
-            result = done(start("vision-route-test")["id"])
-            assert result["state"] == "succeeded" and result["model_calls"] == 1 and taps() == baseline, result
-            (fake / "screen.png").write_bytes(route_no)
-            result = done(start("vision-route-test")["id"])
-            assert result["state"] == "succeeded" and result["node"] == "route_no" and taps() == baseline, result
-            (fake / "screen.png").write_bytes(Model.negative)
-            result = done(start("vision-route-test")["id"])
-            assert result["state"] == "needs_help" and taps() == baseline, result
-            (fake / "screen.png").write_bytes(positive)
-            print("通过：视觉分流两个去向均可到达，未知页面停止", flush=True)
-            for restart in [None, False, True]:
-                launch = {"id": "launch", "label": "打开应用", "type": "launch",
-                          "package": "com.luna.music", "next": "route"}
-                if restart is not None:
-                    launch["restart"] = restart
-                item = {**route, "id": "launch-test-" + str(restart).lower(), "entry": "launch",
-                        "nodes": [launch, *route["nodes"]]}
-                call("/workflows", "POST", item)
-                index = len((fake / "commands").read_text().splitlines())
-                result = done(start(item["id"])["id"])
-                assert result["state"] == "succeeded", result
-                commands = [json.loads(line)[2:] for line in (fake / "commands").read_text().splitlines()[index:]]
-                stop = ["shell", "am", "force-stop", "com.luna.music"]
-                opened = [command for command in commands if command[:2] == ["shell", "monkey"]]
-                if restart:
-                    assert commands.count(stop) == 1 and len(opened) == 1, commands
-                    assert commands.index(stop) < commands.index(opened[0]), commands
-                else:
-                    assert stop not in commands and not opened, commands
-            Model.route_images = {}
-            print("通过：默认保留前台应用，仅 restart=true 先结束再启动", flush=True)
-
-            def direct_start(mode, budget=5):
-                nonlocal workflow
-                workflow = {**workflow, "id": "vision-" + mode + str(time.monotonic_ns()), "model_limit": budget, "tests": []}
-                call("/workflows", "POST", workflow)
-                Model.calls = []
-                Model.mode = mode
-                return start(workflow["id"])
-
-            for mode in ["outside", "unknown", "shift", "budget"]:
-                baseline = taps()
-                run = direct_start(mode, 3 if mode == "budget" else 5)
-                result = done(run["id"])
-                assert result["state"] == "needs_help" and taps() == baseline, (mode, result)
-                assert result["model_calls"] <= result["workflow"]["model_limit"]
-            print("通过：越界、未知、定位漂移和预算不足均不点击", flush=True)
-
-            Model.started.clear()
-            Model.release.clear()
-            baseline = taps()
-            run = direct_start("blocked")
-            assert Model.started.wait(5)
-            newer = {**model, "model": "changed-after-start"}
-            call("/settings/model", "PUT", newer)
-            call(f"/runs/{run['id']}/pause", "POST")
-            result = done(run["id"])
-            assert result["state"] == "paused" and result["model_settings"] == model
-            Model.release.set()
-            time.sleep(0.3)
-            assert taps() == baseline
-            call(f"/runs/{run['id']}/stop", "POST")
-            wait(lambda: record(run["id"])["state"] == "cancelled")
-            print("通过：模型等待可暂停，迟到结果不点击，修改设置不改运行快照", flush=True)
+            for api in ["responses", "chat_completions"]:
+                model["api"] = api
+                call("/settings/model", "PUT", model)
+                for mode in ["outside", "missing", "foreign", "low", "malformed"]:
+                    Model.mode = mode
+                    answer = inspect(target="button")
+                    assert answer["result"] is None and answer["error"] and answer["calls"] == 2, (mode, answer)
+                Model.mode = "valid"
+                assert inspect(target="button")["result"]["target"] == [100, 200]
+            assert taps() == 0 and call("/runs") == []
+            print("通过：两类接口、越界与无效结果拒绝、检查不操作手机", flush=True)
         finally:
-            Model.release.set()
             stop_server(process, data)
             process.wait(timeout=20)
             server.shutdown()
             server.server_close()
             logfile.close()
-    print("纯视觉隔离检查全部通过。", flush=True)
+    print("模型只读检查全部通过。", flush=True)
 
 
 if __name__ == "__main__":

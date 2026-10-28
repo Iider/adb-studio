@@ -17,7 +17,6 @@
   import Button from "$lib/components/ui/button/button.svelte";
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import {
-    launchMode,
     type Device,
     type Schedule,
     type Workflow,
@@ -75,19 +74,9 @@
   let date = $state("");
   let minutes = $state(60);
   let days = $state<number[]>([1, 2, 3, 4, 5]);
-  let tapCount = $state(10);
-  let tapInterval = $state(5);
-  let swipeMinutes = $state(15);
-  let swipeInterval = $state(25);
-
   const availableWorkflows = $derived(workflows);
   const workflow = $derived(
     availableWorkflows.find((workflow) => workflow.id === workflowId),
-  );
-  const hasTap = $derived(
-    workflow?.nodes.some((node) =>
-      ["tap_loop", "fixed_tap_loop"].includes(node.type),
-    ),
   );
   const compatibleDevices = $derived(
     devices.filter(
@@ -103,11 +92,9 @@
       ? "请先保存一个自动化任务。"
       : !compatibleDevices.some((device) => device.id === deviceId)
         ? "请选择适用于此任务的已登记手机。"
-        : launchMode(workflow) === "device_point" && !selectedDevice?.tap_point
-          ? "请先到设备详情标注这台手机的点击位置。"
-          : kind === "weekly" && !days.length
-            ? "请至少选择一天。"
-            : "",
+        : kind === "weekly" && !days.length
+          ? "请至少选择一天。"
+          : "",
   );
   const visible = $derived(
     schedules
@@ -147,13 +134,7 @@
   async function openEditor(schedule?: Schedule) {
     editingId = schedule?.id ?? "";
     scheduleName = schedule?.name ?? "";
-    workflowId =
-      schedule?.workflow_id ??
-      (
-        availableWorkflows.find((workflow) => workflow.id === "swipe") ||
-        availableWorkflows[0]
-      )?.id ??
-      "";
+    workflowId = schedule?.workflow_id ?? availableWorkflows[0]?.id ?? "";
     deviceId = schedule?.device_id ?? "";
     enabled = schedule?.enabled ?? true;
     kind = schedule?.rule.kind ?? "daily";
@@ -169,11 +150,6 @@
       schedule?.rule.kind === "weekly"
         ? [...schedule.rule.days]
         : [1, 2, 3, 4, 5];
-    tapCount = schedule?.tap?.count ?? 10;
-    tapInterval = schedule?.tap?.interval ?? 5;
-    swipeMinutes = schedule?.swipe?.minutes ?? 15;
-    swipeInterval = schedule?.swipe?.interval ?? 25;
-
     await tick();
     if (!schedule) chooseDevice();
     editor?.showModal();
@@ -205,13 +181,6 @@
       workflow_id: workflowId,
       enabled,
       rule,
-      tap: hasTap
-        ? { count: Number(tapCount), interval: Number(tapInterval) }
-        : null,
-      swipe:
-        launchMode(workflow) === "swipe_settings"
-          ? { minutes: Number(swipeMinutes), interval: Number(swipeInterval) }
-          : null,
     });
     if (saved) editor?.close();
   }
@@ -326,14 +295,6 @@
           <div class="task-meta schedule-meta">
             <span>手机 <b>{deviceName(schedule.device_id)}</b></span>
             <span>任务 <b>{workflowName(schedule.workflow_id)}</b></span>
-            {#if schedule.swipe}<span
-                >时长 <b>{schedule.swipe.minutes} 分钟</b> · 间隔
-                <b>{schedule.swipe.interval} 秒</b></span
-              >{/if}
-            {#if schedule.tap}<span
-                >点击 <b>{schedule.tap.count} 次</b> · 间隔
-                <b>{schedule.tap.interval} 秒</b></span
-              >{/if}
           </div>
           <div class="schedule-next" class:muted={!schedule.enabled}>
             <Clock3 size={16} aria-hidden="true" />
@@ -512,53 +473,6 @@
         </fieldset>{/if}
       {#if kind === "interval"}<p class="hint">
           从本次保存时间起计时；修改或重新开启会重新计时。
-        </p>{/if}
-      {#if hasTap}<div class="schedule-field-pair">
-          <label
-            >点击次数<input
-              type="number"
-              min="1"
-              max="10000"
-              step="1"
-              required
-              bind:value={tapCount}
-            /></label
-          ><label
-            >点击间隔（秒）<input
-              type="number"
-              min="1"
-              max="86400"
-              step="any"
-              required
-              bind:value={tapInterval}
-            /></label
-          >
-        </div>{/if}
-      {#if launchMode(workflow) === "swipe_settings"}<div
-          class="schedule-field-pair"
-        >
-          <label
-            >总时长（分钟）<input
-              type="number"
-              min="0.01"
-              max="10080"
-              step="any"
-              required
-              bind:value={swipeMinutes}
-            /></label
-          ><label
-            >滑动间隔（秒）<input
-              type="number"
-              min="0.01"
-              max="86400"
-              step="any"
-              required
-              bind:value={swipeInterval}
-            /></label
-          >
-        </div>
-        <p class="hint">
-          保持手机当前页面；先等待，再滑动，到达时长结束。
         </p>{/if}
       <label class="awake"
         ><span>开启定时</span><input

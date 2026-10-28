@@ -11,7 +11,6 @@ ARG TARGETARCH
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src/ src/
-COPY workflows/ workflows/
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target,id=adb-studio-target-${TARGETARCH} \
     cargo build --locked --release && mkdir -p /out && cp target/release/adb-studio /out/adb-studio
@@ -19,6 +18,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM backend AS checks
 RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
 COPY scripts/ scripts/
+COPY --from=web /src/web/build web/build
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target,id=adb-studio-target-${TARGETARCH} \
     cargo test --locked && cargo build --locked \

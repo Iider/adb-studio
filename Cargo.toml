@@ -11,7 +11,6 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-quick-xml = { version = "0.38", features = ["serialize"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 sea-orm = { version = "1.1", features = ["runtime-tokio-rustls", "sqlx-sqlite"] }
 serde = { version = "1", features = ["derive"] }

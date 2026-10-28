@@ -17,7 +17,6 @@
   let error = $state("");
   let file = $state<Blob | null>(null);
   let draftState = $state("");
-  let mode = $state("");
   let returnFocus: HTMLElement | null = null;
 
   $effect(() => {
@@ -28,7 +27,6 @@
     error = "";
     file = null;
     draftState = "";
-    mode = "";
     void (async () => {
       await tick();
       if (abort.signal.aborted) return;
@@ -49,7 +47,6 @@
         if (abort.signal.aborted) return;
         file = blob;
         draftState = response.headers.get("x-workflow-draft-state") ?? "";
-        mode = response.headers.get("x-workflow-launch-mode") ?? "";
       } catch (cause) {
         if (!abort.signal.aborted)
           error = cause instanceof Error ? cause.message : "导出失败，请重试";
@@ -115,11 +112,6 @@
       <p>仅导出当前草稿，包括未完成的步骤；不覆盖已保存任务。</p>
     {:else}
       <p>包含已保存任务{draftState === "saved" ? "与画布布局" : ""}。</p>
-    {/if}
-    {#if mode === "device_point"}
-      <p class="notice">
-        点击位置来自目标手机的本机标注，文件不包含该标注；换电脑后需要重新标注。
-      </p>
     {/if}
     <p class="sharing">
       文件保留步骤文字、适用手机编号、画布标注及引用的图片样本，请确认后分享。

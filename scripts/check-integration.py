@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.request
 import zlib
+import uuid
 
 from check_support import executable, python_program, environment, stop
 
@@ -53,29 +54,19 @@ def wait(fn, timeout=25):
     raise AssertionError("等待检查结果超时")
 
 
-def workflow(id, count=2, interval=0.2):
+def workflow(name, count=2, interval=0.2):
     return {
-        "schema_version": 1,
-        "id": id,
-        "name": "模拟滑动",
-        "description": "集成检查",
-        "devices": [],
-        "entry": "swipe",
-        "model_limit": 1,
+        "id": str(uuid.uuid4()), "revision": 0, "name": name,
+        "description": "模拟滑动", "entry": "swipe", "viewport": [0, 0, 1],
         "nodes": [
-            {
-                "id": "swipe",
-                "label": "滑动",
-                "type": "swipe_loop",
-                "interval": interval,
-                "count": count,
-                "minutes": None,
-                "long": False,
-                "next": "end",
-            },
-            {"id": "end", "label": "结束", "type": "end", "result": "succeeded"},
+            {"id": "swipe", "kind": "swipe", "label": "滑动", "position": [0, 0],
+             "targets": {"next": "end"}, "config": {
+                 "count": count, "interval": interval, "duration_ms": 100,
+                 "profiles": [{"device_id": "mock-phone", "width": 400, "height": 800,
+                    "display": "default", "x": 0.5, "y": 0.8, "to_x": 0.5, "to_y": 0.2}]}},
+            {"id": "end", "kind": "end", "label": "结束", "position": [300, 0],
+             "targets": {}, "config": {"result": "succeeded"}},
         ],
-        "tests": [{"node": "swipe", "text": "count=2", "expected": "valid"}],
     }
 
 
@@ -141,7 +132,12 @@ def main():
                 with urllib.request.urlopen(req, timeout=20) as response:
                     status, value = response.status, json.load(response)
             except urllib.error.HTTPError as e:
-                status, value = e.code, json.load(e)
+                status = e.code
+                raw = e.read().decode()
+                try:
+                    value = json.loads(raw)
+                except json.JSONDecodeError:
+                    value = {"error": raw}
             assert status == expected, (path, status, value)
             return value
 
@@ -309,450 +305,76 @@ def main():
             print("通过：无密码解锁、密码锁屏提示、重复锁屏不唤醒", flush=True)
 
 
-            fixed = json.loads((ROOT / "workflows/feed-duck-fixed.json").read_text())
-            fixed["id"] = "fixed-test"
-            fixed["devices"] = []
-            call("/workflows", "POST", fixed)
-            captures = (fake / "captures").read_text() if (fake / "captures").exists() else ""
-            r = call("/runs", "POST", {"device_id": "mock-phone", "workflow_id": "fixed-test", "tap": {"count": 3, "interval": 1}})
-            assert done(r["id"])["state"] == "succeeded"
-            assert len((fake / "taps").read_text().splitlines()) == 3
-            assert all(json.loads(line)[-2:] == ["528", "1866"] for line in (fake / "taps").read_text().splitlines())
-            assert ((fake / "captures").read_text() if (fake / "captures").exists() else "") == captures
-            call("/runs/" + r["id"], "DELETE")
-            assert not any(row["id"] == r["id"] for row in call("/runs"))
-            print("通过：固定点击次数与坐标、零截图零识别、清理运行记录", flush=True)
-            call("/runs", "POST", {"device_id": "mock-phone", "workflow_id": "point-click"}, expected=400)
-            call("/devices/mock-phone", "PUT", {"tap_point": {"x": 400, "y": 222, "width": 400, "height": 800}}, expected=400)
-            point = {"x": 111, "y": 222, "width": 400, "height": 800}
-            call("/devices/mock-phone", "PUT", {"tap_point": point})
-            assert next(d for d in call("/devices") if d["id"] == "mock-phone")["tap_point"] == point
-            r = call("/runs", "POST", {"device_id": "mock-phone", "workflow_id": "point-click", "tap": {"count": 2, "interval": 1}})
-            assert r["workflow"]["nodes"][0]["x"] == 111
-            call("/devices/mock-phone", "PUT", {"tap_point": {**point, "x": 333}})
-            assert done(r["id"])["state"] == "succeeded"
-            assert all(json.loads(line)[-2:] == ["111", "222"] for line in (fake / "taps").read_text().splitlines()[-2:])
-            assert ((fake / "captures").read_text() if (fake / "captures").exists() else "") == captures
-            print("通过：标注保存、越界拒绝、运行坐标快照、不同尺寸零识别点击", flush=True)
+            assert call("/workflows") == []
+            # Removed endpoints must reject old submissions before any action.
+            call("/workflows", "POST", {}, expected=405)
+            call("/runs", "POST", {"device_id":"mock-phone", "workflow_id":"swipe", "tap":{}}, expected=422)
 
+            def save(draft):
+                path = "/workflow-drafts/" + draft["id"]
+                saved = call(path, "PUT", draft)
+                return call(path + "/save", "POST", {"revision":saved["revision"]}), saved
 
-            call("/workflows", "POST", workflow("fixture"))
-            call("/workflows", "POST", workflow("fixture"))
-            r = call(
-                "/runs",
-                "POST",
-                {
-                    "device_id": "mock-phone",
-                    "workflow_id": "fixture",
+            def start_workflow(workflow):
+                return call("/runs", "POST", {"device_id":"mock-phone", "workflow_id":workflow["id"]})
 
-                },
-            )
-            call(
-                "/runs",
-                "POST",
-                {
-                    "device_id": "mock-phone",
-                    "workflow_id": "fixture",
+            flow, draft = save(workflow("工作流执行", count=4, interval=0.6))
+            r = start_workflow(flow)
+            call("/runs", "POST", {"device_id":"mock-phone", "workflow_id":flow["id"]}, expected=400)
+            draft["name"] = "保存的新内容"
+            replacement, draft = save(draft)
+            assert record(r["id"])["workflow"]["name"] == "工作流执行"
+            assert done(r["id"])["state"] == "succeeded" and count() == 4
+            assert len(call("/workflows")) == 1
+            assert start_workflow(replacement)["workflow"]["name"] == "保存的新内容"
+            wait(lambda: all(not row["state"] in {"running","recovering","waiting_device"} for row in call("/runs")))
+            print("通过：只允许工作流创建、运行快照、重复保存与同机互斥", flush=True)
 
-                },
-                expected=400,
-            )
-            replacement = {**workflow("fixture"), "name":"覆盖后的工作流", "tests":[]}
-            saved = call("/workflows", "POST", replacement)
-            assert "version" not in saved
-            assert len([w for w in call("/workflows") if w["id"] == "fixture"]) == 1
-            assert done(r["id"])["state"] == "succeeded" and count() == 2
-            assert record(r["id"])["workflow"]["name"] == "模拟滑动"
-            latest_run = call("/runs", "POST", {"device_id":"mock-phone", "workflow_id":"fixture"})
-            assert latest_run["workflow"]["name"] == replacement["name"]
-            assert done(latest_run["id"])["state"] == "succeeded"
-            assert call("/runs/" + r["id"] + "/export")["events"]
-            print("通过：首次直接运行、覆盖保存仅一份、保存不改变进行中的任务、同机互斥", flush=True)
-
+            flow, _ = save(workflow("暂停与恢复", count=12, interval=0.5))
+            r = start_workflow(flow)
+            wait(lambda: record(r["id"])["checkpoint"].get("done", 0) >= 1)
+            call("/runs/" + r["id"] + "/pause", "POST")
+            wait(lambda: record(r["id"])["state"] == "paused")
             before = count()
-            custom = {"device_id": "mock-phone", "workflow_id": "fixture", "swipe": {"minutes": 0.001, "interval": 1}}
-            r = call("/runs", "POST", custom)
-            assert r["workflow"]["nodes"][0]["count"] is None
-            assert done(r["id"])["state"] == "succeeded" and count() == before
-            custom["swipe"]["minutes"] = 0
-            call("/runs", "POST", custom, expected=400)
-            schedule = call("/schedules", "POST", {"name": "自定义滑动", "device_id": "mock-phone", "workflow_id": "fixture", "swipe": {"minutes": 2, "interval": 7}, "rule": {"kind": "interval", "minutes": 60}, "enabled": False})
-            assert next(s for s in call("/schedules") if s["id"] == schedule["id"])["swipe"] == {"minutes": 2, "interval": 7}
-            call("/schedules/" + schedule["id"], "DELETE")
-            print("通过：自定义滑动时长、间隔、短时长不滑动、无效输入、定时保存", flush=True)
-
-            recover_before = count()
-            call("/workflows", "POST", workflow("recover", count=3, interval=0.6))
-            r = call(
-                "/runs",
-                "POST",
-                {
-                    "device_id": "mock-phone",
-                    "workflow_id": "recover",
-
-                },
-            )
-            wait(lambda: count() > recover_before)
-            (fake / "online").unlink()
-            wait(lambda: record(r["id"])["state"] == "waiting_device")
-            due = (
-                dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=2)
-            ).isoformat()
-            s = call(
-                "/schedules",
-                "POST",
-                {
-                    "name": "离线跳过",
-                    "device_id": "mock-phone",
-                    "workflow_id": "fixture",
-                    "rule": {"kind": "once", "at": due},
-                },
-            )
-            wait(
-                lambda: next(x for x in call("/schedules") if x["id"] == s["id"])[
-                    "last_result"
-                ]
-                and "跳过"
-                in next(x for x in call("/schedules") if x["id"] == s["id"])[
-                    "last_result"
-                ]
-            )
-            stop(process, data)
-            process.wait(timeout=15)
-            process = boot()
-            assert (
-                next(d for d in call("/devices") if d["id"] == "mock-phone")["name"]
-                == "测试机"
-            )
-            assert record(r["id"])["state"] in {"waiting_device", "recovering"}
-            (fake / "online").write_text("1")
-            call("/devices/refresh", "POST")
-            assert done(r["id"])["state"] == "succeeded" and count() == recover_before + 3
-            print("通过：离线等待、新定时跳过、后台重启恢复、动作不重复", flush=True)
-
-            call("/workflows", "POST", workflow("stop", count=100, interval=0.3))
-            r = call(
-                "/runs",
-                "POST",
-                {
-                    "device_id": "mock-phone",
-                    "workflow_id": "stop",
-
-                },
-            )
-            (fake / "online").unlink()
-            wait(lambda: record(r["id"])["state"] == "waiting_device")
-            call("/runs/" + r["id"] + "/stop", "POST")
-            assert done(r["id"])["state"] == "cancelled"
-            (fake / "online").write_text("1")
-            call("/devices/refresh", "POST")
-            due = (
-                dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=3)
-            ).isoformat()
-            baseline = len(call("/runs"))
-            call(
-                "/schedules",
-                "POST",
-                {
-                    "name": "单次执行",
-                    "device_id": "mock-phone",
-                    "workflow_id": "fixture",
-                    "rule": {"kind": "once", "at": due},
-                },
-            )
-            wait(lambda: len(call("/runs")) == baseline + 1)
-            time.sleep(3)
-            assert len(call("/runs")) == baseline + 1
-            scheduled_run = max(call("/runs"), key=lambda row: row["started_at"])
-            assert scheduled_run["workflow"]["name"] == replacement["name"]
-            print("通过：等待时可停止、单次定时使用保存后的内容且只执行一次", flush=True)
-
-            wait(lambda: all(r["state"] not in {"running", "waiting_device", "recovering", "paused"} for r in call("/runs")))
-
-            def begin(w):
-                call("/workflows", "POST", w)
-                return call("/runs", "POST", {"device_id": "mock-phone", "workflow_id": w["id"]})
-
-            def paused(id):
-                return wait(lambda: record(id) if record(id)["state"] == "paused" else None)
-
-            before = count()
-            stopped = begin(workflow("stopped-resume", count=8, interval=0.4))
-            wait(lambda: record(stopped["id"])["checkpoint"].get("done", 0) >= 1 and record(stopped["id"])["pending"] is None)
-            call(f"/runs/{stopped['id']}/stop", "POST")
-            held = done(stopped["id"])
-            progress = held["checkpoint"].copy()
-            assert held["state"] == "cancelled" and held["ended_at"] and held["resume_app"] == "com.luna.music"
-            assert count() - before == progress["done"] < 8
-            other = begin(workflow("stopped-contender", count=100, interval=0.4))
-            assert "已有其他任务" in call(f"/runs/{stopped['id']}/resume", "POST", expected=400)["error"]
-            assert record(stopped["id"])["ended_at"] == held["ended_at"]
-            call(f"/runs/{other['id']}/stop", "POST")
-            done(other["id"])
-            call("/devices/mock-phone/screen", "POST", {"action":"lock"})
-            call(f"/runs/{stopped['id']}/resume", "POST", expected=400)
-            call("/devices/mock-phone/screen", "POST", {"action":"wake"})
-            (fake / "foreground").write_text("com.example.other")
-            call(f"/runs/{stopped['id']}/resume", "POST", expected=400)
+            stop(process, data); process.wait(timeout=15); process = boot()
+            assert record(r["id"])["state"] == "paused" and count() == before
+            (fake / "foreground").write_text("other.app/.Main")
+            call("/runs/" + r["id"] + "/resume", "POST", expected=400)
             (fake / "foreground").unlink()
-            (fake / "online").unlink()
-            call(f"/runs/{stopped['id']}/resume", "POST", expected=400)
-            (fake / "online").touch()
-            stop(process, data)
-            process.wait(timeout=15)
-            process = boot()
-            assert record(stopped["id"])["state"] == "cancelled"
-            assert record(stopped["id"])["checkpoint"] == progress
-            continued_at = count()
-            resumed = call(f"/runs/{stopped['id']}/resume", "POST")
-            assert resumed["id"] == stopped["id"] and resumed["ended_at"] is None
-            assert resumed["started_at"] == stopped["started_at"] and resumed["checkpoint"] == progress
-            assert done(stopped["id"])["state"] == "succeeded"
-            assert count() - continued_at == 8 - progress["done"]
-            call(f"/runs/{stopped['id']}/resume", "POST", expected=400)
-            print("通过：停止后原记录保留进度续跑、停止不自动恢复、同机互斥、锁屏/离线/换应用拒绝继续、已完成不可继续", flush=True)
-
-            before = count()
-            r = begin(workflow("handoff", count=6, interval=0.4))
+            call("/runs/" + r["id"] + "/resume", "POST")
             wait(lambda: count() > before)
-            call(f"/runs/{r['id']}/pause", "POST")
-            held = paused(r["id"])
-            assert held["ended_at"] is None and held["resume_app"] == "com.luna.music"
-            progress = held["checkpoint"].copy()
-            held_count = count()
-            time.sleep(0.7)
-            assert count() == held_count and record(r["id"])["checkpoint"] == progress
-            call(f"/runs/{r['id']}", "DELETE", expected=400)
-            call("/runs", "POST", {"device_id":"mock-phone", "workflow_id":"fixture"}, expected=400)
-            due=(dt.datetime.now(dt.timezone.utc)+dt.timedelta(seconds=2)).isoformat()
-            scheduled=call("/schedules", "POST", {"name":"接管期间避让", "device_id":"mock-phone", "workflow_id":"fixture", "rule":{"kind":"once","at":due}})
-            wait(lambda: "跳过" in (next(s for s in call("/schedules") if s["id"]==scheduled["id"])["last_result"] or ""))
-            assert "跳过" in next(s for s in call("/schedules") if s["id"]==scheduled["id"])["last_result"]
-            assert count()==held_count
-            stop(process, data)
-            process.wait(timeout=15)
-            process=boot()
-            assert record(r["id"])["state"]=="paused"
-            time.sleep(0.5)
-            assert count()==held_count
-            call("/devices/mock-phone/screen", "POST", {"action":"lock"})
-            call(f"/runs/{r['id']}/resume", "POST", expected=400)
-            call("/devices/mock-phone/screen", "POST", {"action":"wake"})
-            (fake/"foreground").write_text("com.example.other")
-            call(f"/runs/{r['id']}/resume", "POST", expected=400)
-            assert record(r["id"])["state"]=="paused" and count()==held_count
-            (fake/"foreground").unlink()
-            (fake/"online").unlink()
-            call(f"/runs/{r['id']}/resume", "POST", expected=400)
-            (fake/"online").touch()
-            call(f"/runs/{r['id']}/resume", "POST")
-            assert done(r["id"])["state"]=="succeeded" and count()-before==6
-            print("通过：人工接管保留进度、定时避让、不可清理、重启保持暂停、锁屏/离线/换应用拒绝继续、原记录续跑", flush=True)
+            call("/runs/" + r["id"] + "/stop", "POST")
+            wait(lambda: record(r["id"])["state"] == "cancelled")
+            before = count()
+            stop(process, data); process.wait(timeout=15); process = boot()
+            assert record(r["id"])["state"] == "cancelled" and count() == before
+            call("/runs/" + r["id"] + "/resume", "POST")
+            assert done(r["id"])["state"] == "succeeded"
+            assert count() == 8 + 12
+            print("通过：暂停与停止不自动恢复、原记录继续、换应用拒绝继续、不重复动作", flush=True)
 
-            w=workflow("handoff-wait",count=1,interval=0.2)
-            w["entry"]="wait"
-            w["nodes"].insert(0,{"id":"wait","label":"人工等待","type":"wait","seconds":20,"next":"swipe"})
-            r=begin(w)
-            time.sleep(0.8)
-            call(f"/runs/{r['id']}/pause","POST")
-            held=paused(r["id"])
-            waited=held["checkpoint"]["wait_elapsed"]
-            assert 0<waited<20
-            call(f"/runs/{r['id']}/resume","POST")
-            time.sleep(0.7)
-            call(f"/runs/{r['id']}/pause","POST")
-            assert paused(r["id"])["checkpoint"]["wait_elapsed"]>waited
-            call(f"/runs/{r['id']}/stop","POST")
-            assert done(r["id"])["state"]=="cancelled"
-            print("通过：长等待可立即接管、已等待时长保留、暂停期间不累计",flush=True)
+            flow, _ = save(workflow("离线恢复", count=6, interval=0.5))
+            before = count()
+            r = start_workflow(flow)
+            wait(lambda: count() > before)
+            (fake / "online").unlink()
+            call("/devices/refresh", "POST")
+            wait(lambda: record(r["id"])["state"] == "waiting_device")
+            stop(process, data); process.wait(timeout=15); process = boot()
+            (fake / "online").touch()
+            call("/devices/refresh", "POST")
+            assert done(r["id"])["state"] == "succeeded"
+            assert count() == before + 6
+            print("通过：掉线等待、重启恢复、不重复动作", flush=True)
 
-            (fake/"slow-input").touch()
-            (fake/"input-started").unlink(missing_ok=True)
-            before=count()
-            r=begin(workflow("handoff-inflight",count=3,interval=0.2))
-            wait(lambda:(fake/"input-started").exists())
-            call(f"/runs/{r['id']}/pause", "POST")
-            assert record(r["id"])["pause_requested"] and record(r["id"])["state"]!="paused"
-            held=paused(r["id"])
-            assert count()-before==1 and held["pending"] is None
-            (fake/"slow-input").unlink()
-            call(f"/runs/{r['id']}/resume", "POST")
-            assert done(r["id"])["state"]=="succeeded" and count()-before==3
-            print("通过：执行中的命令结束后才允许接管，不中断输入也不重复输入", flush=True)
+            when = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=2)).isoformat()
+            before = count()
+            schedule = call("/schedules", "POST", {"name":"单次工作流", "device_id":"mock-phone", "workflow_id":flow["id"], "rule":{"kind":"once","at":when}})
+            wait(lambda: count() == before + 6)
+            wait(lambda: all(row["state"] != "running" for row in call("/runs")))
+            assert not next(s for s in call("/schedules") if s["id"] == schedule["id"])["enabled"]
+            print("通过：工作流定时仅触发一次", flush=True)
 
-            for flag in ["reject-input","timeout-input"]:
-                (fake/flag).touch()
-                before=count()
-                r=begin(workflow("input-"+flag,count=3,interval=0.2))
-                held=paused(r["id"])
-                assert held["pending"]=="swipe" and held["ended_at"] is None and held["error_detail"]
-                assert count()==before
-                (fake/flag).unlink()
-                call(f"/runs/{r['id']}/resume", "POST")
-                assert done(r["id"])["state"]=="succeeded" and count()-before==2
-            print("通过：触控拒绝与ADB超时保留暂停，继续不补发未确认滑动", flush=True)
-
-            r=call("/runs","POST",{"device_id":"mock-phone","workflow_id":"point-click","tap":{"count":10,"interval":1}})
-            wait(lambda: record(r["id"])["checkpoint"].get("done",0)>=1)
-            call(f"/runs/{r['id']}/pause","POST")
-            held=paused(r["id"])
-            assert held["pending"] is None and held["resume_size"]==[400,800]
-            call("/devices/mock-phone","PUT",{"tap_point":{"x":10,"y":10,"width":800,"height":400}})
-            (fake/"screen.png").write_bytes(png(800,400))
-            call(f"/runs/{r['id']}/resume","POST",expected=400)
-            assert record(r["id"])["state"]=="paused"
-            (fake/"screen.png").write_bytes(png())
-            call(f"/runs/{r['id']}/resume","POST")
-            call(f"/runs/{r['id']}/stop","POST")
-            assert done(r["id"])["state"]=="cancelled"
-            call("/devices/mock-phone","PUT",{"tap_point":point})
-            print("通过：继续使用启动时的屏幕尺寸，旋转后重新标注也不能覆盖任务快照",flush=True)
-
-            (fake/"reject-input").touch()
-            r=call("/runs","POST",{"device_id":"mock-phone","workflow_id":"point-click","tap":{"count":2,"interval":1}})
-            held=paused(r["id"])
-            assert held["pending"]=="fixed_tap"
-            (fake/"reject-input").unlink()
-            taps=(fake/"taps").read_text()
-            call(f"/runs/{r['id']}/resume","POST",expected=400)
-            assert (fake/"taps").read_text()==taps
-            call(f"/runs/{r['id']}/stop","POST")
-            assert done(r["id"])["state"]=="cancelled"
-            call(f"/runs/{r['id']}/resume","POST",expected=400)
-            print("通过：不重发未确认点击、暂停可停止、停止后的未确认点击也不可继续",flush=True)
-
-            class ModelHandler(http.server.BaseHTTPRequestHandler):
-                choice = "outside-allowed-branches"
-                calls = 0
-
-                def log_message(self, *args):
-                    pass
-
-                def do_POST(self):
-                    self.rfile.read(int(self.headers["Content-Length"]))
-                    ModelHandler.calls += 1
-                    answer = json.dumps(
-                        {
-                            "choice": ModelHandler.choice,
-                            "reason": "模拟画面验证",
-                            "confidence": 1,
-                        }
-                    )
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(
-                        json.dumps(
-                            {
-                                "output": [
-                                    {
-                                        "type": "message",
-                                        "content": [
-                                            {"type": "output_text", "text": answer}
-                                        ],
-                                    }
-                                ]
-                            }
-                        ).encode()
-                    )
-
-            model_server = http.server.HTTPServer(("127.0.0.1", 0), ModelHandler)
-            thread = threading.Thread(target=model_server.serve_forever, daemon=True)
-            thread.start()
-            try:
-                wait(
-                    lambda: all(
-                        r["state"] not in {"running", "waiting_device", "recovering", "paused"}
-                        for r in call("/runs")
-                    )
-                )
-                call(
-                    "/settings/model",
-                    "PUT",
-                    {
-                        "endpoint": f"http://127.0.0.1:{model_server.server_port}",
-                        "model": "mock",
-                        "api": "responses",
-                        "key_env": "TEST_MODEL_KEY",
-                    },
-                )
-                w = workflow("model-bounds")
-                w["entry"] = "branch"
-                w["nodes"][0] = {
-                    "id": "branch",
-                    "label": "识别分支",
-                    "type": "branch",
-                    "cases": [{"contains": "任务完成", "next": "end"}],
-                    "otherwise": "end",
-                }
-                w["tests"] = [{"node": "branch", "text": "任务完成", "expected": "end"}]
-                call("/workflows", "POST", w)
-                r = call(
-                    "/runs",
-                    "POST",
-                    {
-                        "device_id": "mock-phone",
-                        "workflow_id": w["id"],
-
-                    },
-                )
-                result = done(r["id"])
-                assert (
-                    result["state"] == "needs_help"
-                    and result["model_calls"] == 1
-                    and ModelHandler.calls == 1
-                )
-                retry = call("/runs", "POST", {"device_id":"mock-phone", "workflow_id":"model-bounds"})
-                assert done(retry["id"])["state"] == "needs_help"
-                print("通过：模型不能选择未声明分支、调用预算不可越过；失败后仍可再次运行", flush=True)
-
-                plateau = ROOT / "data/calibration/qishui/coin-0.png"
-                if plateau.exists():
-                    shutil.copy2(plateau, fake / "screen.png")
-                    ModelHandler.choice = "finished"
-                    w = workflow("qishui-plateau")
-                    w["entry"] = "earn"
-                    w["nodes"][0] = {
-                        "id": "earn",
-                        "label": "金币停滞复查",
-                        "type": "qishui_loop",
-                        "coin_region": [0.818, 0.163, 0.961, 0.233],
-                        "identity_region": [0.25, 0.815, 0.67, 0.89],
-                        "warmup": 1,
-                        "stall": 1,
-                        "finish_stall": 3,
-                        "finish_swipes": 3,
-                        "next": "end",
-                    }
-                    w["tests"] = [
-                        {
-                            "node": "earn",
-                            "text": "39591 金币 已暂停",
-                            "expected": "video",
-                        },
-                        {"node": "earn", "text": "网络异常", "expected": "blocked"},
-                    ]
-                    call("/workflows", "POST", w)
-                    baseline = count()
-                    r = call(
-                        "/runs",
-                        "POST",
-                        {
-                            "device_id": "mock-phone",
-                            "workflow_id": w["id"],
-
-                        },
-                    )
-                    result = done(r["id"])
-                    assert result["state"] == "succeeded" and count() - baseline == 3
-                    assert result["model_calls"] == 1 and result["last_shot"]
-                    print(
-                        "通过：真实金币暂停样本、三次上滑复查、完成截图与模型终检",
-                        flush=True,
-                    )
-            finally:
-                model_server.shutdown()
-                model_server.server_close()
             call("/devices/pair", "POST", {"address": "8.8.8.8:41234", "code": "123456"}, 400)
             call("/devices/pair", "POST", {"address": "127.0.0.1:41234", "code": "12345"}, 400)
             (fake / "pair-protocol-fault").touch()
