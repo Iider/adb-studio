@@ -334,35 +334,38 @@ export function summary(data: CanvasData): string {
 }
 
 export function blankDraft(): Draft {
-  const wait = crypto.randomUUID(),
-    end = crypto.randomUUID();
   return {
     id: crypto.randomUUID(),
     revision: 0,
     name: "未命名工作流",
     description: "",
-    entry: wait,
-    nodes: [
-      {
-        id: wait,
-        kind: "wait",
-        label: "等待",
-        config: defaults("wait"),
-        targets: { next: end },
-        position: [280, 150],
-      },
-      {
-        id: end,
-        kind: "end",
-        label: "结束",
-        config: defaults("end"),
-        targets: {},
-        position: [280, 330],
-      },
-    ],
+    entry: "",
+    nodes: [],
     viewport: [30, 25, 0.9],
     updated_at: "",
   };
+}
+
+export function initialDraft(
+  drafts: Draft[],
+  requestedId: string | null,
+  backup: Draft | null = null,
+): { draft: Draft; saved: boolean } {
+  if (!requestedId) return { draft: blankDraft(), saved: false };
+  const chosen = drafts.find((draft) => draft.id === requestedId);
+  if (chosen) return { draft: chosen, saved: true };
+  if (backup?.id === requestedId) {
+    return {
+      draft: {
+        ...backup,
+        id: backup.revision === 0 ? requestedId : crypto.randomUUID(),
+        revision: 0,
+        updated_at: "",
+      },
+      saved: false,
+    };
+  }
+  throw new Error("这份草稿已不存在，请返回任务列表查看");
 }
 
 export function toCanvas(draft: Draft): CanvasNode[] {

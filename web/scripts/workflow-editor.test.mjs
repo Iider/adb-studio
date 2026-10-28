@@ -5,6 +5,7 @@ import {
   canonical,
   checkGraph,
   newCondition,
+  initialDraft,
 } from "../src/lib/workflow-editor.ts";
 
 const node = (id, kind, targets = {}, config = {}) => ({
@@ -24,6 +25,43 @@ const draft = (nodes) => ({
   nodes,
   viewport: [0, 0, 1],
   updated_at: "",
+});
+
+test("新建始终使用独立空白草稿，不接着打开已有内容", () => {
+  const existing = { ...draft([node("end", "end")]), revision: 7 };
+  const before = structuredClone(existing);
+  const first = initialDraft([existing], null, existing);
+  const second = initialDraft([existing], "");
+  assert.equal(first.saved, false);
+  assert.deepEqual(first.draft.nodes, []);
+  assert.equal(first.draft.entry, "");
+  assert.equal(first.draft.revision, 0);
+  assert.notEqual(first.draft.id, existing.id);
+  assert.notEqual(second.draft.id, first.draft.id);
+  assert.deepEqual(existing, before);
+});
+
+test("指定草稿才继续编辑，缺失草稿不会打开其他任务", () => {
+  const existing = { ...draft([node("end", "end")]), revision: 7 };
+  const selected = initialDraft([existing], existing.id);
+  assert.equal(selected.saved, true);
+  assert.deepEqual(selected.draft, existing);
+  assert.throws(() => initialDraft([existing], "missing"), /已不存在/);
+});
+
+test("未落盘的新草稿刷新保留编号，已删除草稿的备份只恢复为新副本", () => {
+  const local = draft([node("wait", "wait")]);
+  const restored = initialDraft([], local.id, local);
+  assert.equal(restored.draft.id, local.id);
+  assert.equal(restored.saved, false);
+  assert.deepEqual(restored.draft.nodes, local.nodes);
+  const old = { ...local, revision: 3, updated_at: "2026-10-28" };
+  const copy = initialDraft([], old.id, old);
+  assert.notEqual(copy.draft.id, old.id);
+  assert.equal(copy.draft.revision, 0);
+  assert.equal(copy.draft.updated_at, "");
+  assert.equal(old.revision, 3);
+  assert.throws(() => initialDraft([], "other", old), /已不存在/);
 });
 
 test("页面依据默认留空，条件判断和等待条件都可直接通过检查", () => {

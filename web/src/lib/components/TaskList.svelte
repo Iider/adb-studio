@@ -215,7 +215,7 @@
           />刷新
         </Button>
         <Button href="/editor" class="catalog-create"
-          ><Plus size={16} aria-hidden="true" />编排工作流</Button
+          ><Plus size={16} aria-hidden="true" />新建工作流</Button
         >
         {#if tasks.some((task) => task.inProgress.length)}
           <Button
@@ -240,7 +240,7 @@
       <p>
         {tasks.length
           ? "试试其他关键词或筛选条件。"
-          : "点击“编排工作流”添加任务。"}
+          : "点击“新建工作流”添加任务。"}
       </p>
       {#if search || filter !== "all"}
         <Button

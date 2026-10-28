@@ -93,6 +93,8 @@ python3 scripts/studio.py request POST /workflows/编号/validate
 
 ## HTTP 接口
 
+任务页“新建工作流”进入独立空白草稿，不默认读取已有任务；卡片“编辑”才打开指定任务。新草稿使用独立 UUID，入口与节点数组为空；保存为任务前仍需补齐流程。
+
 编排器的草稿独立于可运行内容保存，允许缺少连线或尚未填完参数，不会进入 `/workflows`、定时或执行队列。接口 `GET /api/workflow-drafts` 列出草稿，`GET /api/workflow-drafts/{id}` 读取单份，`PUT /api/workflow-drafts/{id}` 保存，`DELETE /api/workflow-drafts/{id}?revision={revision}` 删除。
 
 草稿字段为 `id`（UUID）、`revision`、`name`、`description`、`entry`、`nodes`、`viewport` 和服务生成的 `updated_at`。每个节点保存 `id`、`kind`、`label`、`config`、`targets` 和 `position`；`targets` 是出口编号到目标节点编号的映射，`position` 为画布位置 `[x,y]`，`viewport` 为 `[x,y,zoom]`。新草稿以 `revision: 0` 提交；保存响应返回递增后的并发校对编号。更新与删除必须带上最后读取的 `revision`，冲突返回 HTTP 409，客户端应保留当前编辑并提示重新读取或保存副本。草稿的完整执行校验仍需在手动保存工作流时完成。

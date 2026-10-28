@@ -37,6 +37,7 @@
   import { notify } from "$lib/notifications";
   import {
     blankDraft,
+    initialDraft,
     toCanvas,
     edgesFor,
     palette,
@@ -248,11 +249,6 @@
       "",
       `/editor?draft=${encodeURIComponent(id)}`,
     );
-    try {
-      localStorage.setItem("adb-workflow-last-draft", id);
-    } catch {
-      /* 后台保存仍可使用。 */
-    }
     ready = true;
     void restoreWorkflow(draft.id);
   }
@@ -265,29 +261,12 @@
       drafts = await api<Draft[]>("/workflow-drafts");
       devices = await api<Device[]>("/devices");
       const explicitDraft = new URLSearchParams(location.search).get("draft");
-      let requested = explicitDraft ?? "";
-      if (!requested) {
-        try {
-          requested = localStorage.getItem("adb-workflow-last-draft") ?? "";
-        } catch {
-          /* 使用后台最近草稿。 */
-        }
-      }
-      const chosen = drafts.find((draft) => draft.id === requested);
-      if (explicitDraft && !chosen && !readBackup(requested)) {
-        throw new Error("这份草稿已不存在，请返回任务列表查看");
-      }
-      if (chosen || (!explicitDraft && drafts.length))
-        loadDraft(chosen ?? drafts[0]);
-      else {
-        const local = requested ? readBackup(requested) : null;
-        loadDraft(
-          local
-            ? { ...local, id: crypto.randomUUID(), revision: 0, updated_at: "" }
-            : blankDraft(),
-          false,
-        );
-      }
+      const initial = initialDraft(
+        drafts,
+        explicitDraft,
+        explicitDraft ? readBackup(explicitDraft) : null,
+      );
+      loadDraft(initial.draft, initial.saved);
     } catch (error) {
       loadingError = message(error);
     }
@@ -443,7 +422,7 @@
         /* 删除后台草稿不受影响。 */
       }
       drafts = drafts.filter((draft) => draft.id !== id);
-      loadDraft(drafts[0] ?? blankDraft(), !!drafts.length);
+      loadDraft(blankDraft(), false);
       deleteDialog?.close();
       notify.success("草稿已删除");
     } catch (error) {
@@ -466,6 +445,9 @@
     savingWorkflow = true;
     executionError = "";
     try {
+      if (!nodes.some((node) => node.id !== "__entry")) {
+        throw new Error("请先添加步骤，再保存工作流");
+      }
       if (!(await flush())) return null;
       const submitted = executionContent,
         submittedId = id;
@@ -798,8 +780,7 @@
           role="status"
           title={ready ? saveStatus : "正在读取…"}
           aria-label={ready ? saveStatus : "正在读取…"}
-          ><span class="status-label"
-            >{ready ? saveStatus : "正在读取…"}</span
+          ><span class="status-label">{ready ? saveStatus : "正在读取…"}</span
           ></span
         >{/if}
       <button
