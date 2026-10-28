@@ -348,6 +348,17 @@ export function blankDraft(): Draft {
   };
 }
 
+export function hasDraftContent(
+  draft: Pick<Draft, "name" | "description" | "nodes" | "entry">,
+): boolean {
+  return (
+    draft.nodes.length > 0 ||
+    !!draft.entry ||
+    !!draft.description.trim() ||
+    (!!draft.name.trim() && draft.name.trim() !== "未命名工作流")
+  );
+}
+
 export function initialDraft(
   drafts: Draft[],
   requestedId: string | null,

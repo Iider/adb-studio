@@ -38,6 +38,7 @@
   import {
     blankDraft,
     initialDraft,
+    hasDraftContent,
     toCanvas,
     edgesFor,
     palette,
@@ -129,7 +130,10 @@
       viewport: [viewport.x, viewport.y, viewport.zoom],
     }),
   );
-  const dirty = $derived(content !== savedContent);
+  const emptyNewDraft = $derived(
+    revision === 0 && !hasDraftContent(JSON.parse(content) as Draft),
+  );
+  const dirty = $derived(!emptyNewDraft && content !== savedContent);
   const executionContent = $derived(
     canonical({
       name,
@@ -159,7 +163,9 @@
         ? "正在保存…"
         : dirty
           ? "等待保存…"
-          : `草稿已保存${updatedAt ? ` · ${time(updatedAt, true)}` : ""}`,
+          : emptyNewDraft
+            ? "空白草稿，编辑后自动保存"
+            : `草稿已保存${updatedAt ? ` · ${time(updatedAt, true)}` : ""}`,
   );
 
   function backupKey(draftId: string) {
@@ -327,7 +333,7 @@
 
   async function exportDraft() {
     morePopover?.hidePopover();
-    if (!(await flush())) {
+    if (!(await flush()) || (!revision && !(await persist()))) {
       notify.error("当前编辑尚未保存，请处理保存问题后再导出");
       return;
     }
@@ -339,7 +345,8 @@
 
   $effect(() => {
     const value = content;
-    if (!ready || recovery || !id || value === savedContent) return;
+    if (!ready || switching || recovery || !id || value === savedContent)
+      return;
     try {
       localStorage.setItem(
         backupKey(id),
@@ -352,7 +359,7 @@
     } catch {
       /* 后台自动保存继续工作。 */
     }
-    if (saving || saveError || !name.trim()) return;
+    if (!dirty || saving || saveError || !name.trim()) return;
     const timer = setTimeout(() => {
       void persist();
     }, 700);
@@ -844,7 +851,12 @@
           bind:value={draftChoice}
           disabled={!ready || saving || switching || !!recovery}
           items={[
-            { value: id, label: name || "未命名工作流" },
+            {
+              value: id,
+              label: emptyNewDraft
+                ? "新草稿（未保存）"
+                : name || "未命名工作流",
+            },
             ...drafts
               .filter((draft) => draft.id !== id)
               .map((draft) => ({ value: draft.id, label: draft.name })),
@@ -873,9 +885,13 @@
             saving ||
             switching ||
             !!recovery ||
+            emptyNewDraft ||
             !!savedWorkflow}
-          title={savedWorkflow ? "已保存任务请从任务列表整体删除" : undefined}
-          ><Trash2 size={16} />删除草稿</button
+          title={savedWorkflow
+            ? "已保存任务请从任务列表整体删除"
+            : emptyNewDraft
+              ? "当前空白页尚未保存，无需删除"
+              : undefined}><Trash2 size={16} />删除草稿</button
         >
       </div>
       <div class="popover-actions compact-actions">

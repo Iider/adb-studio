@@ -4,8 +4,11 @@ import {
   actionLimit,
   canonical,
   checkGraph,
+  defaults,
   newCondition,
   initialDraft,
+  blankDraft,
+  hasDraftContent,
 } from "../src/lib/workflow-editor.ts";
 
 const node = (id, kind, targets = {}, config = {}) => ({
@@ -27,6 +30,26 @@ const draft = (nodes) => ({
   updated_at: "",
 });
 
+test("点击和滑动的结束后等待默认 0，兼容旧草稿并校验范围", () => {
+  for (const kind of ["tap", "swipe"]) {
+    assert.equal(defaults(kind).after_wait, 0);
+    const graph = draft([
+      node("action", kind, { next: "end" }, defaults(kind)),
+      node("end", "end", {}, { result: "succeeded" }),
+    ]);
+    for (const value of [undefined, 0, 0.1, 86400]) {
+      graph.nodes[0].config.after_wait = value;
+      assert.deepEqual(checkGraph(graph), []);
+    }
+    for (const value of [-1, 86401, NaN, Infinity, null, "1"]) {
+      graph.nodes[0].config.after_wait = value;
+      assert.ok(
+        checkGraph(graph).some((issue) => issue.message.includes("结束后等待")),
+      );
+    }
+  }
+});
+
 test("新建始终使用独立空白草稿，不接着打开已有内容", () => {
   const existing = { ...draft([node("end", "end")]), revision: 7 };
   const before = structuredClone(existing);
@@ -39,6 +62,25 @@ test("新建始终使用独立空白草稿，不接着打开已有内容", () =>
   assert.notEqual(first.draft.id, existing.id);
   assert.notEqual(second.draft.id, first.draft.id);
   assert.deepEqual(existing, before);
+});
+
+test("空白草稿和仅移动画布不落盘，添加内容后自动保存", () => {
+  const empty = blankDraft();
+  assert.equal(hasDraftContent(empty), false);
+  assert.equal(hasDraftContent({ ...empty, viewport: [100, 200, 1.2] }), false);
+  assert.equal(
+    hasDraftContent({ ...empty, name: "  未命名工作流  ", description: "  " }),
+    false,
+  );
+  assert.equal(hasDraftContent({ ...empty, name: "签到" }), true);
+  assert.equal(hasDraftContent({ ...empty, description: "待补步骤" }), true);
+  assert.equal(
+    hasDraftContent({ ...empty, nodes: [node("wait", "wait")] }),
+    true,
+  );
+  const restored = initialDraft([], empty.id, empty);
+  assert.equal(restored.draft.id, empty.id);
+  assert.equal(hasDraftContent(restored.draft), false);
 });
 
 test("指定草稿才继续编辑，缺失草稿不会打开其他任务", () => {
