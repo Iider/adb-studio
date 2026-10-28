@@ -65,6 +65,9 @@
   let pairCode = $state("");
   let lanPending = $state(false);
   let lanScanning = $state(false);
+  let adbRestarting = $state(false);
+  let restartMessage = $state("");
+  let restartError = $state(false);
   let scanAttempted = $state(false);
   let nearbyDevices = $state<NearbyDevice[]>([]);
   let screenDimensions = $state("");
@@ -109,7 +112,7 @@
     }
   });
   async function scanLan() {
-    if (lanScanning || lanPending) return;
+    if (lanScanning || lanPending || adbRestarting) return;
     lanScanning = true;
 
     scanAttempted = false;
@@ -122,6 +125,32 @@
       lanScanning = false;
     }
   }
+  async function restartAdb() {
+    if (adbRestarting || lanPending || lanScanning || activeRuns.length) return;
+    adbRestarting = true;
+    restartMessage = "";
+    restartError = false;
+    try {
+      const refreshed = await api<Device[]>("/devices/restart-adb", "POST");
+      const online = refreshed.filter((device) => device.online);
+      const offline = refreshed.filter((device) => !device.online);
+      restartMessage = `ADB 已重启，已连接 ${online.length} 台手机。${
+        offline.length
+          ? `仍离线：${offline.map((device) => device.name).join("、")}。请核对无线调试和当前连接端口。`
+          : ""
+      }`;
+      nearbyDevices = await api<NearbyDevice[]>("/devices/discover").catch(
+        () => [],
+      );
+      scanAttempted = true;
+    } catch (error) {
+      restartError = true;
+      restartMessage =
+        error instanceof Error ? error.message : "重启失败，请稍后再试";
+    } finally {
+      adbRestarting = false;
+    }
+  }
   function chooseNearby(device: NearbyDevice) {
     if (device.kind === "connect") {
       address = device.address;
@@ -132,7 +161,7 @@
   }
   async function pairLan(event: SubmitEvent) {
     event.preventDefault();
-    if (lanPending) return;
+    if (lanPending || adbRestarting) return;
     lanPending = true;
 
     try {
@@ -150,7 +179,7 @@
   }
   async function connectLan(event: SubmitEvent) {
     event.preventDefault();
-    if (lanPending) return;
+    if (lanPending || adbRestarting) return;
     lanPending = true;
 
     try {
@@ -450,14 +479,14 @@
     <Button
       variant="outline"
       aria-label="关闭添加设备"
-      disabled={lanPending}
+      disabled={lanPending || adbRestarting}
       onclick={() => lanDialog?.close()}><X size={18} /></Button
     >
   </div>
   <div class="lan-scan">
     <Button
       variant="outline"
-      disabled={lanScanning || lanPending}
+      disabled={lanScanning || lanPending || adbRestarting}
       onclick={() => void scanLan()}
       ><RefreshCw size={14} class={lanScanning ? "spin" : ""} />{lanScanning
         ? "正在扫描…"
@@ -501,10 +530,38 @@
     <p class="hint">
       填写手机“无线调试”页面当前显示的 IP 地址和连接端口；配对后端口可能变化。
     </p>
-    <Button type="submit" disabled={lanPending || !address.trim()}
+    <Button
+      type="submit"
+      disabled={lanPending || adbRestarting || !address.trim()}
       >{lanPending ? "正在连接…" : "连接手机"}</Button
     >
   </form>
+  <details class="lan-pair">
+    <summary>连接异常？重启 ADB</summary>
+    <p class="hint">
+      所有手机连接和投屏会短暂中断，随后尝试重连已登记手机。投屏可在完成后重新开启。
+    </p>
+    <Button
+      variant="outline"
+      disabled={adbRestarting ||
+        lanPending ||
+        lanScanning ||
+        activeRuns.length > 0}
+      onclick={() => void restartAdb()}
+      ><RefreshCw size={14} class={adbRestarting ? "spin" : ""} />{adbRestarting
+        ? "正在重启并重连…"
+        : "重启 ADB 并重连"}</Button
+    >
+    {#if activeRuns.length}<p class="hint">
+        请先停止所有未结束任务，包括已暂停和等待手机的任务。
+      </p>{/if}
+    {#if restartMessage}<p
+        class="hint"
+        role={restartError ? "alert" : "status"}
+      >
+        {restartMessage}
+      </p>{/if}
+  </details>
   <details bind:this={pairDetails} class="lan-pair">
     <summary>首次连接？先配对</summary>
     <p class="hint">
@@ -531,7 +588,10 @@
         autocomplete="one-time-code"
         required
       />
-      <Button type="submit" variant="outline" disabled={lanPending}
+      <Button
+        type="submit"
+        variant="outline"
+        disabled={lanPending || adbRestarting}
         >{lanPending ? "正在配对…" : "配对手机"}</Button
       >
     </form>

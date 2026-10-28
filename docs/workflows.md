@@ -41,6 +41,8 @@ python scripts/studio.py request GET /workflow-drafts
 
 ## 运行与定时
 
+`POST /api/devices/restart-adb` 手动重启电脑上的 ADB 服务并尝试重连已登记手机，不接收参数，返回刷新后的手机列表。有任何未结束任务（含等待手机、恢复和暂停）或正在处理的任务操作时拒绝重启；普通断线不自动重启 ADB。接口成功表示服务已重启，是否连上须检查各手机的 `online`，不能将仍离线视为恢复成功。
+
 ```sh
 python scripts/studio.py run manual-草稿UUID --device 手机自身编号
 python scripts/studio.py runs

@@ -198,6 +198,7 @@ def main():
                 assert not error.headers.get("Content-Type", "").startswith("text/html")
             print("通过：网页入口不缓存、编辑器直达、资源完整、缺失脚本返回 404", flush=True)
             call("/devices", expected=401, auth=False)
+            call("/devices/restart-adb", "POST", expected=401, auth=False)
             req = urllib.request.Request(
                 BASE + "/api/session", headers={"Origin": "https://example.com"}
             )
@@ -334,8 +335,10 @@ def main():
             flow, _ = save(workflow("暂停与恢复", count=12, interval=0.5))
             r = start_workflow(flow)
             wait(lambda: record(r["id"])["checkpoint"].get("done", 0) >= 1)
+            assert "未结束任务" in call("/devices/restart-adb", "POST", expected=400)["error"]
             call("/runs/" + r["id"] + "/pause", "POST")
             wait(lambda: record(r["id"])["state"] == "paused")
+            assert "未结束任务" in call("/devices/restart-adb", "POST", expected=400)["error"]
             before = count()
             stop(process, data); process.wait(timeout=15); process = boot()
             assert record(r["id"])["state"] == "paused" and count() == before
@@ -361,6 +364,8 @@ def main():
             (fake / "online").unlink()
             call("/devices/refresh", "POST")
             wait(lambda: record(r["id"])["state"] == "waiting_device")
+            assert "未结束任务" in call("/devices/restart-adb", "POST", expected=400)["error"]
+            assert ["kill-server"] not in [json.loads(line) for line in (fake / "commands").read_text().splitlines()]
             stop(process, data); process.wait(timeout=15); process = boot()
             (fake / "online").touch()
             call("/devices/refresh", "POST")
@@ -406,6 +411,24 @@ def main():
             wait(lambda: next(d for d in call("/devices") if d["id"] == "mock-phone")["online"], timeout=25)
             assert any(cmd == ["connect", "127.0.0.1:5555"] for cmd in map(json.loads, (fake / "commands").read_text().splitlines()))
             print("通过：局域网配对、手动连接、地址校验与断线重连", flush=True)
+
+            offset = len((fake / "commands").read_text().splitlines())
+            restarted = call("/devices/restart-adb", "POST")
+            assert next(d for d in restarted if d["id"] == "mock-phone")["online"]
+            commands = [json.loads(line) for line in (fake / "commands").read_text().splitlines()[offset:]]
+            kill = commands.index(["kill-server"])
+            assert commands[kill + 1] == ["start-server"], commands
+            assert ["connect", "127.0.0.1:5555"] in commands[kill + 2:]
+            (fake / "start-server-fails").touch()
+            failed = call("/devices/restart-adb", "POST", expected=400)
+            assert "启动 ADB 失败" in failed["error"], failed
+            (fake / "start-server-fails").unlink()
+            (fake / "auto-connect").unlink()
+            restarted = call("/devices/restart-adb", "POST")
+            assert not next(d for d in restarted if d["id"] == "mock-phone")["online"]
+            (fake / "auto-connect").touch()
+            assert next(d for d in call("/devices/restart-adb", "POST") if d["id"] == "mock-phone")["online"]
+            print("通过：重启 ADB 后重连；未授权、运行、暂停与等待手机时拒绝重启；启动失败与仍离线如实返回", flush=True)
         finally:
             if process and process.poll() is None:
                 stop(process, data)

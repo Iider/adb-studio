@@ -90,16 +90,38 @@ impl Target {
 pub struct Adb {
     path: PathBuf,
     targets: tokio::sync::RwLock<std::collections::HashMap<String, Vec<String>>>,
+    server_gate: tokio::sync::RwLock<()>,
 }
 impl Adb {
     pub fn new(path: PathBuf) -> Self {
         Self {
             path,
             targets: tokio::sync::RwLock::new(Default::default()),
+            server_gate: tokio::sync::RwLock::new(()),
         }
     }
     pub async fn raw(&self, args: &[&str]) -> Result<Vec<u8>> {
+        let _gate = self.server_gate.read().await;
+        self.raw_unlocked(args).await
+    }
+    async fn restart(&self) -> Result<()> {
+        let _gate = self.server_gate.write().await;
+        self.raw_unlocked(&["kill-server"])
+            .await
+            .context("停止 ADB 失败")?;
+        self.raw_unlocked(&["start-server"])
+            .await
+            .context("启动 ADB 失败，请检查电脑上的 ADB 服务")?;
+        self.targets.write().await.clear();
+        Ok(())
+    }
+    async fn raw_unlocked(&self, args: &[&str]) -> Result<Vec<u8>> {
         let mut cmd = crate::platform::command(&self.path);
+        // macOS 后台服务使用原生 USB 驱动时可能卡在 IOServiceOpen。
+        #[cfg(target_os = "macos")]
+        if std::env::var_os("ADB_LIBUSB").is_none() {
+            cmd.env("ADB_LIBUSB", "1");
+        }
         cmd.args(args).kill_on_drop(true);
         let out = tokio::time::timeout(Duration::from_secs(12), cmd.output())
             .await
@@ -917,6 +939,29 @@ pub async fn connect_manual(app: &App, address: &str) -> Result<Device> {
     Ok(device)
 }
 
+pub async fn restart_server(app: &App) -> Result<Vec<Device>> {
+    let _gate = app
+        .run_gate
+        .try_lock()
+        .context("正在处理任务或连接，请稍后再重启 ADB")?;
+    if app.db.list::<Run>("runs").await?.iter().any(Run::busy)
+        || !app.controls.lock().await.is_empty()
+    {
+        bail!("有未结束任务，请先停止所有运行、等待手机或已暂停的任务，再重启 ADB");
+    }
+    app.adb.restart().await?;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    refresh(app).await?;
+    if tokio::time::timeout(Duration::from_secs(15), reconnect_known(app))
+        .await
+        .is_err()
+    {
+        tracing::warn!("ADB 已重启，部分手机仍在等待重连");
+    }
+    refresh(app).await?;
+    app.db.list("devices").await
+}
+
 pub async fn refresh(app: &App) -> Result<()> {
     let _gate = app.device_gate.lock().await;
     let mut devices = app.db.list::<Device>("devices").await?;
@@ -1075,6 +1120,50 @@ pub async fn apply_awake(app: &App, d: &mut Device) -> Result<()> {
     Ok(())
 }
 
+async fn reconnect_known(app: &App) {
+    let Ok(devices) = app.db.list::<Device>("devices").await else {
+        return;
+    };
+    let services = discover(app).await.unwrap_or_default();
+    for device in devices.iter().filter(|device| !device.online) {
+        if app.adb.endpoint(&device.id).await.is_ok() {
+            continue;
+        }
+        let mut addresses: Vec<_> = services
+            .iter()
+            .filter(|service| service.kind == "connect" && service.name.contains(&device.id))
+            .map(|service| service.address.clone())
+            .collect();
+        for address in &device.manual_endpoints {
+            if !addresses.contains(address) {
+                addresses.push(address.clone());
+            }
+        }
+        for address in addresses {
+            if devices.iter().any(|other| {
+                other.id != device.id && other.online && other.endpoints.contains(&address)
+            }) {
+                continue;
+            }
+            let Ok(result) = app.adb.text(&["connect", &address]).await else {
+                continue;
+            };
+            if !result.starts_with("connected to ") && !result.starts_with("already connected to ")
+            {
+                continue;
+            }
+            let identity = app
+                .adb
+                .text(&["-s", &address, "shell", "getprop", "ro.serialno"])
+                .await;
+            if identity.as_deref().ok() == Some(device.id.as_str()) {
+                break;
+            }
+            let _ = app.adb.text(&["disconnect", &address]).await;
+        }
+    }
+}
+
 pub async fn monitor(app: Arc<App>) {
     let mut ticks = 0u32;
     loop {
@@ -1083,42 +1172,7 @@ pub async fn monitor(app: Arc<App>) {
         }
         ticks += 1;
         if ticks.is_multiple_of(5) {
-            if let Ok(devices) = app.db.list::<Device>("devices").await {
-                for device in devices.iter().filter(|device| !device.online) {
-                    for address in &device.manual_endpoints {
-                        if devices.iter().any(|other| {
-                            other.online
-                                && other.endpoints.iter().any(|endpoint| endpoint == address)
-                        }) {
-                            continue;
-                        }
-                        if app.adb.text(&["connect", address]).await.is_ok() {
-                            let identity = app
-                                .adb
-                                .text(&["-s", address, "shell", "getprop", "ro.serialno"])
-                                .await;
-                            if identity.as_deref().ok() != Some(device.id.as_str()) {
-                                let _ = app.adb.text(&["disconnect", address]).await;
-                            }
-                        }
-                    }
-                }
-            }
-            if let (Ok(services), Ok(devices)) = (
-                app.adb.text(&["mdns", "services"]).await,
-                app.db.list::<Device>("devices").await,
-            ) {
-                for line in services
-                    .lines()
-                    .filter(|l| l.contains("_adb-tls-connect._tcp"))
-                {
-                    if devices.iter().any(|d| !d.online && line.contains(&d.id)) {
-                        if let Some(address) = line.split_whitespace().last() {
-                            let _ = app.adb.text(&["connect", address]).await;
-                        }
-                    }
-                }
-            }
+            reconnect_known(&app).await;
         }
         tokio::select! {_=app.stop.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(3))=>{}}
     }

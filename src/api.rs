@@ -38,6 +38,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/devices/discover", get(discover_devices))
         .route("/devices/pair", post(pair_device))
         .route("/devices/refresh", post(refresh))
+        .route("/devices/restart-adb", post(restart_adb))
         .route("/devices/{id}", put(update_device))
         .route("/devices/{id}/screenshot", get(screenshot))
         .route("/devices/{id}/screen", post(screen_control))
@@ -152,6 +153,9 @@ async fn discover_devices(
 async fn refresh(State(app): State<Arc<App>>) -> Result<Json<Value>> {
     crate::adb::refresh(&app).await?;
     Ok(Json(json!({"ok":true})))
+}
+async fn restart_adb(State(app): State<Arc<App>>) -> Result<Json<Vec<Device>>> {
+    Ok(Json(crate::adb::restart_server(&app).await?))
 }
 #[derive(Deserialize)]
 struct DeviceConnect {

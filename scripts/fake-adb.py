@@ -25,7 +25,15 @@ def append_log(name, line):
 
 append_log("commands", json.dumps(args))
 online = (root / "online").exists()
-if args == ["devices", "-l"]:
+if args == ["kill-server"]:
+    (root / "online").unlink(missing_ok=True)
+elif args == ["start-server"]:
+    if (root / "start-server-fails").exists():
+        print("cannot start daemon", file=sys.stderr)
+        sys.exit(1)
+    if not (root / "wireless-only").exists():
+        (root / "online").touch()
+elif args == ["devices", "-l"]:
     print("List of devices attached")
     if online:
         if (root / "legacy-transport").exists():
