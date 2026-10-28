@@ -23,7 +23,9 @@ export async function apiResponse(
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: "后台未连接" }));
-    throw new Error(error.error || "操作失败");
+    throw Object.assign(new Error(error.error || "操作失败"), {
+      status: response.status,
+    });
   }
   return response;
 }

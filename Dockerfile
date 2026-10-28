@@ -25,7 +25,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && python3 scripts/check-integration.py \
     && python3 scripts/check-platform.py \
     && python3 scripts/check-vision.py \
-    && python3 scripts/check-mirror.py
+    && python3 scripts/check-mirror.py \
+    && python3 scripts/check-workflow-export.py
 
 FROM python:3.12-slim-bookworm AS mirror
 WORKDIR /src

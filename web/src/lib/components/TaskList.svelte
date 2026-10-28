@@ -15,6 +15,7 @@
     FileText,
     Download,
     Plus,
+    FileUp,
     Search,
     Smartphone,
     Workflow as FlowIcon,
@@ -34,6 +35,7 @@
   import { summarizeTasks } from "$lib/tasks";
   import type { Draft } from "$lib/workflow-editor";
   import WorkflowExport from "$lib/components/WorkflowExport.svelte";
+  import WorkflowImport from "$lib/components/WorkflowImport.svelte";
 
   let {
     workflows,
@@ -67,6 +69,7 @@
     onDelete: (workflow: Workflow) => Promise<boolean>;
   } = $props();
 
+  let importOpen = $state(false);
   let search = $state("");
   let filter = $state("all");
   let deleteTarget = $state<Workflow | null>(null);
@@ -205,6 +208,7 @@
       <div class="catalog-tools">
         <Button
           variant="outline"
+          aria-label="刷新"
           disabled={!connected || !!working}
           onclick={onRefresh}
         >
@@ -212,10 +216,16 @@
             size={15}
             aria-hidden="true"
             class={working === "refresh-tasks" ? "spin" : ""}
-          />刷新
+          /><span class="refresh-label">刷新</span>
         </Button>
+        <Button
+          variant="outline"
+          disabled={!connected}
+          onclick={() => (importOpen = true)}
+          ><FileUp size={16} aria-hidden="true" />导入工作流文件</Button
+        >
         <Button href="/editor" class="catalog-create"
-          ><Plus size={16} aria-hidden="true" />新建工作流</Button
+          ><Plus size={16} aria-hidden="true" />创建新工作流</Button
         >
         {#if tasks.some((task) => task.inProgress.length)}
           <Button
@@ -240,7 +250,7 @@
       <p>
         {tasks.length
           ? "试试其他关键词或筛选条件。"
-          : "点击“新建工作流”添加任务。"}
+          : "点击“创建新工作流”或导入文件添加任务。"}
       </p>
       {#if search || filter !== "all"}
         <Button
@@ -419,6 +429,16 @@
     </div>
   {/if}
 </section>
+
+<WorkflowImport
+  open={importOpen}
+  onclose={() => (importOpen = false)}
+  onimport={() => {
+    search = "";
+    filter = "all";
+    onRefresh();
+  }}
+/>
 
 <WorkflowExport
   request={exportRequest}
@@ -824,6 +844,9 @@
     }
   }
   @media (max-width: 660px) {
+    .refresh-label {
+      display: none;
+    }
     .task-delete-dialog :global([data-slot="button"]) {
       min-height: 44px;
     }

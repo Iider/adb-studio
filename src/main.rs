@@ -133,6 +133,9 @@ async fn main() -> Result<()> {
     if let Err(error) = adb::refresh(&app).await {
         tracing::warn!("初次设备检查：{error}");
     }
+    if let Err(error) = workflow_transfer::cleanup_imports(&app).await {
+        tracing::warn!("导入临时文件等待下次清理：{error}");
+    }
     engine::recover(app.clone()).await?;
     let monitor = tokio::spawn(adb::monitor(app.clone()));
     let scheduler = tokio::spawn(schedule::monitor(app.clone()));

@@ -16,6 +16,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, sync::Arc};
 
+mod import;
+pub use import::cleanup_imports;
+
 const FILE_LIMIT: usize = 32 * 1024 * 1024;
 const CONTENT_LIMIT: usize = 2 * 1024 * 1024 - 1024;
 const ASSET_LIMIT: usize = 20 * 1024 * 1024;
@@ -83,6 +86,7 @@ fn storage_error(error: impl std::fmt::Display) -> Failure {
 
 pub fn router() -> Router<Arc<App>> {
     Router::new()
+        .merge(import::router())
         .route("/workflows/{id}/export", get(export_workflow))
         .route("/workflow-drafts/{id}/export", get(export_draft))
 }

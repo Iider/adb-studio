@@ -116,6 +116,48 @@ impl Store {
         Ok(Some((workflow, draft)))
     }
 
+    pub async fn insert_workflow_import(
+        &self,
+        operation: &str,
+        digest: &str,
+        result: &serde_json::Value,
+        workflow: Option<&crate::types::Workflow>,
+        draft: Option<&crate::drafts::Draft>,
+    ) -> Result<()> {
+        let transaction = self.0.begin().await?;
+        let mut records = Vec::new();
+        if let Some(workflow) = workflow {
+            records.push((
+                "workflows",
+                workflow.id.as_str(),
+                serde_json::to_string(workflow)?,
+            ));
+        }
+        if let Some(draft) = draft {
+            records.push((
+                "workflow_drafts",
+                draft.id.as_str(),
+                serde_json::to_string(draft)?,
+            ));
+        }
+        records.push((
+            "workflow_imports",
+            operation,
+            serde_json::to_string(&serde_json::json!({"digest":digest,"result":result}))?,
+        ));
+        for (kind, id, body) in records {
+            transaction
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "INSERT INTO records(kind,id,body) VALUES (?,?,?)",
+                    [kind.into(), id.into(), body.into()],
+                ))
+                .await?;
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
     pub async fn remove_workflow(&self, id: &str, draft_id: &str) -> Result<()> {
         let transaction = self.0.begin().await?;
         let mut run_ids = std::collections::BTreeSet::<String>::new();

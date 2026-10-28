@@ -38,6 +38,7 @@ jobs:
       - run: python scripts/check-vision.py
       - run: python scripts/check-mirror.py
       - run: python scripts/check-editor.py
+      - run: python scripts/check-workflow-export.py
       - name: Build Linux release on Debian 12
         if: runner.os == 'Linux'
         run: |
