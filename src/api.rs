@@ -13,22 +13,18 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 use tower_http::services::{ServeDir, ServeFile};
 
-struct Error(anyhow::Error);
+struct Error(anyhow::Error, StatusCode);
 impl<E: Into<anyhow::Error>> From<E> for Error {
     fn from(e: E) -> Self {
-        Self(e.into())
+        Self(e.into(), StatusCode::BAD_REQUEST)
     }
 }
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error":self.0.to_string()})),
-        )
-            .into_response()
+        (self.1, Json(json!({"error":self.0.to_string()}))).into_response()
     }
 }
 type Result<T> = std::result::Result<T, Error>;
@@ -48,10 +44,6 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/devices/{id}/mirror", get(mirror))
         .route("/workflows", get(workflows).post(submit))
         .route("/workflows/{id}", axum::routing::delete(remove_workflow))
-        .route(
-            "/workflows/{id}/archive",
-            put(archive_workflow).delete(restore_workflow),
-        )
         .route("/workflow-drafts/{id}/save", post(save_draft))
         .route("/editor/observe/{id}", get(editor_observe))
         .route("/workflows/{key}/validate", post(validate))
@@ -310,81 +302,8 @@ async fn mirror(
         })
         .into_response())
 }
-async fn workflows(State(app): State<Arc<App>>) -> Result<Json<Vec<Value>>> {
-    let rows = app.db.list::<Workflow>("workflows").await?;
-    let archived: HashSet<String> = app
-        .db
-        .list::<String>("archived_workflows")
-        .await?
-        .into_iter()
-        .collect();
-    Ok(Json(
-        rows.into_iter()
-            .map(|workflow| {
-                let is_archived = archived.contains(&workflow.id);
-                let mut value = json!(workflow);
-                value["archived"] = json!(is_archived);
-                value
-            })
-            .collect(),
-    ))
-}
-
-async fn ensure_archivable(app: &App, id: &str) -> Result<()> {
-    if !app
-        .db
-        .list::<Workflow>("workflows")
-        .await?
-        .iter()
-        .any(|workflow| workflow.id == id)
-    {
-        return Err(anyhow::anyhow!("任务不存在").into());
-    }
-    Ok(())
-}
-
-async fn archive_workflow(
-    State(app): State<Arc<App>>,
-    Path(id): Path<String>,
-) -> Result<Json<Value>> {
-    // 与定时派发、运行启动保持相同的加锁顺序。
-    let _schedule_gate = app.schedule_gate.lock().await;
-    let _run_gate = app.run_gate.lock().await;
-    ensure_archivable(&app, &id).await?;
-    if engine::archived(&app, &id).await? {
-        return Ok(Json(json!({"ok":true})));
-    }
-    if app
-        .db
-        .list::<Run>("runs")
-        .await?
-        .iter()
-        .any(|run| run.workflow.id == id && run.busy())
-    {
-        return Err(anyhow::anyhow!("任务正在运行或暂停，请先停止再归档").into());
-    }
-    app.db.put("archived_workflows", &id, &id).await?;
-    for mut schedule in app.db.list::<Schedule>("schedules").await? {
-        if schedule.workflow_id == id && schedule.enabled {
-            schedule.enabled = false;
-            schedule.last_result = Some("任务已归档，定时已停用".into());
-            app.db.put("schedules", &schedule.id, &schedule).await?;
-        }
-    }
-    let _ = app.events.send(json!({"type":"changed"}));
-    Ok(Json(json!({"ok":true})))
-}
-
-async fn restore_workflow(
-    State(app): State<Arc<App>>,
-    Path(id): Path<String>,
-) -> Result<Json<Value>> {
-    let _schedule_gate = app.schedule_gate.lock().await;
-    let _run_gate = app.run_gate.lock().await;
-    ensure_archivable(&app, &id).await?;
-    app.db.delete("archived_workflows", &id).await?;
-    let _ = app.events.send(json!({"type":"changed"}));
-    Ok(Json(json!({"ok":true})))
+async fn workflows(State(app): State<Arc<App>>) -> Result<Json<Vec<Workflow>>> {
+    Ok(Json(app.db.list("workflows").await?))
 }
 
 async fn remove_workflow(
@@ -396,22 +315,29 @@ async fn remove_workflow(
     if app.db.get::<Workflow>("workflows", &id).await?.is_none() {
         return Err(anyhow::anyhow!("任务不存在").into());
     }
-    if app
-        .db
-        .list::<Run>("runs")
-        .await?
+    let runs = app.db.list::<Run>("runs").await?;
+    let controls = app.controls.lock().await;
+    if runs
         .iter()
-        .any(|run| run.workflow.id == id && run.busy())
+        .any(|run| run.workflow.id == id && (run.busy() || controls.contains_key(&run.id)))
     {
-        return Err(anyhow::anyhow!("任务正在运行或暂停，请先停止再移除").into());
+        return Err(anyhow::anyhow!("任务正在运行或暂停，请先停止再删除").into());
     }
+    drop(controls);
     let draft_id = id
         .strip_prefix("manual-")
         .filter(|value| uuid::Uuid::parse_str(value).is_ok())
         .unwrap_or("");
     app.db.remove_workflow(&id, draft_id).await?;
+    let cleaned = match crate::workflow_cleanup::finish(&app, &id).await {
+        Ok(cleaned) => cleaned,
+        Err(error) => {
+            tracing::warn!("任务 {id} 已删除，截图清理稍后重试：{error}");
+            false
+        }
+    };
     let _ = app.events.send(json!({"type":"changed"}));
-    Ok(Json(json!({"ok":true})))
+    Ok(Json(json!({"ok":true,"cleanup_pending":!cleaned})))
 }
 
 #[derive(Deserialize)]
@@ -454,8 +380,22 @@ async fn editor_observe(
         json!({"screen":screen,"image":format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png))}),
     ))
 }
-async fn submit(State(app): State<Arc<App>>, Json(w): Json<Workflow>) -> Result<Json<Workflow>> {
+async fn submit(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    Json(w): Json<Workflow>,
+) -> Result<Json<Workflow>> {
     let _gate = app.run_gate.lock().await;
+    if headers
+        .get(header::IF_MATCH)
+        .is_some_and(|value| value == "*")
+        && app.db.get::<Workflow>("workflows", &w.id).await?.is_none()
+    {
+        return Err(Error(
+            anyhow::anyhow!("任务已删除，当前编辑仍保留；请返回任务列表"),
+            StatusCode::PRECONDITION_FAILED,
+        ));
+    }
     engine::validate(&w)?;
     app.db.put("workflows", &w.id, &w).await?;
     let _ = app.events.send(json!({"type":"changed"}));

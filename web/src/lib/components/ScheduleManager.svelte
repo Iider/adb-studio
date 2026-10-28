@@ -80,9 +80,7 @@
   let swipeMinutes = $state(15);
   let swipeInterval = $state(25);
 
-  const availableWorkflows = $derived(
-    workflows.filter((workflow) => !workflow.archived),
-  );
+  const availableWorkflows = $derived(workflows);
   const workflow = $derived(
     availableWorkflows.find((workflow) => workflow.id === workflowId),
   );
@@ -436,7 +434,7 @@
             label="选择定时任务"
             bind:value={workflowId}
             placeholder={workflowId
-              ? `${workflowName(workflowId)}（已移除或归档）`
+              ? `${workflowName(workflowId)}（已删除）`
               : "暂无可用任务"}
             items={availableWorkflows.map((available) => ({
               value: available.id,

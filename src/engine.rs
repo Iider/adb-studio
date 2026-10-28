@@ -432,20 +432,10 @@ pub fn samples(w: &Workflow) -> Result<()> {
     Ok(())
 }
 pub async fn workflow(app: &App, id: &str) -> Result<Workflow> {
-    if archived(app, id).await? {
-        bail!("任务已归档，请先恢复")
-    }
     app.db
         .get::<Workflow>("workflows", id)
         .await?
         .context("工作流不存在")
-}
-pub async fn archived(app: &App, id: &str) -> Result<bool> {
-    Ok(app
-        .db
-        .get::<String>("archived_workflows", id)
-        .await?
-        .is_some())
 }
 pub fn with_tap_settings(mut w: Workflow, settings: Option<&TapSettings>) -> Result<Workflow> {
     if let Some(settings) = settings {
@@ -518,9 +508,6 @@ pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow) -> Result<Ru
     let _gate = app.run_gate.lock().await;
     if app.db.get::<Workflow>("workflows", &w.id).await?.is_none() {
         bail!("任务已移除，请重新创建")
-    }
-    if archived(&app, &w.id).await? {
-        bail!("任务已归档，请先恢复")
     }
     validate(&w)?;
     let needs_ocr = w.nodes.iter().any(|n| {
@@ -642,9 +629,6 @@ pub async fn resume(app: Arc<App>, id: &str) -> Result<Run> {
         .is_none()
     {
         bail!("任务已移除，无法继续")
-    }
-    if archived(&app, &r.workflow.id).await? {
-        bail!("任务已归档，请先恢复")
     }
     if !matches!(r.state.as_str(), "paused" | "cancelled") {
         bail!("只有已暂停或已停止的任务可以继续")

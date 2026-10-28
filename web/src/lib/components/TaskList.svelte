@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import {
     Hand,
     History,
@@ -9,8 +10,7 @@
     Square,
     MoreHorizontal,
     Pencil,
-    Archive,
-    ArchiveRestore,
+    Trash2,
     Clock3,
     FileText,
     Download,
@@ -49,8 +49,7 @@
     onStop,
     onStopAll,
     onRefresh,
-    onArchive,
-    onRestore,
+    onDelete,
   }: {
     workflows: Workflow[];
     drafts: Draft[];
@@ -65,19 +64,16 @@
     onStop: (run: Run) => void;
     onStopAll: () => void;
     onRefresh: () => void;
-    onArchive: (workflow: Workflow) => Promise<boolean>;
-    onRestore: (workflow: Workflow) => Promise<boolean>;
+    onDelete: (workflow: Workflow) => Promise<boolean>;
   } = $props();
 
   let search = $state("");
   let filter = $state("all");
-  let archiveTarget = $state<Workflow | null>(null);
-  let archiveDialog = $state<HTMLDialogElement>();
+  let deleteTarget = $state<Workflow | null>(null);
+  let deleteDialog = $state<HTMLDialogElement>();
+  let deleteTrigger: HTMLElement | null = null;
   let exportRequest = $state<{ path: string; name: string } | null>(null);
   const tasks = $derived(summarizeTasks(workflows, runs, schedules));
-  const currentTasks = $derived(
-    tasks.filter((task) => !task.workflow.archived),
-  );
   const draftIds = $derived(new Set(drafts.map((draft) => draft.id)));
   const visibleTasks = $derived(
     tasks.filter((task) => {
@@ -97,8 +93,6 @@
         .join(" ")
         .toLowerCase();
       if (!text.includes(search.trim().toLowerCase())) return false;
-      if (filter === "archived") return !!workflow.archived;
-      if (workflow.archived) return false;
       return (
         filter === "all" || (filter === "running" && task.inProgress.length > 0)
       );
@@ -128,12 +122,21 @@
       : `/workflow-edit?id=${encodeURIComponent(workflow.id)}`;
   }
 
-  async function confirmArchive() {
-    if (!archiveTarget) return;
-    if (await onArchive(archiveTarget)) {
-      archiveDialog?.close();
-      archiveTarget = null;
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    if (await onDelete(deleteTarget)) {
+      deleteDialog?.close();
+      deleteTarget = null;
     }
+  }
+
+  function closeDelete() {
+    deleteTarget = null;
+    (deleteTrigger?.isConnected
+      ? deleteTrigger
+      : document.getElementById("task-search")
+    )?.focus();
+    deleteTrigger = null;
   }
 
   function closeMoreMenu(event: MouseEvent) {
@@ -196,7 +199,6 @@
           items={[
             { value: "all", label: "全部任务" },
             { value: "running", label: "未结束" },
-            { value: "archived", label: "已归档" },
           ]}
         />
       </div>
@@ -215,7 +217,7 @@
         <Button href="/editor" class="catalog-create"
           ><Plus size={16} aria-hidden="true" />编排工作流</Button
         >
-        {#if currentTasks.some((task) => task.inProgress.length)}
+        {#if tasks.some((task) => task.inProgress.length)}
           <Button
             variant="outline"
             class="stop-button"
@@ -237,9 +239,7 @@
       <h2>{tasks.length ? "没有符合条件的任务" : "尚未添加任务"}</h2>
       <p>
         {tasks.length
-          ? filter === "all" && tasks.some((task) => task.workflow.archived)
-            ? "可在筛选中查看已归档任务。"
-            : "试试其他关键词或筛选条件。"
+          ? "试试其他关键词或筛选条件。"
           : "点击“编排工作流”添加任务。"}
       </p>
       {#if search || filter !== "all"}
@@ -263,11 +263,7 @@
             ? "保持当前页面，按设置的时长和间隔上滑。"
             : workflow.description ||
               `共 ${workflow.nodes.length} 个步骤，点击任务名称查看详情。`}
-        {@const status = workflow.archived
-          ? "已归档"
-          : run
-            ? runLabel(run)
-            : "已保存"}
+        {@const status = run ? runLabel(run) : "已保存"}
         <article class="catalog-card" aria-label={workflow.name}>
           <div class="catalog-card-heading">
             <span class="catalog-icon" aria-hidden="true"
@@ -282,10 +278,9 @@
             </h2>
             <span
               class="catalog-status"
-              class:ready={!run && !workflow.archived}
+              class:ready={!run}
               class:live={!!run && run.state !== "paused"}
-              class:paused={run?.state === "paused"}
-              class:archived={!!workflow.archived}>{status}</span
+              class:paused={run?.state === "paused"}>{status}</span
             >
           </div>
 
@@ -320,36 +315,24 @@
 
           <footer class="catalog-footer">
             <div class="catalog-actions">
-              {#if workflow.archived}
-                <Button
-                  class="catalog-primary"
-                  disabled={!!working || !connected}
-                  onclick={() => onRestore(workflow)}
-                  ><ArchiveRestore
+              <Button
+                variant="outline"
+                href={editHref(workflow)}
+                aria-label={`编辑任务：${workflow.name}`}
+                ><Pencil size={15} aria-hidden="true" />编辑</Button
+              >
+              <Button
+                class="catalog-primary"
+                onclick={() => (run ? onViewRuns(run) : onOpen(workflow))}
+              >
+                {#if run}<History
                     size={15}
                     aria-hidden="true"
-                  />恢复任务</Button
-                >
-              {:else}
-                <Button
-                  variant="outline"
-                  href={editHref(workflow)}
-                  aria-label={`编辑任务：${workflow.name}`}
-                  ><Pencil size={15} aria-hidden="true" />编辑</Button
-                >
-                <Button
-                  class="catalog-primary"
-                  onclick={() => (run ? onViewRuns(run) : onOpen(workflow))}
-                >
-                  {#if run}<History
-                      size={15}
-                      aria-hidden="true"
-                    />查看进度{:else}<Play
-                      size={15}
-                      aria-hidden="true"
-                    />运行{/if}
-                </Button>
-              {/if}
+                  />查看进度{:else}<Play
+                    size={15}
+                    aria-hidden="true"
+                  />运行{/if}
+              </Button>
               <details class="catalog-more">
                 <summary
                   aria-label={`${workflow.name}的更多操作`}
@@ -411,19 +394,22 @@
                       >
                     {/each}
                   {/if}
-                  {#if !workflow.archived}
-                    <button
-                      aria-label={`归档任务：${workflow.name}`}
-                      disabled={!!working || !connected}
-                      onkeydown={closeMoreMenuOnEscape}
-                      onclick={(event) => {
-                        closeMoreMenu(event);
-                        archiveTarget = workflow;
-                        archiveDialog?.showModal();
-                      }}
-                      ><Archive size={15} aria-hidden="true" />归档任务</button
-                    >
-                  {/if}
+                  <button
+                    class="stop-button"
+                    aria-label={`删除任务：${workflow.name}`}
+                    disabled={!!working || !connected}
+                    onkeydown={closeMoreMenuOnEscape}
+                    onclick={async (event) => {
+                      deleteTrigger =
+                        event.currentTarget
+                          .closest("details")
+                          ?.querySelector("summary") ?? null;
+                      closeMoreMenu(event);
+                      deleteTarget = workflow;
+                      await tick();
+                      deleteDialog?.showModal();
+                    }}><Trash2 size={15} aria-hidden="true" />删除任务</button
+                  >
                 </div>
               </details>
             </div>
@@ -440,28 +426,39 @@
 />
 
 <dialog
-  bind:this={archiveDialog}
-  class="task-archive-dialog"
-  onclose={() => (archiveTarget = null)}
+  bind:this={deleteDialog}
+  class="task-delete-dialog"
+  aria-labelledby="task-delete-title"
+  onclose={closeDelete}
+  oncancel={(event) => {
+    if (deleteTarget && working === `delete-${deleteTarget.id}`)
+      event.preventDefault();
+  }}
 >
-  {#if archiveTarget}
-    <h2>归档“{archiveTarget.name}”？</h2>
+  {#if deleteTarget}
+    <h2 id="task-delete-title">删除“{deleteTarget.name}”？</h2>
     <p>
-      任务将移到“已归档”；相关定时会停用。任务内容和执行记录仍保留，之后可以恢复。
+      任务、关联草稿、定时设置，以及全部执行记录、判断结果和运行截图将一并删除，无法恢复。
     </p>
-    {#if runs.some((run) => run.workflow.id === archiveTarget?.id && busy(run))}
+    {#if runs.some((run) => run.workflow.id === deleteTarget?.id && busy(run))}
       <p>请先停止正在运行或暂停的任务。</p>
     {/if}
     <div class="dialog-actions">
-      <Button variant="outline" onclick={() => archiveDialog?.close()}
-        >取消</Button
+      <Button
+        variant="outline"
+        disabled={working === `delete-${deleteTarget.id}`}
+        onclick={() => deleteDialog?.close()}>取消</Button
       >
       <Button
-        disabled={!!working ||
-          runs.some(
-            (run) => run.workflow.id === archiveTarget?.id && busy(run),
-          )}
-        onclick={confirmArchive}>确认归档</Button
+        disabled={!connected ||
+          !!working ||
+          runs.some((run) => run.workflow.id === deleteTarget?.id && busy(run))}
+        variant="destructive"
+        class="confirm-delete"
+        onclick={confirmDelete}
+        >{working === `delete-${deleteTarget.id}`
+          ? "正在删除…"
+          : "确认删除"}</Button
       >
     </div>
   {/if}
@@ -615,10 +612,6 @@
     background: var(--accentsoft);
     color: var(--accent2);
   }
-  .catalog-status.archived {
-    background: var(--panel2);
-    color: var(--dim);
-  }
   .catalog-description {
     display: -webkit-box;
     -webkit-box-orient: vertical;
@@ -764,7 +757,8 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
-  .task-archive-dialog {
+  .task-delete-dialog {
+    margin: auto;
     width: min(440px, calc(100vw - 32px));
     padding: 24px;
     border: 1px solid var(--line);
@@ -772,11 +766,25 @@
     background: var(--panel);
     color: var(--text);
   }
-  .task-archive-dialog h2 {
+  .task-delete-dialog :global(.confirm-delete) {
+    background: var(--red);
+    color: var(--panel);
+  }
+  .task-delete-dialog .dialog-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 18px;
+  }
+  .task-delete-dialog :global([data-slot="button"]) {
+    min-height: 40px;
+  }
+  .task-delete-dialog h2 {
     margin-bottom: 12px;
     font-size: 18px;
   }
-  .task-archive-dialog p {
+  .task-delete-dialog p {
     margin-bottom: 14px;
     color: var(--dim);
     font-size: 13px;
@@ -816,6 +824,9 @@
     }
   }
   @media (max-width: 660px) {
+    .task-delete-dialog :global([data-slot="button"]) {
+      min-height: 44px;
+    }
     .catalog-heading {
       align-items: flex-start;
       flex-wrap: wrap;

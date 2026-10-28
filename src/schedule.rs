@@ -106,6 +106,11 @@ pub async fn monitor(app: Arc<App>) {
         };
         first = false;
         cleanup_ticks += 1;
+        if cleanup_ticks % 30 == 0 {
+            if let Err(error) = crate::workflow_cleanup::retry(&app).await {
+                tracing::warn!("任务删除后的截图清理：{error}");
+            }
+        }
         if cleanup_ticks >= 3600 {
             cleanup_ticks = 0;
             if let Err(e) = cleanup(&app).await {

@@ -177,12 +177,10 @@
     }
   });
   const taskChoices = $derived(
-    workflows
-      .filter((w) => !w.archived)
-      .map((workflow) => ({
-        value: workflow.id,
-        label: workflow.name,
-      })),
+    workflows.map((workflow) => ({
+      value: workflow.id,
+      label: workflow.name,
+    })),
   );
   $effect(() => {
     if (
@@ -324,17 +322,17 @@
       reloadBusy = false;
     }
   }
-  async function action(
+  async function action<T>(
     key: string,
-    fn: () => Promise<unknown>,
-    message = "已保存",
+    fn: () => Promise<T>,
+    message: string | ((result: T) => string) = "已保存",
   ) {
     if (working) return false;
     working = key;
 
     try {
-      await fn();
-      notify.success(message);
+      const result = await fn();
+      notify.success(typeof message === "function" ? message(result) : message);
       await load();
       return true;
     } catch (e) {
@@ -1064,25 +1062,18 @@
               );
             }}
             onStopAll={stopAllRuns}
-            onArchive={(workflow) =>
+            onDelete={(workflow) =>
               action(
-                `archive-${workflow.id}`,
+                `delete-${workflow.id}`,
                 () =>
-                  api(
-                    `/workflows/${encodeURIComponent(workflow.id)}/archive`,
-                    "PUT",
-                  ),
-                "任务已归档，相关定时已停用",
-              )}
-            onRestore={(workflow) =>
-              action(
-                `restore-${workflow.id}`,
-                () =>
-                  api(
-                    `/workflows/${encodeURIComponent(workflow.id)}/archive`,
+                  api<{ cleanup_pending: boolean }>(
+                    `/workflows/${encodeURIComponent(workflow.id)}`,
                     "DELETE",
                   ),
-                "任务已恢复，定时仍保持停用",
+                (result) =>
+                  result.cleanup_pending
+                    ? "任务与记录已删除，截图清理将在后台重试"
+                    : "任务及全部执行记录已删除",
               )}
           />
         </div>
@@ -1114,11 +1105,7 @@
                     : flow.description}
                 </p>
               </div>
-              <Badge
-                class="status"
-                variant={flow.archived ? "outline" : "default"}
-                >{flow.archived ? "已归档" : "已保存"}</Badge
-              >
+              <Badge class="status">已保存</Badge>
             </div>
             <p class="hint">
               识别方式：{flow.recognition === "vision" ? "纯视觉" : "本地优先"} ·
@@ -1126,13 +1113,7 @@
                 ? "截图发送到模型服务；定位、复查、结果检查和重试均计入次数。"
                 : "无需识别的动作直接执行。"}
             </p>
-            {#if flow.archived}
-              <p class="hint">
-                任务已归档。恢复后可再次运行；原有定时需手动开启。
-              </p>
-            {:else}
-              {@render taskLaunch(false)}
-            {/if}
+            {@render taskLaunch(false)}
             <ol class="flow-nodes">
               {#each flow.nodes as n, i}
                 {@const nodeRun =

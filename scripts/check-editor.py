@@ -43,8 +43,8 @@ def main():
             "FAKE_ADB_DIR": str(fake),
         }
 
-        def call(path, method="GET", body=None, expected=200, auth=True):
-            headers = {"Content-Type": "application/json"}
+        def call(path, method="GET", body=None, expected=200, auth=True, extra_headers=None):
+            headers = {"Content-Type": "application/json", **(extra_headers or {})}
             if auth:
                 headers["Authorization"] = "Bearer " + (data / "access-token").read_text().strip()
             request = urllib.request.Request(
@@ -80,10 +80,9 @@ def main():
             try:
                 call("/workflow-drafts", expected=401, auth=False)
                 initial_workflows = call("/workflows")[1]
-                call("/workflows/swipe/archive", "PUT")
-                assert all(item["archived"] for item in call("/workflows")[1] if item["id"] == "swipe")
-                call("/workflows/swipe/archive", "DELETE")
-                call("/workflows/no-such-task/archive", "PUT", expected=400)
+                assert all("archived" not in item for item in initial_workflows)
+                call("/workflows/swipe/archive", "PUT", expected=404)
+                call("/workflows/swipe/archive", "DELETE", expected=404)
                 draft = {
                     "id": str(uuid.uuid4()), "revision": 0, "name": "未接完的草稿",
                     "description": "", "entry": "wait", "viewport": [0, 0, 1],
@@ -121,7 +120,7 @@ def main():
                 assert next(item for item in call("/workflows")[1] if item["id"] == "swipe")["name"] == created_swipe["name"]
                 commands = (fake / "commands").read_text()
                 assert '"input"' not in commands
-                print("通过：草稿保存与冲突、旧任务归档恢复、覆盖保存仅保留一份")
+                print("通过：草稿保存与冲突、归档接口移除、覆盖保存仅保留一份")
                 stop(process, data)
                 process.wait(timeout=10)
                 process = boot(log)
@@ -129,7 +128,8 @@ def main():
                 call("/workflows/swipe", "DELETE", expected=401, auth=False)
                 assert call("/workflows/swipe", "DELETE")[1]["ok"]
                 assert not any(item["id"] == "swipe" for item in call("/workflows")[1])
-                call("/workflows/swipe/archive", "DELETE", expected=400)
+                call("/workflows", "POST", original_swipe, expected=412, extra_headers={"If-Match":"*"})
+                call("/workflows/swipe/archive", "DELETE", expected=404)
                 stop(process, data)
                 process.wait(timeout=10)
                 process = boot(log)
@@ -206,44 +206,49 @@ def main():
                     node("end", "end", result="succeeded"),
                 ], "wait")
                 busy_run = run_workflow(busy_workflow)
-                busy_archive_path = "/workflows/" + busy_workflow["id"] + "/archive"
-                call(busy_archive_path, "PUT", expected=400)
+                call("/workflows/" + busy_workflow["id"], "DELETE", expected=400)
+                call("/runs/" + busy_run["id"] + "/pause", "POST")
+                wait_value(lambda: record(busy_run["id"])["state"] == "paused")
                 call("/workflows/" + busy_workflow["id"], "DELETE", expected=400)
                 call("/runs/" + busy_run["id"] + "/stop", "POST")
                 finish(busy_run["id"])
-                call(busy_archive_path, "PUT")
+                blocked_shots = data / "shots" / busy_run["id"]
+                blocked_shots.write_text("模拟暂时无法清理的目录")
+                removed = call("/workflows/" + busy_workflow["id"], "DELETE")[1]
+                assert removed["cleanup_pending"]
                 call("/runs/" + busy_run["id"] + "/resume", "POST", expected=400)
-                call(busy_archive_path, "DELETE")
-                call("/workflows/" + busy_workflow["id"], "DELETE")
-                call("/runs/" + busy_run["id"] + "/resume", "POST", expected=400)
-
-                archive_path = "/workflows/" + workflow["id"] + "/archive"
-                schedule_body = {"name":"归档检查","device_id":"mock-phone","workflow_id":workflow["id"],"enabled":True,"rule":{"kind":"interval","minutes":60}}
-                scheduled = call("/schedules", "POST", schedule_body)[1]
-                assert scheduled["enabled"]
-                assert call(archive_path, "PUT")[1]["ok"]
-                assert call(archive_path, "PUT")[1]["ok"]
-                assert next(w for w in call("/workflows")[1] if w["id"] == workflow["id"])["archived"]
-                assert not next(s for s in call("/schedules")[1] if s["id"] == scheduled["id"])["enabled"]
-                call("/runs", "POST", {"device_id":"mock-phone","workflow_id":workflow["id"]}, expected=400)
-                call("/schedules", "POST", schedule_body, expected=400)
+                blocked_shots.unlink()
+                blocked_shots.mkdir()
+                (blocked_shots / "retry.png").write_bytes(helpers["png"]())
                 stop(process, data)
                 process.wait(timeout=10)
                 process = boot(log)
-                assert next(w for w in call("/workflows")[1] if w["id"] == workflow["id"])["archived"]
-                assert call(archive_path, "DELETE")[1]["ok"]
-                assert call(archive_path, "DELETE")[1]["ok"]
-                restored = next(w for w in call("/workflows")[1] if w["id"] == workflow["id"])
-                assert not restored["archived"]
-                assert not next(s for s in call("/schedules")[1] if s["id"] == scheduled["id"])["enabled"]
-                assert any(r["workflow"]["id"] == workflow["id"] for r in call("/runs")[1])
-                print("通过：归档阻止运行和定时；重启保留；恢复后内容与记录仍在，定时不自动恢复")
-                call("/workflows/" + workflow["id"], "DELETE")
+                assert not blocked_shots.exists()
+                assert not any(item["workflow"]["id"] == busy_workflow["id"] for item in call("/runs")[1])
+                print("通过：截图暂时无法清理时明确提示，重启后完成剩余清理")
+
+                schedule_body = {"name":"删除检查","device_id":"mock-phone","workflow_id":workflow["id"],"enabled":True,"rule":{"kind":"interval","minutes":60}}
+                scheduled = call("/schedules", "POST", schedule_body)[1]
+                assert scheduled["enabled"]
+                history_ids = [item["id"] for item in call("/runs")[1] if item["workflow"]["id"] == workflow["id"]]
+                assert len(history_ids) >= 2
+                for run_id in history_ids:
+                    folder = data / "shots" / run_id
+                    folder.mkdir(exist_ok=True)
+                    (folder / "delete-proof.png").write_bytes(helpers["png"]())
+                call("/runs/" + history_ids[0], "DELETE")
+                assert (data / "shots" / history_ids[0]).exists()
+                assert not call("/workflows/" + workflow["id"], "DELETE")[1]["cleanup_pending"]
+                assert all(not (data / "shots" / run_id).exists() for run_id in history_ids)
                 assert not any(item["id"] == workflow["id"] for item in call("/workflows")[1])
                 assert not any(item["id"] == scheduled["id"] for item in call("/schedules")[1])
                 call("/workflow-drafts/" + source["id"], expected=404)
-                assert any(item["workflow"]["id"] == workflow["id"] for item in call("/runs")[1])
-                print("通过：运行中拒绝移除，移除后不能续跑；关联草稿、定时与任务内容一并清除，保留历史记录")
+                call("/workflow-drafts/" + source["id"], "PUT", source, expected=409)
+                assert not any(item["workflow"]["id"] == workflow["id"] for item in call("/runs")[1])
+                assert call("/runs/" + result["id"] + "/events")[1] == []
+                call("/runs/" + result["id"] + "/export", expected=400)
+                assert not (data / "shots" / result["id"]).exists()
+                print("通过：运行或暂停时拒绝删除；草稿、定时、记录和截图一并清理；删除后不能续跑")
 
                 samples = [{"text":"","app":"","round":2,"expected":"yes"},{"text":"","app":"","round":1,"expected":"no"}]
                 for control, expected in [("continue",2),("break",1)]:

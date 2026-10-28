@@ -9,11 +9,13 @@ export async function apiResponse(
   method = "GET",
   body?: unknown,
   signal?: AbortSignal,
+  extraHeaders?: Record<string, string>,
 ): Promise<Response> {
   const response = await fetch(`/api${path}`, {
     method,
     signal,
     headers: {
+      ...extraHeaders,
       Authorization: `Bearer ${token}`,
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
@@ -30,8 +32,9 @@ export async function api<T>(
   method = "GET",
   body?: unknown,
   signal?: AbortSignal,
+  extraHeaders?: Record<string, string>,
 ): Promise<T> {
-  return (await apiResponse(path, method, body, signal)).json();
+  return (await apiResponse(path, method, body, signal, extraHeaders)).json();
 }
 export async function photo(id: string) {
   const r = await fetch(`/api/devices/${encodeURIComponent(id)}/screenshot`, {
@@ -81,7 +84,6 @@ export interface Node {
 }
 export interface Workflow {
   id: string;
-  archived?: boolean;
   name: string;
   description: string;
   devices: string[];

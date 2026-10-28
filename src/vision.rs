@@ -279,7 +279,7 @@ pub async fn run_query(app: &App, run: &mut Run, frame: &Frame, query: &Query) -
     let response = response
         .and_then(|answer| query.normalise(answer, [frame.image.width(), frame.image.height()]));
     let id = uuid::Uuid::new_v4().to_string();
-    app.db.put("vision_results", &id, &json!({"id":id,"at":now(),"run_id":run.id,"node":run.node,"image":run.last_shot,"query":query,"model":run.model_settings,"model_ms":clock.elapsed().as_millis(),"result":response.as_ref().ok(),"error":response.as_ref().err().map(|e|e.to_string())})).await?;
+    app.db.put("vision_results", &id, &json!({"id":id,"at":now(),"run_id":run.id,"workflow_id":run.workflow.id,"node":run.node,"image":run.last_shot,"query":query,"model":run.model_settings,"model_ms":clock.elapsed().as_millis(),"result":response.as_ref().ok(),"error":response.as_ref().err().map(|e|e.to_string())})).await?;
     let answer = response?;
     app.event(
         run,
@@ -315,8 +315,25 @@ pub async fn run_route(
     let clock = Instant::now();
     let response = recognition::model(app, run, &[&frame.png], &question, &choices).await;
     let id = uuid::Uuid::new_v4().to_string();
-    app.db.put("vision_results", &id, &json!({"id":id,"at":now(),"run_id":run.id,"node":run.node,"image":run.last_shot,"question":question,"model":run.model_settings,"model_ms":clock.elapsed().as_millis(),"result":response.as_ref().ok(),"error":response.as_ref().err().map(|e|e.to_string())})).await?;
+    app.db.put("vision_results", &id, &json!({"id":id,"at":now(),"run_id":run.id,"workflow_id":run.workflow.id,"node":run.node,"image":run.last_shot,"question":question,"model":run.model_settings,"model_ms":clock.elapsed().as_millis(),"result":response.as_ref().ok(),"error":response.as_ref().err().map(|e|e.to_string())})).await?;
     Ok(response?.choice)
+}
+
+async fn save_validation(
+    app: &App,
+    workflow: &Workflow,
+    id: &str,
+    value: &serde_json::Value,
+) -> Result<()> {
+    let _gate = app.run_gate.lock().await;
+    ensure!(
+        app.db
+            .get::<Workflow>("workflows", &workflow.id)
+            .await?
+            .is_some(),
+        "任务已删除，检查结果不再保存"
+    );
+    app.db.put("vision_validations", id, value).await
 }
 
 pub async fn validate_samples(app: &App, workflow: &Workflow) -> Result<()> {
@@ -360,7 +377,7 @@ pub async fn validate_samples(app: &App, workflow: &Workflow) -> Result<()> {
                     && (0.0..=1.0).contains(&answer.confidence)
                     && (test.expected == "unknown" || answer.confidence >= 0.85);
                 let id = uuid::Uuid::new_v4().to_string();
-                app.db.put("vision_validations", &id, &json!({"id":id,"at":now(),"workflow":workflow.id,"node":node.id,"image":test.image,"expected":test.expected,"result":answer,"passed":passed,"model":settings,"model_ms":clock.elapsed().as_millis()})).await?;
+                save_validation(app, workflow, &id, &json!({"id":id,"at":now(),"workflow":workflow.id,"node":node.id,"image":test.image,"expected":test.expected,"result":answer,"passed":passed,"model":settings,"model_ms":clock.elapsed().as_millis()})).await?;
                 ensure!(
                     passed,
                     "视觉分流样本未通过：{}，预期 {}",
@@ -420,7 +437,7 @@ pub async fn validate_samples(app: &App, workflow: &Workflow) -> Result<()> {
                     true
                 };
             let id = uuid::Uuid::new_v4().to_string();
-            app.db.put("vision_validations", &id, &json!({"id":id,"at":now(),"workflow":workflow.id,"node":node.id,"image":test.image,"after":test.after,"expected":test.expected,"result":answer,"passed":passed,"model":settings,"model_ms":start.elapsed().as_millis()})).await?;
+            save_validation(app, workflow, &id, &json!({"id":id,"at":now(),"workflow":workflow.id,"node":node.id,"image":test.image,"after":test.after,"expected":test.expected,"result":answer,"passed":passed,"model":settings,"model_ms":start.elapsed().as_millis()})).await?;
             ensure!(
                 passed,
                 "视觉样本未通过：{}，预期 {}",

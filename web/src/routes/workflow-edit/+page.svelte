@@ -224,8 +224,13 @@
     error = "";
     try {
       const candidate = JSON.parse(JSON.stringify(workflow));
-      delete candidate.archived;
-      const result = await api<Workflow>("/workflows", "POST", candidate);
+      const result = await api<Workflow>(
+        "/workflows",
+        "POST",
+        candidate,
+        undefined,
+        { "If-Match": "*" },
+      );
       workflow = result;
       saved = true;
       initialContent = JSON.stringify(result);
@@ -261,15 +266,11 @@
   {:else}
     <div class="revision-toolbar">
       <span>{changed ? "有尚未保存的修改" : "尚未修改"}</span>
-      <Button
-        disabled={saving || !changed || !!workflow.archived}
-        onclick={save}
+      <Button disabled={saving || !changed} onclick={save}
         ><Save size={16} />{saving ? "正在保存…" : "保存工作流"}</Button
       >
     </div>
-    {#if workflow.archived}<p class="notice" role="alert">
-        任务已归档，请先恢复再保存。
-      </p>{/if}
+
     {#if error}<p class="notice error" role="alert">{error}</p>{/if}
     {#if saved}<p class="notice success" role="status">
         <Check size={16} />工作流已保存。
@@ -475,9 +476,8 @@
         {advancedError}
       </p>{/if}
     <div class="bottom-actions">
-      <Button
-        disabled={saving || !changed || !!workflow.archived}
-        onclick={save}><Save size={16} />保存工作流</Button
+      <Button disabled={saving || !changed} onclick={save}
+        ><Save size={16} />保存工作流</Button
       >
       <a href="/?tab=workflows">返回任务列表</a>
     </div>

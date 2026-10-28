@@ -12,6 +12,7 @@ mod run_control;
 mod schedule;
 mod types;
 mod vision;
+mod workflow_cleanup;
 mod workflow_transfer;
 
 use anyhow::Result;
@@ -110,6 +111,7 @@ async fn main() -> Result<()> {
             std::env::var("ADB_STUDIO_HOST").as_deref() == Ok("0.0.0.0"),
         )?,
     });
+    workflow_cleanup::retry(&app).await?;
     for mut d in app.db.list::<Device>("devices").await? {
         d.online = false;
         d.endpoints.clear();

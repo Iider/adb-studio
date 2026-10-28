@@ -101,7 +101,9 @@ python3 scripts/studio.py request POST /workflows/编号/validate
 
 编排器文字条件中的 `guard`（页面依据）可省略，默认留空。未填或仅有空格时直接判断文字条件；填写后先匹配整页文字，再判断指定区域，依据不匹配时请求处理。条件判断与等待条件使用同一规则。
 
-自动化任务卡片直接提供“编辑”：有草稿的任务打开画布，其余任务直接编辑当前内容。`GET /api/workflows` 的每项任务带有 `archived` 布尔状态。所有已保存任务可通过 `PUT /api/workflows/{id}/archive` 归档、`DELETE /api/workflows/{id}/archive` 恢复；归档保留草稿、任务内容与执行记录，停用相关定时。归档中拒绝启动、继续和新建定时；恢复后定时仍需手动开启。详情见 [编辑与归档方案](workflow-edit-archive.md)。
+自动化任务卡片直接提供“编辑”：有草稿的任务打开画布，其余任务直接编辑当前内容。“更多 → 删除任务”会一并删除本体、草稿、定时、全部执行记录、判断结果和运行截图，无法恢复。运行或暂停中的任务需先停止。归档与恢复已移除；旧归档任务重新显示，已停用定时保持停用。详情见[编辑与删除](workflow-edit-delete.md)。
+
+普通任务编辑器覆盖保存时带 `If-Match: *`；目标已删除时返回 412，保留页面编辑，不重新创建。Agent 主动新建任务仍使用不带该条件的 `POST /api/workflows`。
 
 所有接口前缀 `/api`；Agent 使用 `Authorization: Bearer <令牌>`。响应错误提供 `error` 字段。
 
@@ -115,8 +117,7 @@ python3 scripts/studio.py request POST /workflows/编号/validate
 | PUT `/devices/{id}` | `name` 或 `keep_awake` |
 | GET `/devices/{id}/screenshot` | 当前截图 PNG |
 | GET / POST `/workflows` | 查询任务 / 覆盖保存 |
-| PUT / DELETE `/workflows/{id}/archive` | 归档 / 恢复任务 |
-| DELETE `/workflows/{id}` | 彻底移除任务本体、关联草稿与定时；未结束时拒绝。保留历史执行记录，禁止续跑已移除任务；内置任务重启后不再生成 |
+| DELETE `/workflows/{id}` | 删除本体、草稿、定时、全部当前及已清理的执行记录、事件、判断结果和运行截图；未结束时拒绝。返回 `cleanup_pending` 表示截图是否仍需后台重试；内置任务重启不再生成 |
 | POST `/workflows/{id}/validate` | 可选样本诊断，不影响运行资格 |
 | GET / POST `/runs` | 查询 / 运行，参数见下方 |
 | DELETE `/runs/{id}` | 清理已结束的记录，归档与截图保留；进行中的任务拒绝清理 |

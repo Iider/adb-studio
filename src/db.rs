@@ -28,6 +28,8 @@ impl Store {
             "DELETE FROM records WHERE rowid IN (SELECT rowid FROM (SELECT rowid, ROW_NUMBER() OVER (PARTITION BY json_extract(body,'$.id') ORDER BY COALESCE(json_extract(body,'$.version'),0) DESC,rowid DESC) AS position FROM records WHERE kind='workflows') WHERE position>1)",
             "UPDATE records SET id=json_extract(body,'$.id'),body=json_remove(body,'$.version','$.active','$.sample_validated') WHERE kind='workflows'",
             "DELETE FROM records WHERE kind IN ('active','vision_validated')",
+            // 取消任务归档后保留任务和定时内容，不重新开启已停用的定时。
+            "DELETE FROM records WHERE kind='archived_workflows'",
         ] {
             migration
                 .execute(Statement::from_string(DbBackend::Sqlite, sql))
@@ -116,10 +118,40 @@ impl Store {
 
     pub async fn remove_workflow(&self, id: &str, draft_id: &str) -> Result<()> {
         let transaction = self.0.begin().await?;
+        let mut run_ids = std::collections::BTreeSet::<String>::new();
+        for row in transaction.query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT id FROM records WHERE kind IN ('runs','archived_runs') AND json_extract(body,'$.workflow.id')=?",
+            [id.into()],
+        )).await? {
+            run_ids.insert(row.try_get("", "id")?);
+        }
+        if let Some(row) = transaction
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT body FROM records WHERE kind='workflow_cleanup' AND id=?",
+                [id.into()],
+            ))
+            .await?
+        {
+            let pending: crate::workflow_cleanup::Pending =
+                serde_json::from_str(&row.try_get::<String>("", "body")?)?;
+            run_ids.extend(pending.run_ids);
+        }
+        transaction.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM records WHERE (kind IN ('events','archived_events','vision_results') AND json_extract(body,'$.run_id') IN (SELECT id FROM records WHERE kind IN ('runs','archived_runs') AND json_extract(body,'$.workflow.id')=?)) OR (kind='vision_results' AND json_extract(body,'$.workflow_id')=?) OR (kind='vision_validations' AND (json_extract(body,'$.workflow')=? OR json_extract(body,'$.workflow') GLOB ?))",
+            [id.into(), id.into(), id.into(), format!("{id}@*").into()],
+        )).await?;
+        transaction.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM records WHERE kind IN ('runs','archived_runs') AND json_extract(body,'$.workflow.id')=?",
+            [id.into()],
+        )).await?;
         transaction
             .execute(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
-                "DELETE FROM records WHERE (kind IN ('workflows','archived_workflows') AND id=?) OR (kind='workflow_drafts' AND id=?) OR (kind='schedules' AND json_extract(body,'$.workflow_id')=?)",
+                "DELETE FROM records WHERE (kind='workflows' AND id=?) OR (kind='workflow_drafts' AND id=?) OR (kind='schedules' AND json_extract(body,'$.workflow_id')=?)",
                 [id.into(), draft_id.into(), id.into()],
             ))
             .await?;
@@ -131,6 +163,17 @@ impl Store {
                 [id.into(), serde_json::to_string(id)?.into()],
             ))
             .await?;
+        if !run_ids.is_empty() {
+            let pending = crate::workflow_cleanup::Pending {
+                workflow_id: id.into(),
+                run_ids: run_ids.into_iter().collect(),
+            };
+            transaction.execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO records(kind,id,body) VALUES ('workflow_cleanup',?,?) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body",
+                [id.into(), serde_json::to_string(&pending)?.into()],
+            )).await?;
+        }
         transaction.commit().await?;
         Ok(())
     }
@@ -140,6 +183,162 @@ impl Store {
 mod tests {
     use super::*;
     use serde_json::{Value, json};
+
+    #[tokio::test]
+    async fn deletes_target_history_atomically_and_preserves_other_tasks() -> Result<()> {
+        let folder =
+            std::env::temp_dir().join(format!("adb-delete-workflow-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&folder)?;
+        let path = folder.join("data.sqlite");
+        let store = Store::open(&path).await?;
+        let current = uuid::Uuid::new_v4().to_string();
+        let archived = uuid::Uuid::new_v4().to_string();
+        let other = uuid::Uuid::new_v4().to_string();
+        for task in ["target", "other"] {
+            store.put("workflows", task, &json!({"id":task})).await?;
+            store
+                .put("workflow_drafts", task, &json!({"id":task}))
+                .await?;
+            store
+                .put("schedules", task, &json!({"workflow_id":task}))
+                .await?;
+            store
+                .put("vision_validations", task, &json!({"workflow":task}))
+                .await?;
+        }
+        for (run, task, kind) in [
+            (&current, "target", "runs"),
+            (&archived, "target", "archived_runs"),
+            (&other, "other", "runs"),
+        ] {
+            store
+                .put(kind, run, &json!({"workflow":{"id":task}}))
+                .await?;
+            for child in ["events", "archived_events", "vision_results"] {
+                store.put(child, run, &json!({"run_id":run})).await?;
+            }
+        }
+        store
+            .put(
+                "vision_validations",
+                "legacy-target",
+                &json!({"workflow":"target@7"}),
+            )
+            .await?;
+        store
+            .put(
+                "vision_validations",
+                "legacy-other",
+                &json!({"workflow":"target-extra@7"}),
+            )
+            .await?;
+        store
+            .put(
+                "vision_results",
+                "target-orphan",
+                &json!({"workflow_id":"target","run_id":"expired"}),
+            )
+            .await?;
+        store
+            .put(
+                "vision_checks",
+                "standalone",
+                &json!({"image":"standalone.png"}),
+            )
+            .await?;
+        store.0.execute(Statement::from_string(DbBackend::Sqlite,
+            "CREATE TRIGGER fail_delete BEFORE DELETE ON records WHEN OLD.kind='workflows' AND OLD.id='target' BEGIN SELECT RAISE(ABORT, 'test rollback'); END".to_string())).await?;
+        assert!(store.remove_workflow("target", "target").await.is_err());
+        assert!(store.get::<Value>("runs", &current).await?.is_some());
+        assert!(store.get::<Value>("events", &current).await?.is_some());
+        assert!(store.get::<Value>("workflows", "target").await?.is_some());
+        assert!(
+            store
+                .get::<Value>("workflow_cleanup", "target")
+                .await?
+                .is_none()
+        );
+        store
+            .0
+            .execute(Statement::from_string(
+                DbBackend::Sqlite,
+                "DROP TRIGGER fail_delete".to_string(),
+            ))
+            .await?;
+        store.remove_workflow("target", "target").await?;
+        for kind in [
+            "workflows",
+            "workflow_drafts",
+            "schedules",
+            "vision_validations",
+        ] {
+            assert!(
+                store.get::<Value>(kind, "target").await?.is_none(),
+                "{kind}"
+            );
+            assert!(store.get::<Value>(kind, "other").await?.is_some(), "{kind}");
+        }
+        for kind in [
+            "runs",
+            "archived_runs",
+            "events",
+            "archived_events",
+            "vision_results",
+        ] {
+            assert!(
+                store.get::<Value>(kind, &current).await?.is_none(),
+                "{kind}"
+            );
+            assert!(
+                store.get::<Value>(kind, &archived).await?.is_none(),
+                "{kind}"
+            );
+        }
+        for kind in ["runs", "events", "archived_events", "vision_results"] {
+            assert!(store.get::<Value>(kind, &other).await?.is_some(), "{kind}");
+        }
+        assert!(
+            store
+                .get::<Value>("vision_validations", "legacy-target")
+                .await?
+                .is_none()
+        );
+        assert!(
+            store
+                .get::<Value>("vision_validations", "legacy-other")
+                .await?
+                .is_some()
+        );
+        assert!(
+            store
+                .get::<Value>("vision_results", "target-orphan")
+                .await?
+                .is_none()
+        );
+        assert!(
+            store
+                .get::<Value>("vision_checks", "standalone")
+                .await?
+                .is_some()
+        );
+        store.0.close().await?;
+        let store = Store::open(&path).await?;
+        let pending = store
+            .get::<crate::workflow_cleanup::Pending>("workflow_cleanup", "target")
+            .await?
+            .unwrap();
+        assert_eq!(pending.run_ids.len(), 2);
+        assert!(pending.run_ids.contains(&current) && pending.run_ids.contains(&archived));
+        assert!(
+            store
+                .get::<Value>("removed_workflows", "target")
+                .await?
+                .is_some()
+        );
+        store.0.close().await?;
+        std::fs::remove_dir_all(folder)?;
+        Ok(())
+    }
 
     #[tokio::test]
     async fn legacy_workflows_keep_only_latest_and_overwrite_in_place() -> Result<()> {
@@ -171,6 +370,8 @@ mod tests {
         let history = json!({"workflow":{"id":"task","version":2},"state":"succeeded"});
         store.put("runs", "history", &history).await?;
         store.put("archived_workflows", "task", &"task").await?;
+        let schedule = json!({"workflow_id":"task","enabled":false});
+        store.put("schedules", "schedule", &schedule).await?;
         store.0.close().await?;
 
         let store = Store::open(&path).await?;
@@ -186,7 +387,11 @@ mod tests {
                 .get::<String>("archived_workflows", "task")
                 .await?
                 .as_deref(),
-            Some("task")
+            None
+        );
+        assert_eq!(
+            store.get::<Value>("schedules", "schedule").await?,
+            Some(schedule)
         );
         store
             .put("workflows", "task", &json!({"id":"task","name":"覆盖保存"}))
