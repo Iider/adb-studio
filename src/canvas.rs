@@ -313,10 +313,10 @@ pub fn validate(w: &Workflow) -> Result<()> {
                                         "文字判断方式无效"
                                     );
                                     ensure!(
-                                        item["guard"]
+                                        item.get("guard").is_none_or(|guard| guard
                                             .as_str()
-                                            .is_some_and(|g| !g.trim().is_empty()),
-                                        "文字判断需要页面依据"
+                                            .is_some_and(|text| text.chars().count() <= 500)),
+                                        "页面依据需为最多 500 字的文字"
                                     );
                                     for area in regions(item)? {
                                         ensure!(
@@ -543,7 +543,8 @@ fn evaluate(
             match c["source"].as_str()? {
                 "text" => {
                     let observed = text?;
-                    if !observed.contains(c["guard"].as_str()?) {
+                    let guard = c["guard"].as_str().unwrap_or("").trim();
+                    if !guard.is_empty() && !observed.contains(guard) {
                         return None;
                     }
                     let observed = area_text
@@ -899,6 +900,40 @@ pub async fn execute(app: &App, r: &mut Run, step: &DraftNode) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn page_guard_is_optional_for_text_conditions() {
+        let mut step: DraftNode = serde_json::from_value(json!({
+            "id":"a", "kind":"condition", "label":"判断", "position":[0,0], "targets":{},
+            "config":{"mode":"all","conditions":[{"source":"text","operator":"contains","value":"奖励"}]}
+        })).unwrap();
+        for guard in [None, Some(""), Some("   ")] {
+            let condition = step.config["conditions"][0].as_object_mut().unwrap();
+            if let Some(guard) = guard {
+                condition.insert("guard".into(), json!(guard));
+            } else {
+                condition.remove("guard");
+            }
+            for (operator, present, absent) in
+                [("contains", true, false), ("not_contains", false, true)]
+            {
+                step.config["conditions"][0]["operator"] = json!(operator);
+                assert_eq!(
+                    evaluate(&step, Some("奖励"), None, None, None),
+                    Some(present)
+                );
+                assert_eq!(
+                    evaluate(&step, Some("其他文字"), None, None, None),
+                    Some(absent)
+                );
+                assert_eq!(evaluate(&step, None, None, None, None), None);
+                let area = HashMap::from([(0, "奖励".into())]);
+                assert_eq!(
+                    evaluate(&step, Some("整页文字"), None, None, Some(&area)),
+                    Some(present)
+                );
+            }
+        }
+    }
     #[test]
     fn unknown_page_is_not_a_negative_match() {
         let step: DraftNode = serde_json::from_value(json!({"id":"a","kind":"condition","label":"判断","position":[0,0],"targets":{},"config":{"mode":"all","conditions":[{"source":"text","operator":"not_contains","value":"领取","guard":"任务页"}]}})).unwrap();

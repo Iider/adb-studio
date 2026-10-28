@@ -220,7 +220,7 @@ fn validate_config(config: &Value) -> anyhow::Result<()> {
                 items.len() <= 20
                     && items.iter().all(|item| {
                         item.as_object()
-                            .is_some_and(|object| (4..=5).contains(&object.len()))
+                            .is_some_and(|object| (3..=5).contains(&object.len()))
                             && matches!(item["source"].as_str(), Some("text" | "app" | "round"))
                             && matches!(
                                 item["operator"].as_str(),
@@ -237,9 +237,11 @@ fn validate_config(config: &Value) -> anyhow::Result<()> {
                             && item["value"]
                                 .as_str()
                                 .is_some_and(|text| text.chars().count() <= 500)
-                            && item["guard"]
-                                .as_str()
-                                .is_some_and(|text| text.chars().count() <= 500)
+                            && item.get("guard").is_none_or(|guard| {
+                                guard
+                                    .as_str()
+                                    .is_some_and(|text| text.chars().count() <= 500)
+                            })
                     })
             }),
             _ => false,

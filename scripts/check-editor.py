@@ -286,6 +286,21 @@ def main():
                 def words(text):
                     (fake / "words").write_text(json.dumps([{"text":text,"x":200,"y":400,"confidence":1}]))
 
+                for kind in ["condition", "wait_condition"]:
+                    for guard in [None, ""]:
+                        condition = {"source":"text", "operator":"contains", "value":"奖励"}
+                        if guard is not None:
+                            condition["guard"] = guard
+                        workflow, _ = save_version([
+                            node("check", kind, {"yes":"yes", "no" if kind == "condition" else "timeout":"no"}, mode="all", conditions=[condition], interval=0.1, timeout=0.2),
+                            node("yes", "end", result="succeeded"), node("no", "end", result="succeeded"),
+                        ], "check")
+                        for text, target in [("奖励", "yes"), ("其他页面", "no")]:
+                            words(text)
+                            result = finish(run_workflow(workflow)["id"])
+                            assert result["state"] == "succeeded" and result["node"] == target, result
+                print("通过：条件判断与等待条件不填页面依据即可保存、运行，正常分流与超时")
+
                 workflow, _ = save_version([
                     node("await","wait_condition",{"yes":"end","timeout":"timeout"},mode="all",conditions=text_condition,samples=text_samples,interval=0.1,timeout=0.4),
                     node("end","end",result="succeeded"),node("timeout","end",result="needs_help")

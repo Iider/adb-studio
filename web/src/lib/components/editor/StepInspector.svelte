@@ -330,10 +330,10 @@
             onclick={() => onMarkCondition(i)}
             >框选识别区域（已标注 {condition.regions?.length ?? 0} 个屏幕）</button
           ><label
-            >页面依据<input
-              value={condition.guard}
+            >页面依据（选填）<input
+              value={condition.guard ?? ""}
               maxlength="500"
-              placeholder="用于确认当前页面的文字"
+              placeholder="留空跳过；填写后先核对整页文字"
               oninput={(event) =>
                 setCondition(i, { guard: event.currentTarget.value })}
             /></label

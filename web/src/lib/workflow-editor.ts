@@ -18,7 +18,7 @@ export type Condition = {
   source: "text" | "app" | "round";
   operator: "contains" | "not_contains" | "is" | "is_not" | "eq" | "gt" | "lt";
   value: string;
-  guard: string;
+  guard?: string;
 };
 export type Config = {
   profiles?: CoordinateProfile[];
@@ -521,15 +521,11 @@ export function checkGraph(draft: Draft): Issue[] {
     if (
       ["condition", "wait_condition"].includes(node.kind) &&
       (!c.conditions?.length ||
-        c.conditions.some(
-          (condition) =>
-            !condition.value.trim() ||
-            (condition.source === "text" && !condition.guard.trim()),
-        ))
+        c.conditions.some((condition) => !condition.value.trim()))
     )
       issues.push({
         node: node.id,
-        message: `请补齐“${node.label}”的条件和页面依据`,
+        message: `请补齐“${node.label}”的判断内容`,
       });
   }
   const reached = new Set<string>();

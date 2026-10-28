@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { actionLimit, canonical } from "../src/lib/workflow-editor.ts";
+import {
+  actionLimit,
+  canonical,
+  checkGraph,
+  newCondition,
+} from "../src/lib/workflow-editor.ts";
 
 const node = (id, kind, targets = {}, config = {}) => ({
   id,
@@ -19,6 +24,42 @@ const draft = (nodes) => ({
   nodes,
   viewport: [0, 0, 1],
   updated_at: "",
+});
+
+test("页面依据默认留空，条件判断和等待条件都可直接通过检查", () => {
+  assert.equal(newCondition().guard, "");
+  for (const kind of ["condition", "wait_condition"]) {
+    for (const guard of [undefined, "", "任务页"]) {
+      const graph = draft([
+        node(
+          "check",
+          kind,
+          kind === "condition"
+            ? { yes: "end", no: "end" }
+            : { yes: "end", timeout: "end" },
+          {
+            mode: "all",
+            interval: 1,
+            timeout: 5,
+            conditions: [
+              {
+                source: "text",
+                operator: "contains",
+                value: "奖励",
+                ...(guard === undefined ? {} : { guard }),
+              },
+            ],
+          },
+        ),
+        node("end", "end", {}, { result: "succeeded" }),
+      ]);
+      assert.deepEqual(checkGraph(graph), []);
+      graph.nodes[0].config.conditions[0].value = "";
+      assert.ok(
+        checkGraph(graph).some((issue) => issue.message.includes("判断内容")),
+      );
+    }
+  }
 });
 
 test("循环次数与动作自身的重复次数共同计入上限", () => {

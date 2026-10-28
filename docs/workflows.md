@@ -79,6 +79,8 @@ python3 scripts/studio.py request POST /workflows/编号@版本/validate
 
 `POST /api/workflow-drafts/{id}/version` 接收 `{"revision":当前草稿版本}`，校验连线、循环范围与坐标标注后创建不可覆盖的正式版本；仅改画布位置会返回原执行版本。`GET /api/editor/observe/{device_id}` 返回原图数据与屏幕宽高、显示屏标识，用于标注，不发送触控命令。新编排步骤序列化为 `{"type":"canvas","step":{...}}`，其出口由 `step.targets` 决定，不能同时声明 `next`。坐标标注绑定手机与屏幕形态；无法确认多屏手机的触控显示编号时拒绝标注。
 
+编排器文字条件中的 `guard`（页面依据）可省略，默认留空。未填或仅有空格时直接判断文字条件；填写后先匹配整页文字，再判断指定区域，依据不匹配时请求处理。条件判断与等待条件使用同一规则。
+
 自动化任务卡片直接提供“编辑”：有草稿的任务打开画布，其余任务从最新版本制作新版。`GET /api/workflows` 的每个版本带有 `archived` 布尔状态。所有已保存任务可通过 `PUT /api/workflows/{id}/archive` 归档、`DELETE /api/workflows/{id}/archive` 恢复；归档保留草稿、版本与执行记录，停用相关定时。归档中拒绝启动、继续和新建定时；恢复后定时仍需手动开启。详情见 [编辑与归档方案](workflow-edit-archive.md)。
 
 所有接口前缀 `/api`；Agent 使用 `Authorization: Bearer <令牌>`。响应错误提供 `error` 字段。
