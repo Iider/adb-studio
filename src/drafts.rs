@@ -222,8 +222,8 @@ pub fn validate(draft: &Draft) -> anyhow::Result<()> {
 fn validate_config(config: &Value) -> anyhow::Result<()> {
     for (key, value) in config.as_object().expect("已检查为对象") {
         let valid = match key.as_str() {
-            "seconds" | "count" | "interval" | "x" | "y" | "from_x" | "from_y" | "to_x"
-            | "to_y" | "duration_ms" | "timeout" => value.is_number(),
+            "seconds" | "count" | "interval" | "after_wait" | "x" | "y" | "from_x" | "from_y"
+            | "to_x" | "to_y" | "duration_ms" | "timeout" => value.is_number(),
             "mode" => matches!(value.as_str(), Some("all" | "any")),
             "result" => matches!(value.as_str(), Some("succeeded" | "needs_help")),
             "loop" => value.as_str().is_some_and(|id| id.len() <= 80),

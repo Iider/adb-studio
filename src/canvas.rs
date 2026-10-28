@@ -27,6 +27,7 @@ fn number(c: &Value, key: &str) -> Result<f64> {
         "seconds" => "等待时长",
         "count" => "次数",
         "interval" => "间隔",
+        "after_wait" => "结束后等待时间",
         "duration_ms" => "滑动时长",
         "timeout" => "最长等待时间",
         _ => key,
@@ -43,6 +44,18 @@ fn count(c: &Value) -> Result<u32> {
         "次数需为 1 至 10000 的整数"
     );
     Ok(n as u32)
+}
+fn after_wait(c: &Value) -> Result<f64> {
+    let seconds = if c.get("after_wait").is_some() {
+        number(c, "after_wait")?
+    } else {
+        0.
+    };
+    ensure!(
+        (0. ..=86400.).contains(&seconds),
+        "结束后等待需为 0 至 86400 秒"
+    );
+    Ok(seconds)
 }
 fn target<'a>(step: &'a DraftNode, port: &str) -> Result<&'a str> {
     let label = match port {
@@ -254,6 +267,7 @@ pub fn validate(w: &Workflow) -> Result<()> {
                         if step.kind == "loop" {
                             vec![target(step, "body")?.into(), target(step, "done")?.into()]
                         } else {
+                            after_wait(c)?;
                             if step.kind == "swipe" {
                                 ensure!(
                                     (100. ..=2000.).contains(&number(c, "duration_ms")?),
@@ -888,6 +902,7 @@ pub async fn execute(app: &App, r: &mut Run, step: &DraftNode) -> Result<()> {
                 app.event(r, &format!("{}：已执行 {done}/{total} 次", step.label))
                     .await?;
             }
+            delay(app, r, after_wait(c)?).await?;
             r.node = target(step, "next")?.into();
         }
         "loop" => {

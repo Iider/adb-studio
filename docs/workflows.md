@@ -33,6 +33,8 @@ python scripts/studio.py request GET /workflow-drafts
 
 可用节点：`tap`、`swipe`、`back`、`home`、`recents`、`wait`、`condition`、`wait_condition`、`loop`、`break`、`continue`、`end`。各项设置、手机标注和连线见[编辑器说明](visual-workflow-editor.md)。条件的页面依据可留空；读字失败与陌生页面不会自动成为“不包含”。
 
+`tap`、`swipe` 的 `config.after_wait` 为全部动作完成后的一次等待，单位秒，范围 0 至 86400，支持小数；省略时为 0。`config.interval` 仍只用于两次动作之间。
+
 保存后编号为 `manual-<草稿UUID>`。可运行内容只有 `canvas` 和 `end` 两类内部动作，不能混入旧动作。画布草稿和已保存内容分别保留；不能用未保存草稿替换正在运行或导出的任务本体。
 
 文字条件在启动时有模型配置及可读取密钥则优先使用模型；未配置时使用本地读字。条件判断与等待条件共用规则，模型失败不切回本地。模型优先已通过用户验收并部署，直接填写 Key 仍待实施，见[整改方案](recognition-fallback-plan.md)。无需文字判断的点击、滑动和等待不依赖本地读字或模型。

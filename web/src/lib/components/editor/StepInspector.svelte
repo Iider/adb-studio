@@ -57,6 +57,13 @@
     percent?: boolean;
   };
   const fields = $derived.by((): NumberField[] => {
+    const afterWait: NumberField = {
+      key: "after_wait",
+      label: "结束后等待（秒）",
+      min: 0,
+      max: 86400,
+      step: 0.1,
+    };
     const repeats: NumberField[] = [
       {
         key: "count",
@@ -88,6 +95,7 @@
         { key: "x", label: "横向位置（%）", min: 0, max: 100, percent: true },
         { key: "y", label: "纵向位置（%）", min: 0, max: 100, percent: true },
         ...repeats,
+        afterWait,
       ];
     if (kind === "swipe")
       return [
@@ -127,6 +135,7 @@
           step: 50,
         },
         ...repeats,
+        afterWait,
       ];
     if (kind === "loop") return repeats;
     if (kind === "wait_condition")
@@ -149,7 +158,7 @@
     return [];
   });
   function numberValue(field: NumberField) {
-    const value = c[field.key];
+    const value = c[field.key] ?? (field.key === "after_wait" ? 0 : undefined);
     return typeof value === "number"
       ? Math.round(value * (field.percent ? 100 : 1) * 1000) / 1000
       : undefined;
@@ -237,6 +246,9 @@
   {/each}
   {#if ["tap", "swipe", "loop"].includes(kind)}<p class="inspector-hint">
       第一次立即执行，间隔只在两次之间等待。
+    </p>{/if}
+  {#if kind === "tap" || kind === "swipe"}<p class="inspector-hint">
+      结束后等待：全部次数完成后等待一次，0 秒表示直接进入下一步。
     </p>{/if}
 
   {#if ["loop", "tap", "swipe"].includes(kind)}

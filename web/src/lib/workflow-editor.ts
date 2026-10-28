@@ -26,6 +26,7 @@ export type Config = {
   seconds?: number;
   count?: number;
   interval?: number;
+  after_wait?: number;
   x?: number;
   y?: number;
   from_x?: number;
@@ -272,7 +273,7 @@ export function defaults(kind: Kind): Config {
     case "wait":
       return { seconds: 2 };
     case "tap":
-      return { x: 0.5, y: 0.5, count: 1, interval: 1 };
+      return { x: 0.5, y: 0.5, count: 1, interval: 1, after_wait: 0 };
     case "swipe":
       return {
         from_x: 0.5,
@@ -282,6 +283,7 @@ export function defaults(kind: Kind): Config {
         duration_ms: 300,
         count: 1,
         interval: 1,
+        after_wait: 0,
       };
     case "loop":
       return { count: 3, interval: 5 };
@@ -477,6 +479,17 @@ export function checkGraph(draft: Draft): Issue[] {
         (node.kind === "wait_condition" && Number(c.interval) === 0))
     )
       issues.push({ node: node.id, message: `“${node.label}”的间隔无效` });
+    if (
+      ["tap", "swipe"].includes(node.kind) &&
+      c.after_wait !== undefined &&
+      (!Number.isFinite(c.after_wait) ||
+        Number(c.after_wait) < 0 ||
+        Number(c.after_wait) > 86400)
+    )
+      issues.push({
+        node: node.id,
+        message: `“${node.label}”的结束后等待应为 0 到 86400 秒`,
+      });
     const coordinates =
       node.kind === "tap"
         ? [c.x, c.y]

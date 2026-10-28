@@ -391,6 +391,51 @@ def main():
                 assert result["state"] == "succeeded" and taps() - before == 2, result
                 assert result["canvas_progress"]["loops"]["loop"]["ended"] == 2
                 print("通过：循环中暂停、后台重启保留轮次、恢复后不重做已完成动作")
+
+                for kind in ["tap", "swipe"]:
+                    action_log = fake / ("taps" if kind == "tap" else "swipes")
+                    for count in [1, 3]:
+                        before = len(action_log.read_text().splitlines())
+                        workflow, _ = save_workflow([
+                            node("action", kind, {"next":"end"}, count=count, interval=0,
+                                 after_wait=2, duration_ms=100, profiles=[profile]),
+                            node("end", "end", result="succeeded"),
+                        ], "action")
+                        run = run_workflow(workflow)
+                        waiting = wait_value(lambda: row if (row := record(run["id"]))["checkpoint"].get("wait_elapsed", 0) >= 0.5 else None)
+                        assert waiting["node"] == "action" and waiting["checkpoint"]["done"] == count, waiting
+                        assert len(action_log.read_text().splitlines()) - before == count
+                        if count == 3:
+                            call("/runs/" + run["id"] + "/pause", "POST")
+                            paused = wait_value(lambda: row if (row := record(run["id"]))["state"] == "paused" else None)
+                            stop(process, data)
+                            process.wait(timeout=10)
+                            process = boot(log)
+                            restored = record(run["id"])
+                            assert restored["state"] == "paused"
+                            assert restored["checkpoint"] == paused["checkpoint"]
+                            waiting = restored
+                            call("/runs/" + run["id"] + "/resume", "POST")
+                        resumed = time.monotonic()
+                        result = finish(run["id"])
+                        assert result["state"] == "succeeded", result
+                        assert time.monotonic() - resumed >= 2 - waiting["checkpoint"]["wait_elapsed"] - 0.2
+                        assert len(action_log.read_text().splitlines()) - before == count
+                    for config in [{}, {"after_wait":0}]:
+                        workflow, _ = save_workflow([
+                            node("action", kind, {"next":"end"}, count=1, interval=86400,
+                                 duration_ms=100, profiles=[profile], **config),
+                            node("end", "end", result="succeeded"),
+                        ], "action")
+                        assert finish(run_workflow(workflow)["id"])["state"] == "succeeded"
+                    for seconds in [-1, 86401]:
+                        rejected, _ = save_workflow([
+                            node("action", kind, {"next":"end"}, count=1, interval=0,
+                                 after_wait=seconds, duration_ms=100, profiles=[profile]),
+                            node("end", "end", result="succeeded"),
+                        ], "action", expected=400)
+                        assert "结束后等待" in rejected["error"], rejected
+                print("通过：点击和滑动全部动作后只等待一次、单次生效、旧配置与 0 秒兼容、范围校验、暂停重启续等且不重做动作")
                 right_half = {**profile,"x":0.5,"y":0,"to_x":1,"to_y":1}
                 (fake / "words").write_text(json.dumps([
                     {"text":"任务页","x":300,"y":200,"confidence":1},
