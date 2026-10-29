@@ -27,6 +27,8 @@ const ASSET_COUNT_LIMIT: usize = 40;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PortableDraft {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<crate::workflow_inputs::Input>,
     id: String,
     name: String,
     description: String,
@@ -38,6 +40,7 @@ pub struct PortableDraft {
 impl From<&Draft> for PortableDraft {
     fn from(draft: &Draft) -> Self {
         Self {
+            inputs: draft.inputs.clone(),
             id: draft.id.clone(),
             name: draft.name.clone(),
             description: draft.description.clone(),
@@ -89,6 +92,23 @@ pub fn router() -> Router<Arc<App>> {
         .merge(import::router())
         .route("/workflows/{id}/export", get(export_workflow))
         .route("/workflow-drafts/{id}/export", get(export_draft))
+}
+
+fn has_inputs(content: &Content) -> bool {
+    content
+        .workflow
+        .as_ref()
+        .is_some_and(|w| !w.inputs.is_empty() || w.schema_version == 2)
+        || content.draft.as_ref().is_some_and(|d| {
+            !d.inputs.is_empty()
+                || d.nodes.iter().any(|node| {
+                    node.config.as_object().is_some_and(|config| {
+                        config
+                            .values()
+                            .any(|value| crate::workflow_inputs::reference(value).is_some())
+                    })
+                })
+        })
 }
 
 fn normalized_workflow(workflow: Workflow) -> anyhow::Result<Value> {
@@ -187,7 +207,7 @@ async fn build_file(app: &App, content: Content) -> Result<WorkflowFile, Failure
     }
     let file = WorkflowFile {
         format: "adb-studio.workflow".into(),
-        format_revision: 1,
+        format_revision: if has_inputs(&content) { 2 } else { 1 },
         content,
         assets,
     };

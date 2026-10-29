@@ -1,3 +1,10 @@
+import {
+  inputIssues,
+  resolveNodes,
+  isReference,
+  type InputDefinition,
+  type NumericValue,
+} from "./workflow-inputs.ts";
 import type { Node, Edge } from "@xyflow/svelte";
 
 export type Kind =
@@ -23,20 +30,20 @@ export type Condition = {
 export type Config = {
   profiles?: CoordinateProfile[];
   samples?: ConditionSample[];
-  seconds?: number;
-  count?: number;
-  interval?: number;
-  after_wait?: number;
+  seconds?: NumericValue;
+  count?: NumericValue;
+  interval?: NumericValue;
+  after_wait?: NumericValue;
   x?: number;
   y?: number;
   from_x?: number;
   from_y?: number;
   to_x?: number;
   to_y?: number;
-  duration_ms?: number;
+  duration_ms?: NumericValue;
   mode?: "all" | "any";
   conditions?: Condition[];
-  timeout?: number;
+  timeout?: NumericValue;
   loop?: string;
   result?: "succeeded" | "needs_help";
 };
@@ -65,6 +72,7 @@ export type DraftNode = {
   position: [number, number];
 };
 export type Draft = {
+  inputs?: InputDefinition[];
   id: string;
   revision: number;
   name: string;
@@ -75,6 +83,7 @@ export type Draft = {
   updated_at: string;
 };
 export type CanvasData = {
+  inputNames?: Record<string, string>;
   running?: boolean;
   kind: Kind | "entry";
   label: string;
@@ -100,6 +109,8 @@ export function canonical(value: unknown): string {
 }
 
 export function actionLimit(draft: Draft): number | null {
+  if (inputIssues(draft.inputs ?? [], draft.nodes).length) return null;
+  draft = { ...draft, nodes: resolveNodes(draft.nodes, draft.inputs ?? []) };
   const nodes = new Map(draft.nodes.map((node) => [node.id, node]));
   if (!nodes.has(draft.entry)) return null;
   const links = new Map<string, string[]>();
@@ -308,19 +319,25 @@ export function defaults(kind: Kind): Config {
 
 export function summary(data: CanvasData): string {
   const c = data.config;
+  const show = (value: NumericValue | undefined) =>
+    isReference(value)
+      ? data.inputNames?.[value.input] || "变量"
+      : (value ?? 0);
   switch (data.kind) {
     case "entry":
       return "从这里开始";
     case "wait":
-      return `等待 ${c.seconds ?? 0} 秒`;
+      return `等待 ${show(c.seconds)} 秒`;
     case "tap":
       if (c.profiles?.length)
-        return "已标注 " + c.profiles.length + " 个屏幕 · " + c.count + " 次";
-      return `位置 ${Math.round((c.x ?? 0) * 100)}%、${Math.round((c.y ?? 0) * 100)}% · ${c.count} 次`;
+        return (
+          "已标注 " + c.profiles.length + " 个屏幕 · " + show(c.count) + " 次"
+        );
+      return `位置 ${Math.round((c.x ?? 0) * 100)}%、${Math.round((c.y ?? 0) * 100)}% · ${show(c.count)} 次`;
     case "swipe":
-      return `${c.count} 次 · 每次 ${c.duration_ms} 毫秒`;
+      return `${show(c.count)} 次 · 每次 ${show(c.duration_ms)} 毫秒`;
     case "loop":
-      return `${c.count} 轮 · 轮间等待 ${c.interval} 秒`;
+      return `${show(c.count)} 轮 · 轮间等待 ${show(c.interval)} 秒`;
     case "condition":
     case "wait_condition":
       return `${c.mode === "any" ? "任一" : "全部"}满足 · ${c.conditions?.length ?? 0} 个条件`;
@@ -349,9 +366,10 @@ export function blankDraft(): Draft {
 }
 
 export function hasDraftContent(
-  draft: Pick<Draft, "name" | "description" | "nodes" | "entry">,
+  draft: Pick<Draft, "name" | "description" | "nodes" | "entry" | "inputs">,
 ): boolean {
   return (
+    !!draft.inputs?.length ||
     draft.nodes.length > 0 ||
     !!draft.entry ||
     !!draft.description.trim() ||
@@ -452,7 +470,8 @@ export function edgesFor(
 }
 
 export function checkGraph(draft: Draft): Issue[] {
-  const issues: Issue[] = [];
+  const issues: Issue[] = inputIssues(draft.inputs ?? [], draft.nodes);
+  draft = { ...draft, nodes: resolveNodes(draft.nodes, draft.inputs ?? []) };
   const ids = new Set(draft.nodes.map((node) => node.id));
   if (!draft.nodes.length) return [{ message: "先添加一个步骤" }];
   if (!ids.has(draft.entry)) issues.push({ message: "请选择开始执行的步骤" });

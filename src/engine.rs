@@ -14,6 +14,8 @@ pub fn validate(w: &Workflow) -> Result<()> {
 
 pub fn samples(w: &Workflow) -> Result<()> {
     validate(w)?;
+    let (resolved, _) = crate::workflow_inputs::resolve(w, &Default::default())?;
+    let w = &resolved;
     for sample in &w.tests {
         let node = w
             .nodes
@@ -41,12 +43,20 @@ pub async fn workflow(app: &App, id: &str) -> Result<Workflow> {
         .await?
         .context("工作流不存在")
 }
-pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow) -> Result<Run> {
+pub async fn start(app: Arc<App>, device_id: &str, w: Workflow) -> Result<Run> {
+    start_with_inputs(app, device_id, &w.id, Default::default()).await
+}
+pub async fn start_with_inputs(
+    app: Arc<App>,
+    device_id: &str,
+    workflow_id: &str,
+    overrides: crate::workflow_inputs::Values,
+) -> Result<Run> {
     let _gate = app.run_gate.lock().await;
-    if app.db.get::<Workflow>("workflows", &w.id).await?.is_none() {
-        bail!("任务已移除，请重新创建")
-    }
-    validate(&w)?;
+    let template = workflow(&app, workflow_id).await?;
+    validate(&template)?;
+    let (mut w, inputs) = crate::workflow_inputs::resolve(&template, &overrides)?;
+    crate::canvas::validate_resolved(&w)?;
     let needs_text = w.nodes.iter().any(|n| {
         if let Action::Canvas { step } = &n.action {
             return crate::canvas::needs_text(step);
@@ -87,6 +97,8 @@ pub async fn start(app: Arc<App>, device_id: &str, mut w: Workflow) -> Result<Ru
         bail!("这台手机已有任务")
     }
     let r = Run {
+        inputs,
+        input_overrides: overrides,
         canvas_progress: json!({}),
         id: uuid::Uuid::new_v4().to_string(),
         device_id: device_id.into(),

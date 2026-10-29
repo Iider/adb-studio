@@ -26,6 +26,8 @@ pub struct DraftNode {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Draft {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<crate::workflow_inputs::Input>,
     pub id: String,
     pub revision: u32,
     pub name: String,
@@ -153,6 +155,7 @@ async fn remove(
 }
 
 pub fn validate(draft: &Draft) -> anyhow::Result<()> {
+    crate::workflow_inputs::validate_definitions(&draft.inputs, false)?;
     anyhow::ensure!(
         !draft.name.trim().is_empty() && draft.name.chars().count() <= 80,
         "草稿名称需为 1 至 80 字"
@@ -207,7 +210,7 @@ pub fn validate(draft: &Draft) -> anyhow::Result<()> {
             node.config.is_object() && serde_json::to_vec(&node.config)?.len() <= 65536,
             "步骤设置无效或过大"
         );
-        validate_config(&node.config)?;
+        validate_config(&node.config, &node.kind)?;
         anyhow::ensure!(
             node.targets
                 .iter()
@@ -219,11 +222,15 @@ pub fn validate(draft: &Draft) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn validate_config(config: &Value) -> anyhow::Result<()> {
+fn validate_config(config: &Value, kind: &str) -> anyhow::Result<()> {
     for (key, value) in config.as_object().expect("已检查为对象") {
         let valid = match key.as_str() {
             "seconds" | "count" | "interval" | "after_wait" | "x" | "y" | "from_x" | "from_y"
-            | "to_x" | "to_y" | "duration_ms" | "timeout" => value.is_number(),
+            | "to_x" | "to_y" | "duration_ms" | "timeout" => {
+                value.is_number()
+                    || (crate::workflow_inputs::field_allowed(kind, key)
+                        && crate::workflow_inputs::reference(value).is_some())
+            }
             "mode" => matches!(value.as_str(), Some("all" | "any")),
             "result" => matches!(value.as_str(), Some("succeeded" | "needs_help")),
             "loop" => value.as_str().is_some_and(|id| id.len() <= 80),

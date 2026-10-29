@@ -221,6 +221,38 @@ def main():
                 call('/workflows/' + imported['workflow_id'], 'DELETE')
                 assert call('/workflow-import', 'POST', payload)[0]['removed'] is True
                 print('通过：重启后导入结果可确认、已删除副本不重建、清理中断残留只处理无引用的本次图片', flush=True)
+                variable_id = str(uuid.uuid4())
+                variable_draft = copy.deepcopy(draft)
+                variable_draft.update(id=str(uuid.uuid4()), revision=0, inputs=[{"id":variable_id,"name":"等待秒数","type":"number","default":0.2,"unit":"seconds"}])
+                variable_draft["nodes"][0]["config"]["seconds"] = {"input":variable_id}
+                variable_path = '/workflow-drafts/' + variable_draft['id']
+                saved_variable = call(variable_path,'PUT',variable_draft)[0]
+                variable_workflow = call(variable_path + '/save','POST',{'revision':saved_variable['revision']})[0]
+                saved_variable['inputs'][0]['default'] = 0.4
+                saved_variable = call(variable_path,'PUT',saved_variable)[0]
+                exported, headers = call('/workflows/' + variable_workflow['id'] + '/export')
+                assert exported['format_revision'] == 2 and headers['X-Workflow-Draft-State'] == 'modified'
+                assert exported['content']['workflow']['inputs'][0]['default'] == 0.2
+                assert exported['content']['draft']['inputs'][0]['default'] == 0.4
+                imported_variables = call('/workflow-import','POST',request_file(exported))[0]
+                imported_draft = call('/workflow-drafts/' + imported_variables['draft_id'])[0]
+                imported_workflow = next(w for w in call('/workflows')[0] if w['id'] == imported_variables['workflow_id'])
+                assert imported_draft['inputs'] == exported['content']['draft']['inputs']
+                assert imported_workflow['inputs'] == variable_workflow['inputs']
+                assert imported_workflow['nodes'][0]['step']['config']['seconds'] == {'input':variable_id}
+                variable_run = call('/runs','POST',{'device_id':'mock-phone','workflow_id':imported_workflow['id'],'inputs':{variable_id:0}})[0]
+                assert done(variable_run['id'])['state'] == 'succeeded'
+                invalid_version = copy.deepcopy(exported); invalid_version['format_revision'] = 1
+                call('/workflow-import/preview','POST',request_file(invalid_version),expected=400)
+                invalid_reference = copy.deepcopy(exported)
+                invalid_reference['content']['workflow']['nodes'][0]['step']['config']['seconds'] = {'input':str(uuid.uuid4())}
+                call('/workflow-import/preview','POST',request_file(invalid_reference),expected=400)
+                saved_variable['inputs'][0]['default'] = None
+                saved_variable = call(variable_path,'PUT',saved_variable)[0]
+                unfinished = call(variable_path + '/export?revision=' + str(saved_variable['revision']))[0]
+                unfinished_copy = call('/workflow-import','POST',request_file(unfinished))[0]
+                assert unfinished_copy['workflow_id'] is None
+                print('通过：变量与引用往返、草稿和本体默认值分别保留、导入后临时填写运行、未完成变量草稿保留、伪造版本与失效本体引用拒绝', flush=True)
             finally:
                 stop(process, data)
                 process.wait(timeout=15)

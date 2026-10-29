@@ -1,4 +1,10 @@
 <script lang="ts">
+  import InputDefinitions from "./InputDefinitions.svelte";
+  import {
+    compatible,
+    isReference,
+    type InputDefinition,
+  } from "$lib/workflow-inputs";
   import ConditionSamples from "./ConditionSamples.svelte";
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import {
@@ -17,6 +23,8 @@
     type Condition,
   } from "$lib/workflow-editor";
   let {
+    inputs = [],
+    onInputs,
     node,
     nodes,
     entry,
@@ -31,6 +39,8 @@
     deviceNames = {},
     operationLimit = null,
   }: {
+    inputs?: InputDefinition[];
+    onInputs: (inputs: InputDefinition[]) => void;
     node: CanvasNode;
     nodes: CanvasNode[];
     entry: string;
@@ -198,6 +208,9 @@
       }}
     /></label
   >
+  {#if kind === "entry"}
+    <InputDefinitions {inputs} {nodes} onchange={onInputs} />
+  {/if}
   {#if kind !== "entry"}
     <button
       class="inspector-button"
@@ -233,17 +246,64 @@
       </p>{/if}
   {/if}
   {#each fields.filter((field) => !field.percent) as field (field.key)}
+    {@const current = c[field.key]}
+    {@const reference = isReference(current) ? current.input : ""}
     <label
-      >{field.label}<input
-        type="number"
-        min={field.min}
-        max={field.max}
-        step={field.step ?? 0.1}
-        value={numberValue(field)}
-        oninput={(event) => setNumber(field, event.currentTarget.valueAsNumber)}
-      /></label
-    >
+      >{field.label}
+      <Dropdown
+        label={`${field.label}来源`}
+        value={reference}
+        items={[
+          { value: "", label: "固定值" },
+          ...inputs
+            .filter((input) => compatible(input, field.key))
+            .map((input) => ({
+              value: input.id,
+              label: `使用变量：${input.name || "未命名"}`,
+            })),
+          ...(reference &&
+          !inputs.some(
+            (input) => input.id === reference && compatible(input, field.key),
+          )
+            ? [
+                {
+                  value: reference,
+                  label: "变量不存在或类型不匹配",
+                  disabled: true,
+                },
+              ]
+            : []),
+        ]}
+        onchange={(value) =>
+          onConfig({
+            ...c,
+            [field.key]: value
+              ? { input: value }
+              : (inputs.find((input) => input.id === reference)?.default ??
+                (typeof current === "number" ? current : field.min)),
+          })}
+      />
+      {#if reference}
+        <span class="inspector-hint"
+          >默认值：{inputs.find((input) => input.id === reference)?.default ??
+            "未填写"} · 运行时可修改</span
+        >
+      {:else}
+        <input
+          type="number"
+          min={field.min}
+          max={field.max}
+          step={field.step ?? 0.1}
+          value={numberValue(field)}
+          oninput={(event) =>
+            setNumber(field, event.currentTarget.valueAsNumber)}
+        />
+      {/if}
+    </label>
   {/each}
+  {#if fields.length && !inputs.length}<p class="inspector-hint">
+      如需运行时调整，请先在“开始”节点添加变量，再从字段下拉框选择引用。
+    </p>{/if}
   {#if ["tap", "swipe", "loop"].includes(kind)}<p class="inspector-hint">
       第一次立即执行，间隔只在两次之间等待。
     </p>{/if}

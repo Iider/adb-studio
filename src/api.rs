@@ -393,12 +393,15 @@ async fn validate(State(app): State<Arc<App>>, Path(key): Path<String>) -> Resul
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Start {
+    #[serde(default)]
+    inputs: crate::workflow_inputs::Values,
     device_id: String,
     workflow_id: String,
 }
 async fn start(State(app): State<Arc<App>>, Json(s): Json<Start>) -> Result<Json<Run>> {
-    let w = engine::workflow(&app, &s.workflow_id).await?;
-    Ok(Json(engine::start(app, &s.device_id, w).await?))
+    Ok(Json(
+        engine::start_with_inputs(app, &s.device_id, &s.workflow_id, s.inputs).await?,
+    ))
 }
 async fn runs(State(app): State<Arc<App>>) -> Result<Json<Vec<Value>>> {
     let rows = app.db.list::<Run>("runs").await?;

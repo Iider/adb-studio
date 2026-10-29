@@ -188,7 +188,8 @@ pub fn compile(draft: &Draft) -> Result<Workflow> {
     let mut devices: Vec<_> = devices.unwrap_or_default().into_iter().collect();
     devices.sort();
     let workflow = Workflow {
-        schema_version: 1,
+        schema_version: if draft.inputs.is_empty() { 1 } else { 2 },
+        inputs: draft.inputs.clone(),
         id: format!("manual-{}", draft.id),
         name: draft.name.clone(),
         description: draft.description.clone(),
@@ -205,7 +206,18 @@ pub fn compile(draft: &Draft) -> Result<Workflow> {
 
 pub fn validate(w: &Workflow) -> Result<()> {
     ensure!(
-        w.schema_version == 1 && !w.name.trim().is_empty() && w.name.chars().count() <= 80,
+        matches!(w.schema_version, 1 | 2) && (w.schema_version == 2 || w.inputs.is_empty()),
+        "工作流版本与变量定义不匹配"
+    );
+    let (resolved, _) = crate::workflow_inputs::resolve(w, &Default::default())?;
+    validate_resolved(&resolved)
+}
+
+pub fn validate_resolved(w: &Workflow) -> Result<()> {
+    ensure!(
+        matches!(w.schema_version, 1 | 2)
+            && !w.name.trim().is_empty()
+            && w.name.chars().count() <= 80,
         "工作流名称无效"
     );
     ensure!(

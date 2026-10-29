@@ -202,3 +202,51 @@ test("服务器改变字段顺序不会把已存内容误报为草稿修改", ()
   );
   assert.notEqual(canonical({ count: 1 }), canonical({ count: 2 }));
 });
+
+test("变量草稿保存、默认值检查与运行参数计算不覆盖引用", () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const graph = draft([
+    node(
+      "tap",
+      "tap",
+      { next: "end" },
+      { ...defaults("tap"), count: { input: id } },
+    ),
+    node("end", "end", {}, { result: "succeeded" }),
+  ]);
+  graph.inputs = [{ id, name: "点击次数", type: "integer", default: 3 }];
+  const original = structuredClone(graph);
+  assert.deepEqual(checkGraph(graph), []);
+  assert.equal(actionLimit(graph), 3);
+  assert.deepEqual(graph, original);
+  assert.equal(
+    hasDraftContent({ ...blankDraft(), inputs: graph.inputs }),
+    true,
+  );
+  graph.inputs[0].default = 1.5;
+  assert.ok(checkGraph(graph).some((issue) => issue.message.includes("整数")));
+  assert.equal(actionLimit(graph), null);
+  graph.inputs = [];
+  assert.ok(
+    checkGraph(graph).some((issue) => issue.message.includes("已不存在")),
+  );
+});
+
+import { parseInputValues, inputIssues } from "../src/lib/workflow-inputs.ts";
+test("各运行入口共用变量解析，留空默认、零值保留、非法整数拒绝", () => {
+  const inputs = [
+    { id: "count", name: "轮次", type: "integer", default: 20 },
+    { id: "delay", name: "等待", type: "number", default: 2 },
+  ];
+  assert.deepEqual(
+    parseInputValues(inputs, { count: " ", delay: "0", old: "5" }),
+    { delay: 0 },
+  );
+  assert.deepEqual(parseInputValues(inputs, { count: "2" }), { count: 2 });
+  assert.ok(
+    inputIssues(inputs, [], parseInputValues(inputs, { count: "2.5" })).length,
+  );
+  assert.ok(
+    inputIssues(inputs, [], parseInputValues(inputs, { count: "bad" })).length,
+  );
+});

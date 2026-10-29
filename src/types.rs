@@ -50,6 +50,8 @@ impl Device {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Workflow {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<crate::workflow_inputs::Input>,
     pub schema_version: u32,
     pub id: String,
     pub name: String,
@@ -104,6 +106,10 @@ pub struct SampleCase {
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Run {
+    #[serde(default)]
+    pub inputs: crate::workflow_inputs::Values,
+    #[serde(default)]
+    pub input_overrides: crate::workflow_inputs::Values,
     #[serde(default = "empty_object")]
     pub canvas_progress: Value,
     pub id: String,

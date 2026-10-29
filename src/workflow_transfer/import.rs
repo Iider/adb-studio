@@ -58,7 +58,7 @@ fn validate(bytes: &[u8]) -> anyhow::Result<Validated> {
     let mut file: WorkflowFile = serde_json::from_value(request.file)
         .context("请使用工作流编辑器导出的文件；不支持旧任务文件")?;
     ensure!(
-        file.format == "adb-studio.workflow" && file.format_revision == 1,
+        file.format == "adb-studio.workflow" && matches!(file.format_revision, 1 | 2),
         "不支持此工作流文件格式"
     );
     ensure!(
@@ -68,6 +68,10 @@ fn validate(bytes: &[u8]) -> anyhow::Result<Validated> {
     ensure!(
         file.content.draft.is_some(),
         "文件缺少画布草稿；不支持旧任务文件"
+    );
+    ensure!(
+        file.format_revision == 2 || !has_inputs(&file.content),
+        "含变量的文件需使用第 2 版格式"
     );
     if let Some(workflow) = file.content.workflow.as_mut() {
         engine::validate(workflow)?;

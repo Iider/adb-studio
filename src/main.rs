@@ -15,6 +15,7 @@ mod schedule;
 mod types;
 mod vision;
 mod workflow_cleanup;
+mod workflow_inputs;
 mod workflow_transfer;
 
 use anyhow::Result;

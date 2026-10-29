@@ -1,3 +1,4 @@
+import type { InputDefinition } from "./workflow-inputs";
 let token = "";
 export async function session() {
   const response = await fetch("/api/session");
@@ -78,6 +79,7 @@ export interface Node {
   [key: string]: unknown;
 }
 export interface Workflow {
+  inputs?: InputDefinition[];
   id: string;
   name: string;
   description: string;
@@ -89,6 +91,8 @@ export interface Workflow {
   recognition?: "local" | "vision";
 }
 export interface Run {
+  inputs?: Record<string, number>;
+  input_overrides?: Record<string, number>;
   id: string;
   device_id: string;
   workflow: Workflow;

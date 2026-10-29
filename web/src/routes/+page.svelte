@@ -34,7 +34,9 @@
   import { notify } from "$lib/notifications";
   import { resumeBlocked } from "$lib/run-feedback";
   import { scheduleInput } from "$lib/schedules";
-  import type { Draft } from "$lib/workflow-editor";
+  import type { Draft, DraftNode } from "$lib/workflow-editor";
+  import InputValues from "$lib/components/editor/InputValues.svelte";
+  import { inputIssues, parseInputValues } from "$lib/workflow-inputs";
   import Badge from "$lib/components/ui/badge/badge.svelte";
   import {
     api,
@@ -141,6 +143,25 @@
   const activeRuns = $derived(runs.filter(busy));
   const finishedRuns = $derived(runs.filter((r) => !busy(r)));
   const flow = $derived(workflows.find((w) => w.id === selectedWorkflow));
+  let launchValues = $state<Record<string, string>>({});
+  let launchError = $state("");
+  const launchNodes = $derived(
+    (flow?.nodes ?? [])
+      .filter((node) => node.type === "canvas")
+      .map((node) => node.step as DraftNode),
+  );
+  const launchInputs = $derived(
+    parseInputValues(flow?.inputs ?? [], launchValues),
+  );
+  const launchIssues = $derived(
+    inputIssues(flow?.inputs ?? [], launchNodes, launchInputs),
+  );
+  $effect(() => {
+    selectedWorkflow;
+    targetDevice;
+    launchValues = {};
+    launchError = "";
+  });
   const deviceRun = $derived(
     runs.find((r) => r.device_id === selectedDeviceId && busy(r)) ||
       runs.find((r) => r.device_id === selectedDeviceId),
@@ -342,14 +363,23 @@
     );
   }
   async function startFlow(embedded = false) {
-    if (!flow || working || launchBlocked) return;
+    if (!flow || working || launchBlocked || launchIssues.length) return;
+    launchError = "";
     await action(
       "start",
       async () => {
-        const r = await api<Run>("/runs", "POST", {
-          device_id: targetDevice,
-          workflow_id: flow.id,
-        });
+        let r: Run;
+        try {
+          r = await api<Run>("/runs", "POST", {
+            device_id: targetDevice,
+            workflow_id: flow.id,
+            inputs: launchInputs,
+          });
+        } catch (error) {
+          launchError = error instanceof Error ? error.message : "运行失败";
+          throw error;
+        }
+        launchValues = {};
         selectedRun = r.id;
         if (embedded) deviceDetailTab = "task";
         else tab = "runs";
@@ -514,10 +544,21 @@
         void startFlow(embedded);
       }}
     >
+      <InputValues
+        inputs={flow.inputs ?? []}
+        nodes={launchNodes}
+        bind:values={launchValues}
+        disabled={!!working}
+      />
+      {#if launchIssues.length}<p class="hint" role="status">
+          {launchIssues[0].message}
+        </p>{/if}
+      {#if launchError}<p class="hint" role="alert">{launchError}</p>{/if}
       {#if embedded}
         <div class="card-actions device-task-start">
-          <Button disabled={!!working || !!launchBlocked} type="submit"
-            ><Play size={16} />直接运行</Button
+          <Button
+            disabled={!!working || !!launchBlocked || launchIssues.length > 0}
+            type="submit"><Play size={16} />直接运行</Button
           >
         </div>
       {:else}
@@ -535,8 +576,9 @@
               bind:value={targetDevice}
               label="执行手机"
             /></label
-          ><Button disabled={!!working || !!launchBlocked} type="submit"
-            ><Play size={16} />运行</Button
+          ><Button
+            disabled={!!working || !!launchBlocked || launchIssues.length > 0}
+            type="submit"><Play size={16} />运行</Button
           >
         </div>
       {/if}

@@ -1,4 +1,13 @@
 <script lang="ts">
+  import InputValues from "./InputValues.svelte";
+  import {
+    inputIssues,
+    parseInputValues,
+    resolveNodes,
+    unitLabel,
+    type InputDefinition,
+  } from "$lib/workflow-inputs";
+  import { actionLimit, type DraftNode } from "$lib/workflow-editor";
   import { onMount } from "svelte";
   import { Play, ChevronDown, X } from "@lucide/svelte";
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
@@ -12,6 +21,9 @@
     type Event,
   } from "$lib/api";
   let {
+    inputs,
+    draftNodes,
+    entry,
     workflowId,
     savedWorkflow,
     devices,
@@ -22,6 +34,9 @@
     savingWorkflow = false,
     onsave,
   }: {
+    inputs: InputDefinition[];
+    draftNodes: DraftNode[];
+    entry: string;
     workflowId: string;
     savedWorkflow: Workflow | null;
     devices: Device[];
@@ -32,6 +47,21 @@
     savingWorkflow?: boolean;
     onsave: () => Promise<Workflow | null>;
   } = $props();
+  let values = $state<Record<string, string>>({});
+  const overrides = $derived(parseInputValues(inputs, values));
+  const parameterIssues = $derived(inputIssues(inputs, draftNodes, overrides));
+  const limit = $derived(
+    actionLimit({
+      id: "",
+      revision: 0,
+      name: "",
+      description: "",
+      entry,
+      viewport: [0, 0, 1],
+      updated_at: "",
+      nodes: resolveNodes(draftNodes, inputs, overrides),
+    }),
+  );
   let run = $state<Run | null>(null);
   let events = $state<Event[]>([]);
   let working = $state(false);
@@ -53,6 +83,7 @@
     const currentWorkflow = workflowId;
     let cancelled = false;
     run = null;
+    values = {};
     events = [];
     error = "";
     restoring = !!currentWorkflow;
@@ -119,10 +150,18 @@
     try {
       const saved = !savedWorkflow || changed ? await onsave() : savedWorkflow;
       if (!saved || saved.id !== workflowId) return;
+      const parsed = parseInputValues(saved.inputs ?? [], values);
+      const nodes = saved.nodes
+        .filter((node) => node.type === "canvas")
+        .map((node) => node.step as DraftNode);
+      const problems = inputIssues(saved.inputs ?? [], nodes, parsed);
+      if (problems.length) throw new Error(problems[0].message);
       run = await api<Run>("/runs", "POST", {
+        inputs: parsed,
         workflow_id: saved.id,
         device_id: device,
       });
+      values = {};
       await refresh();
     } catch (e) {
       error = e instanceof Error ? e.message : "运行失败";
@@ -209,6 +248,34 @@
         ]}
       /></label
     >
+    {#if run && busy(run)}
+      {#if run.workflow.inputs?.length}<fieldset>
+          <legend>本次运行参数</legend>
+          {#each run.workflow.inputs as input}<p>
+              {input.name}：{run.inputs?.[input.id]}{unitLabel(
+                input,
+              )}（{Object.hasOwn(run.input_overrides ?? {}, input.id)
+                ? "本次填写"
+                : "默认值"}）
+            </p>{/each}
+        </fieldset>{/if}
+    {:else}
+      <InputValues
+        {inputs}
+        nodes={draftNodes}
+        bind:values
+        disabled={working || restoring}
+      />
+      {#if inputs.length && limit !== null}<p>
+          按本次参数，最多执行 {limit} 次手机操作。
+        </p>{/if}
+      {#if parameterIssues.length && inputs.length}<p
+          class="error"
+          role="status"
+        >
+          {parameterIssues[0].message}
+        </p>{/if}
+    {/if}
     <div class="run-actions">
       <button
         disabled={disabled ||
@@ -224,6 +291,7 @@
           restoring ||
           savingWorkflow ||
           !device ||
+          parameterIssues.length > 0 ||
           working ||
           (!!run && busy(run))}
         onclick={start}>运行</button
@@ -244,6 +312,12 @@
     {#if restoring}<p role="status">正在找回运行记录…</p>{/if}
     {#if run}<details>
         <summary>{runLabel(run)} · {run.reason}</summary>
+        {#each run.workflow.inputs ?? [] as input}<p>
+            {input.name}：{run.inputs?.[input.id]}{unitLabel(input)} · 默认 {input.default}
+            · {Object.hasOwn(run.input_overrides ?? {}, input.id)
+              ? "本次填写"
+              : "使用默认"}
+          </p>{/each}
         <ol>
           {#each events.slice(-30) as event}<li>{event.message}</li>{/each}
         </ol>
@@ -321,6 +395,11 @@
     margin: 16px 0;
   }
   .run-actions {
+    position: sticky;
+    bottom: -18px;
+    background: var(--panel);
+    padding: 12px 0;
+    z-index: 1;
     display: flex;
     flex-wrap: wrap;
     gap: 8px;

@@ -318,7 +318,7 @@
             <span class="schedule-card-hint"
               >{expired
                 ? "修改时间后可再次开启"
-                : "使用执行时保存的任务内容"}</span
+                : "使用执行时保存的任务内容与变量默认值"}</span
             >
             <div class="task-buttons">
               <Button
@@ -368,7 +368,7 @@
         <h2 id="schedule-editor-title">
           {editingId ? "修改定时" : "新建定时"}
         </h2>
-        <p>选择任务与执行时间 · 上海时间</p>
+        <p>选择任务与执行时间 · 上海时间。变量使用工作流默认值。</p>
       </div>
       <Button
         variant="ghost"

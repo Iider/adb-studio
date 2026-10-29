@@ -54,6 +54,7 @@
     type Config,
     type Issue,
   } from "$lib/workflow-editor";
+  import type { InputDefinition } from "$lib/workflow-inputs";
   import StepNode from "./StepNode.svelte";
   import StepInspector from "./StepInspector.svelte";
   import CoordinatePicker from "./CoordinatePicker.svelte";
@@ -78,6 +79,7 @@
   let name = $state("");
   let description = $state("");
   let entry = $state("");
+  let inputs = $state<InputDefinition[]>([]);
   let nodes = $state.raw<CanvasNode[]>([]);
   let viewport = $state<Viewport>({ x: 30, y: 25, zoom: 0.9 });
   let selected = $state("");
@@ -117,6 +119,7 @@
       name,
       description,
       entry,
+      inputs,
       nodes: nodes
         .filter((node) => node.id !== "__entry")
         .map((node) => ({
@@ -139,6 +142,7 @@
       name,
       description,
       entry,
+      inputs,
       nodes: nodes
         .filter((node) => node.id !== "__entry")
         .map((node) => ({
@@ -151,6 +155,20 @@
     }),
   );
   const operationLimit = $derived(actionLimit(JSON.parse(content) as Draft));
+  $effect(() => {
+    const inputNames = Object.fromEntries(
+      inputs.map((input) => [input.id, input.name]),
+    );
+    if (
+      nodes.some(
+        (node) => canonical(node.data.inputNames) !== canonical(inputNames),
+      )
+    )
+      nodes = nodes.map((node) => ({
+        ...node,
+        data: { ...node.data, inputNames },
+      }));
+  });
   const visiblePalette = $derived(
     palette.filter((item) =>
       `${item.label}${item.hint}`.includes(search.trim()),
@@ -191,7 +209,7 @@
   }
   function contentOf(draft: Draft) {
     const { revision: _revision, updated_at: _updated, ...value } = draft;
-    return canonical(value);
+    return canonical({ ...value, inputs: value.inputs ?? [] });
   }
   async function restoreWorkflow(draftId: string) {
     try {
@@ -204,6 +222,7 @@
         name: latest.name,
         description: latest.description,
         entry: latest.entry,
+        inputs: latest.inputs ?? [],
         nodes: latest.nodes.map((node) => {
           if (node.type === "end")
             return {
@@ -229,6 +248,7 @@
     name = draft.name;
     description = draft.description;
     entry = draft.entry;
+    inputs = draft.inputs ?? [];
     nodes = toCanvas(draft);
     viewport = {
       x: draft.viewport[0],
@@ -498,6 +518,7 @@
     name = value.name;
     description = value.description;
     entry = value.entry;
+    inputs = value.inputs ?? [];
     nodes = toCanvas(value);
     viewport = {
       x: value.viewport[0],
@@ -806,6 +827,9 @@
         ></button
       >
       <EditorRunPanel
+        {inputs}
+        draftNodes={snapshot().nodes}
+        {entry}
         workflowId={id ? `manual-${id}` : ""}
         {savedWorkflow}
         {devices}
@@ -1149,6 +1173,11 @@
           >
           {#if current}
             <StepInspector
+              {inputs}
+              onInputs={(value) => {
+                inputs = value;
+                remember();
+              }}
               {operationLimit}
               deviceNames={Object.fromEntries(
                 devices.map((device) => [device.id, device.name]),

@@ -3,6 +3,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import json
+import datetime as dt
 import os
 from pathlib import Path
 import shutil
@@ -498,6 +499,72 @@ def main():
                 (fake / "displays").unlink()
                 (fake / "expected-display").unlink()
                 print("通过：截图与点击使用同一显示屏，无法确认触控编号时拒绝动作")
+                rounds_id, wait_id = str(uuid.uuid4()), str(uuid.uuid4())
+                variable_draft = {
+                    "id":str(uuid.uuid4()), "revision":0, "name":"运行变量检查", "description":"", "entry":"loop", "viewport":[0,0,1],
+                    "inputs":[
+                        {"id":rounds_id,"name":"执行轮数","type":"integer","default":3,"min":1,"max":10},
+                        {"id":wait_id,"name":"结束后等待","type":"number","default":0.05,"unit":"seconds"},
+                    ],
+                    "nodes":[
+                        node("loop","loop",{"body":"tap","done":"end"},count={"input":rounds_id},interval=0),
+                        node("tap","tap",{"next":"loop"},count=1,interval=1,after_wait={"input":wait_id},profiles=[profile]),
+                        node("end","end",result="succeeded"),
+                    ],
+                }
+                variable_path = "/workflow-drafts/" + variable_draft["id"]
+                saved_variables = call(variable_path, "PUT", variable_draft)[1]
+                variable_flow = call(variable_path + "/save", "POST", {"revision":saved_variables["revision"]})[1]
+                assert variable_flow["schema_version"] == 2
+                def variable_run(values):
+                    return call("/runs", "POST", {"workflow_id":variable_flow["id"],"device_id":"mock-phone","inputs":values})[1]
+                before = taps()
+                result = finish(variable_run({rounds_id:2,wait_id:0})["id"])
+                assert result["state"] == "succeeded" and taps() - before == 2, result
+                assert result["inputs"] == {rounds_id:2,wait_id:0}
+                assert result["workflow"]["nodes"][0]["step"]["config"]["count"] == 2
+                assert next(w for w in call("/workflows")[1] if w["id"] == variable_flow["id"]) == variable_flow
+                before = taps()
+                result = finish(variable_run({})["id"])
+                assert taps() - before == 3 and result["inputs"][rounds_id] == 3
+                existing_runs = len(call("/runs")[1])
+                for values in [{rounds_id:0},{rounds_id:1.5},{rounds_id:11},{wait_id:-1},{"missing":1}]:
+                    call("/runs", "POST", {"workflow_id":variable_flow["id"],"device_id":"mock-phone","inputs":values}, expected=400)
+                assert len(call("/runs")[1]) == existing_runs
+                before = taps()
+                run = variable_run({rounds_id:2,wait_id:2})
+                wait_value(lambda: record(run["id"])["checkpoint"].get("done") == 1)
+                call("/runs/" + run["id"] + "/pause", "POST")
+                wait_value(lambda: record(run["id"])["state"] == "paused")
+                saved_variables["inputs"][0]["default"] = 4
+                saved_variables = call(variable_path,"PUT",saved_variables)[1]
+                call(variable_path + "/save","POST",{"revision":saved_variables["revision"]})
+                stop(process, data); process.wait(timeout=10); process = boot(log)
+                restored = record(run["id"])
+                assert restored["state"] == "paused" and restored["inputs"] == {rounds_id:2,wait_id:2}
+                call("/runs/" + run["id"] + "/resume","POST")
+                result = finish(run["id"])
+                assert result["state"] == "succeeded" and taps() - before == 2, result
+                assert result["workflow"]["inputs"][0]["default"] == 3
+                print("通过：变量默认值、临时覆盖与零值、执行次数、非法输入零启动；暂停重启后不受新默认值影响", flush=True)
+                before = taps()
+                run = variable_run({rounds_id:2,wait_id:1})
+                wait_value(lambda: record(run["id"])["checkpoint"].get("done") == 1)
+                (fake / "online").unlink()
+                call("/devices/refresh", "POST")
+                wait_value(lambda: record(run["id"])["state"] == "waiting_device")
+                assert record(run["id"])["inputs"] == {rounds_id:2,wait_id:1}
+                (fake / "online").touch()
+                call("/devices/refresh", "POST")
+                assert finish(run["id"])["state"] == "succeeded" and taps() - before == 2
+                before = taps()
+                previous = {row['id'] for row in call('/runs')[1]}
+                call('/schedules','POST',{'name':'变量定时','workflow_id':variable_flow['id'],'device_id':'mock-phone','enabled':True,'rule':{'kind':'once','at':(dt.datetime.now(dt.timezone.utc)+dt.timedelta(seconds=3)).isoformat()}})
+                scheduled = wait_value(lambda: next((row for row in call('/runs')[1] if row['id'] not in previous),None))
+                assert finish(scheduled['id'])['state'] == 'succeeded'
+                assert record(scheduled['id'])['inputs'][rounds_id] == 4 and taps() - before == 4
+                assert record(scheduled['id'])['input_overrides'] == {}
+                print('通过：变量断线恢复保持原值，定时使用当前默认值且不沿用手动输入', flush=True)
             finally:
                 stop(process, data)
                 process.wait(timeout=10)

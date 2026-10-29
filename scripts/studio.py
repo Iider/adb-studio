@@ -60,6 +60,7 @@ def main():
     run = sub.add_parser("run")
     run.add_argument("workflow")
     run.add_argument("--device", required=True)
+    run.add_argument("--inputs-file", help="本次运行变量 JSON 文件（变量编号到数字的映射）")
     for command in ["stop", "pause", "resume"]:
         control = sub.add_parser(command)
         control.add_argument("run_id")
@@ -79,6 +80,7 @@ def main():
     elif args.command == "run":
         method, path = "POST", "/runs"
         body = {
+            "inputs": json.loads(Path(args.inputs_file).read_text()) if args.inputs_file else {},
             "device_id": args.device,
             "workflow_id": args.workflow,
         }
