@@ -1,11 +1,15 @@
 <script lang="ts">
+  import { tick } from "svelte";
+  import { Plus, Pencil, Trash2, X } from "@lucide/svelte";
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
   import {
     inputError,
+    inputLabel,
     isReference,
     type InputDefinition,
   } from "$lib/workflow-inputs";
   import type { CanvasNode } from "$lib/workflow-editor";
+
   let {
     inputs,
     nodes,
@@ -15,11 +19,15 @@
     nodes: CanvasNode[];
     onchange: (inputs: InputDefinition[]) => void;
   } = $props();
-  function update(id: string, patch: Partial<InputDefinition>) {
-    onchange(
-      inputs.map((input) => (input.id === id ? { ...input, ...patch } : input)),
-    );
-  }
+
+  const uid = $props.id();
+  const titleId = `${uid}-variable-title`;
+  let dialog: HTMLDialogElement;
+  let editingId = $state<string | null>(null);
+  let draft = $state<InputDefinition | null>(null);
+  let order = $state(0);
+  const error = $derived(draft ? validate(draft) : "");
+
   function references(id: string) {
     return nodes
       .filter((node) =>
@@ -29,222 +37,366 @@
       )
       .map((node) => node.data.label);
   }
-  function move(index: number, direction: number) {
-    const next = [...inputs];
-    [next[index], next[index + direction]] = [
-      next[index + direction],
-      next[index],
-    ];
+  function validate(value: InputDefinition) {
+    if (!value.name.trim()) return "请填写变量名称";
+    if (
+      inputs.some(
+        (input) =>
+          input.id !== value.id && input.name.trim() === value.name.trim(),
+      )
+    )
+      return "变量名称不能重复";
+    if (Array.from(value.alias ?? "").length > 40) return "显示别名最多 40 字";
+    return inputError(value, value.default);
+  }
+  async function open(input?: InputDefinition) {
+    editingId = input?.id ?? null;
+    order = input
+      ? inputs.findIndex((item) => item.id === input.id)
+      : inputs.length;
+    draft = input
+      ? { ...input, alias: input.alias ?? "" }
+      : {
+          id: crypto.randomUUID(),
+          name: "",
+          alias: "",
+          type: "number",
+          default: 0,
+        };
+    await tick();
+    dialog.showModal();
+    dialog
+      .querySelector<HTMLInputElement>('input[aria-label="变量名称"]')
+      ?.focus();
+  }
+  function number(event: Event) {
+    const value = (event.currentTarget as HTMLInputElement).valueAsNumber;
+    return Number.isFinite(value) ? value : null;
+  }
+  function save(event: SubmitEvent) {
+    event.preventDefault();
+    if (!draft || error || (!editingId && inputs.length >= 20)) return;
+    const next = inputs.filter((input) => input.id !== editingId);
+    next.splice(Math.max(0, Math.min(order, next.length)), 0, { ...draft });
     onchange(next);
+    dialog.close();
+  }
+  function remove(input: InputDefinition) {
+    if (!references(input.id).length)
+      onchange(inputs.filter((item) => item.id !== input.id));
   }
 </script>
 
 <div class="definitions">
-  <h3>运行变量</h3>
-  <p>
-    在其他节点选择使用变量；每次运行可临时填写。运行时显示别名，未填别名则显示名称。
-  </p>
-  {#each inputs as input, index (input.id)}
+  <div class="definitions-heading">
+    <h3>运行变量</h3>
+    <button
+      type="button"
+      class="icon-button"
+      aria-label="添加变量"
+      title="添加变量"
+      disabled={inputs.length >= 20}
+      onclick={() => open()}><Plus size={16} /></button
+    >
+  </div>
+  {#each inputs as input (input.id)}
     {@const used = references(input.id)}
-    {@const error = !input.name.trim()
-      ? "请填写变量名称"
-      : inputs.some(
-            (other) =>
-              other.id !== input.id && other.name.trim() === input.name.trim(),
-          )
-        ? "变量名称不能重复"
-        : Array.from(input.alias ?? "").length > 40
-          ? "显示别名最多 40 字"
-          : inputError(input, input.default)}
-    <fieldset>
-      <legend>变量 {index + 1}</legend>
-      <label
-        >名称<input
-          aria-label={`变量 ${index + 1} 名称`}
-          maxlength="40"
-          value={input.name}
-          oninput={(event) =>
-            update(input.id, { name: event.currentTarget.value })}
-        /></label
+    {@const label = inputLabel(input)}
+    {@const value = `${input.default ?? "未填写"}`}
+    <div class="variable-row">
+      <span class="variable-label" title={label}>{label}</span>
+      <span class="variable-value" title={`默认值：${value}`}>{value}</span>
+      <button
+        type="button"
+        class="icon-button"
+        aria-label={`编辑变量 ${label}`}
+        title="编辑变量"
+        onclick={() => open(input)}><Pencil size={14} /></button
       >
-      <label
-        >显示别名（选填）<input
-          aria-label={`变量 ${index + 1} 显示别名`}
-          maxlength="40"
-          placeholder="例如：点击次数"
-          value={input.alias ?? ""}
-          oninput={(event) =>
-            update(input.id, { alias: event.currentTarget.value })}
-        /></label
+      <button
+        type="button"
+        class="icon-button delete-button"
+        aria-label={`删除变量 ${label}`}
+        title={used.length
+          ? `已用于：${used.join("、")}。解除引用后可删除。`
+          : "删除变量"}
+        disabled={used.length > 0}
+        onclick={() => remove(input)}><Trash2 size={14} /></button
       >
-      <label
-        >类型<Dropdown
-          label={`变量 ${index + 1} 类型`}
-          value={input.type}
-          items={[
-            { value: "integer", label: "整数（次数、轮数）" },
-            { value: "number", label: "数字（可带小数）" },
-          ]}
-          onchange={(value) =>
-            update(input.id, { type: value as InputDefinition["type"] })}
-        /></label
-      >
-      <label
-        >默认值<input
-          aria-label={`变量 ${index + 1} 默认值`}
-          type="number"
-          step={input.type === "integer" ? 1 : "any"}
-          value={input.default ?? ""}
-          oninput={(event) =>
-            update(input.id, {
-              default: Number.isFinite(event.currentTarget.valueAsNumber)
-                ? event.currentTarget.valueAsNumber
-                : null,
-            })}
-        /></label
-      >
-      {#if error}<p class="error" role="status">{error}</p>{/if}
-      <details>
-        <summary>单位与范围（选填）</summary>
-        <label
-          >单位<Dropdown
-            label={`变量 ${index + 1} 单位`}
-            value={input.unit ?? ""}
-            items={[
-              { value: "", label: "无" },
-              { value: "seconds", label: "秒" },
-              { value: "milliseconds", label: "毫秒" },
-            ]}
-            onchange={(value) =>
-              update(input.id, { unit: value as InputDefinition["unit"] })}
-          /></label
-        >
-        <div class="range">
-          <label
-            >最小值<input
-              type="number"
-              step="any"
-              value={input.min ?? ""}
-              oninput={(event) =>
-                update(input.id, {
-                  min: Number.isFinite(event.currentTarget.valueAsNumber)
-                    ? event.currentTarget.valueAsNumber
-                    : null,
-                })}
-            /></label
-          >
-          <label
-            >最大值<input
-              type="number"
-              step="any"
-              value={input.max ?? ""}
-              oninput={(event) =>
-                update(input.id, {
-                  max: Number.isFinite(event.currentTarget.valueAsNumber)
-                    ? event.currentTarget.valueAsNumber
-                    : null,
-                })}
-            /></label
-          >
-        </div>
-        <label
-          >说明<input
-            maxlength="200"
-            value={input.description ?? ""}
-            oninput={(event) =>
-              update(input.id, { description: event.currentTarget.value })}
-          /></label
-        >
-      </details>
-      {#if used.length}<p>已用于：{used.join("、")}。解除引用后可删除。</p>{/if}
-      <div class="actions">
+    </div>
+  {/each}
+</div>
+
+<dialog
+  bind:this={dialog}
+  class="variable-dialog"
+  aria-labelledby={titleId}
+  onclose={() => (draft = null)}
+>
+  {#if draft}
+    <form onsubmit={save}>
+      <div class="dialog-heading">
+        <h2 id={titleId}>{editingId ? "编辑变量" : "添加变量"}</h2>
         <button
-          disabled={index === 0}
-          aria-label={`上移变量 ${index + 1}`}
-          onclick={() => move(index, -1)}>上移</button
-        >
-        <button
-          disabled={index === inputs.length - 1}
-          aria-label={`下移变量 ${index + 1}`}
-          onclick={() => move(index, 1)}>下移</button
-        >
-        <button
-          disabled={used.length > 0}
-          onclick={() =>
-            onchange(inputs.filter((item) => item.id !== input.id))}
-          >删除</button
+          type="button"
+          class="icon-button"
+          aria-label="关闭变量弹窗"
+          onclick={() => dialog.close()}><X size={18} /></button
         >
       </div>
-    </fieldset>
-  {/each}
-  <button
-    disabled={inputs.length >= 20}
-    onclick={() =>
-      onchange([
-        ...inputs,
-        { id: crypto.randomUUID(), name: "", type: "number", default: 0 },
-      ])}>添加变量</button
-  >
-</div>
+      <div class="dialog-fields">
+        <label
+          >类型<Dropdown
+            label="变量类型"
+            value={draft.type}
+            items={[
+              { value: "integer", label: "整数（次数、轮数）" },
+              { value: "number", label: "数字（可带小数）" },
+            ]}
+            onchange={(value) => {
+              if (draft) draft.type = value as InputDefinition["type"];
+            }}
+          /></label
+        >
+        <label
+          >变量名称<input
+            aria-label="变量名称"
+            maxlength="40"
+            bind:value={draft.name}
+          /></label
+        >
+        <label
+          >显示别名（选填）<input
+            aria-label="显示别名"
+            maxlength="40"
+            placeholder="例如：点击次数"
+            bind:value={draft.alias}
+          /></label
+        >
+        <label
+          >默认值<input
+            aria-label="变量默认值"
+            type="number"
+            step={draft.type === "integer" ? 1 : "any"}
+            value={draft.default ?? ""}
+            oninput={(event) => {
+              if (draft) draft.default = number(event);
+            }}
+          /></label
+        >
+        <details>
+          <summary>更多设置</summary>
+          <div class="optional-fields">
+            <div class="range">
+              <label
+                >最小值<input
+                  aria-label="变量最小值"
+                  type="number"
+                  step="any"
+                  value={draft.min ?? ""}
+                  oninput={(event) => {
+                    if (draft) draft.min = number(event);
+                  }}
+                /></label
+              >
+              <label
+                >最大值<input
+                  aria-label="变量最大值"
+                  type="number"
+                  step="any"
+                  value={draft.max ?? ""}
+                  oninput={(event) => {
+                    if (draft) draft.max = number(event);
+                  }}
+                /></label
+              >
+            </div>
+            <label
+              >说明<input
+                aria-label="变量说明"
+                maxlength="200"
+                bind:value={draft.description}
+              /></label
+            >
+            {#if inputs.length + (editingId ? 0 : 1) > 1}
+              <label
+                >显示顺序<Dropdown
+                  label="变量显示顺序"
+                  value={String(order)}
+                  items={Array.from(
+                    { length: inputs.length + (editingId ? 0 : 1) },
+                    (_, index) => ({
+                      value: String(index),
+                      label: `第 ${index + 1} 项`,
+                    }),
+                  )}
+                  onchange={(value) => (order = Number(value))}
+                /></label
+              >
+            {/if}
+          </div>
+        </details>
+        {#if error}<p class="error" role="status">{error}</p>{/if}
+      </div>
+      <div class="dialog-actions">
+        <button type="button" onclick={() => dialog.close()}>取消</button>
+        <button type="submit" class="primary" disabled={!!error}>保存</button>
+      </div>
+    </form>
+  {/if}
+</dialog>
 
 <style>
   .definitions {
     display: grid;
-    gap: 12px;
+    gap: 8px;
     min-width: 0;
+  }
+  .definitions-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
   }
   h3 {
     font-size: 14px;
   }
-  fieldset {
+  .variable-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
     min-width: 0;
-    padding: 12px;
+    padding: 4px 6px 4px 10px;
     border: 1px solid var(--line);
     border-radius: 8px;
+    background: var(--panel2);
   }
-  legend,
-  label,
-  summary,
-  button {
+  .variable-label {
+    flex: 1;
+    min-width: 0;
+    margin-right: 4px;
     font-size: 13px;
+  }
+  .variable-value {
+    max-width: 64px;
+    margin-right: 12px;
+    font-size: 12px;
+    color: var(--dim);
+  }
+  .variable-label,
+  .variable-value {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  button {
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: var(--panel);
+    color: var(--text);
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+  .icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--dim);
+  }
+  .icon-button:hover:not(:disabled) {
+    color: var(--accent2);
+    background: var(--accentsoft);
+  }
+  .delete-button:hover:not(:disabled) {
+    color: var(--red);
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .variable-dialog {
+    width: 480px;
+    max-width: calc(100vw - 32px);
+    max-height: calc(100dvh - 32px);
+    padding: 0;
+    margin: auto;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--panel);
+    color: var(--text);
+    overflow: hidden;
+  }
+  form {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100dvh - 32px);
+  }
+  .dialog-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 20px 24px 16px;
+    flex: none;
+  }
+  h2 {
+    font-size: 18px;
+  }
+  .dialog-fields {
+    display: grid;
+    gap: 14px;
+    padding: 0 24px 4px;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   label {
     display: grid;
     gap: 6px;
-    margin: 10px 0;
-  }
-  .range {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
+    min-width: 0;
+    margin: 0;
+    font-size: 13px;
   }
   input {
     width: 100%;
     min-width: 0;
   }
-  p {
+  summary {
+    font-size: 13px;
     color: var(--dim);
+    cursor: pointer;
+  }
+  .optional-fields {
+    display: grid;
+    gap: 14px;
+    margin-top: 14px;
+  }
+  .range {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .error {
+    color: var(--red);
     font-size: 12px;
     line-height: 1.7;
     overflow-wrap: anywhere;
   }
-  .error {
-    color: var(--red);
-  }
-  .actions {
+  .dialog-actions {
     display: flex;
+    justify-content: flex-end;
     gap: 8px;
-    margin-top: 10px;
+    padding: 18px 24px 20px;
+    flex: none;
   }
-  button {
-    padding: 7px 10px;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    background: var(--panel);
-    color: var(--text);
-  }
-  button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+  .primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--primary-ink);
   }
 </style>

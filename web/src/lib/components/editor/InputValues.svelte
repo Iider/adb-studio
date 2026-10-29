@@ -5,7 +5,6 @@
     inputError,
     inputLabel,
     isReference,
-    unitLabel,
     type InputDefinition,
   } from "$lib/workflow-inputs";
   import type { DraftNode } from "$lib/workflow-editor";
@@ -29,7 +28,7 @@
       for (const [key, reference] of Object.entries(node.config)) {
         if (!isReference(reference) || reference.input !== input.id) continue;
         const problem = !compatible(input, key)
-          ? "类型或单位不匹配"
+          ? "类型不匹配"
           : fieldError(node.kind, key, value!);
         if (problem) return `${node.label}：${problem}`;
       }
@@ -43,11 +42,7 @@
       {#each inputs as input (input.id)}
         {@const issue = error(input)}
         <div class="input-field">
-          <label for={`run-input-${input.id}`}
-            >{inputLabel(input)}{unitLabel(input)
-              ? `（${unitLabel(input)}）`
-              : ""}</label
-          >
+          <label for={`run-input-${input.id}`}>{inputLabel(input)}</label>
           <input
             id={`run-input-${input.id}`}
             inputmode="decimal"

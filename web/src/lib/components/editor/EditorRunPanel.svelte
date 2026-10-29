@@ -5,7 +5,6 @@
     inputLabel,
     parseInputValues,
     resolveNodes,
-    unitLabel,
     type InputDefinition,
   } from "$lib/workflow-inputs";
   import { actionLimit, type DraftNode } from "$lib/workflow-editor";
@@ -253,9 +252,10 @@
       {#if run.workflow.inputs?.length}<fieldset>
           <legend>本次运行参数</legend>
           {#each run.workflow.inputs as input}<p>
-              {inputLabel(input)}：{run.inputs?.[input.id]}{unitLabel(
-                input,
-              )}（{Object.hasOwn(run.input_overrides ?? {}, input.id)
+              {inputLabel(input)}：{run.inputs?.[input.id]}（{Object.hasOwn(
+                run.input_overrides ?? {},
+                input.id,
+              )
                 ? "本次填写"
                 : "默认值"}）
             </p>{/each}
@@ -314,7 +314,7 @@
     {#if run}<details>
         <summary>{runLabel(run)} · {run.reason}</summary>
         {#each run.workflow.inputs ?? [] as input}<p>
-            {inputLabel(input)}：{run.inputs?.[input.id]}{unitLabel(input)} · 默认
+            {inputLabel(input)}：{run.inputs?.[input.id]} · 默认
             {input.default}
             · {Object.hasOwn(run.input_overrides ?? {}, input.id)
               ? "本次填写"

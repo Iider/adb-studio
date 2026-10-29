@@ -20,8 +20,9 @@ pub struct Input {
     pub min: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f64>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub unit: String,
+    // 已保存的工作流、草稿和运行快照可能带 unit；只消费旧字段，不再保存或参与解释数值。
+    #[serde(default, skip_serializing, rename = "unit")]
+    _legacy_unit: serde::de::IgnoredAny,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
 }
@@ -60,10 +61,6 @@ pub fn validate_definitions(inputs: &[Input], complete: bool) -> Result<()> {
         ensure!(
             matches!(input.kind.as_str(), "integer" | "number"),
             "变量类型无效"
-        );
-        ensure!(
-            matches!(input.unit.as_str(), "" | "seconds" | "milliseconds"),
-            "变量单位无效"
         );
         ensure!(
             [input.default, input.min, input.max]
@@ -167,19 +164,6 @@ pub fn resolve(workflow: &Workflow, overrides: &Values) -> Result<(Workflow, Val
                 "after_wait" => "结束后等待时间",
                 _ => "等待时间",
             };
-            let unit = if key == "duration_ms" {
-                "milliseconds"
-            } else if key == "count" {
-                ""
-            } else {
-                "seconds"
-            };
-            ensure!(
-                input.unit.is_empty() || input.unit == unit,
-                "{}：变量“{}”的单位不适用于{label}",
-                step.label,
-                input.label()
-            );
             let valid = if key == "count" {
                 input.kind == "integer" && number.fract() == 0. && (1. ..=10000.).contains(&number)
             } else if key == "duration_ms" {
@@ -208,7 +192,7 @@ mod tests {
     fn draft() -> Draft {
         serde_json::from_value(json!({
             "id": uuid::Uuid::new_v4().to_string(), "revision":0, "name":"变量", "description":"", "entry":"wait", "viewport":[0,0,1],
-            "inputs":[{"id":"00000000-0000-4000-8000-000000000001","name":"等待时间","type":"number","default":2,"min":0,"max":10,"unit":"seconds"}],
+            "inputs":[{"id":"00000000-0000-4000-8000-000000000001","name":"等待时间","type":"number","default":2,"min":0,"max":10}],
             "nodes":[
                 {"id":"wait","kind":"wait","label":"等待","config":{"seconds":{"input":"00000000-0000-4000-8000-000000000001"}},"targets":{"next":"end"},"position":[0,0]},
                 {"id":"end","kind":"end","label":"结束","config":{"result":"succeeded"},"targets":{},"position":[0,0]}
@@ -274,7 +258,7 @@ mod tests {
         assert!(canvas::compile(&draft).is_err());
     }
     #[test]
-    fn shared_reference_checks_each_field_and_keeps_unit_rules() {
+    fn shared_reference_checks_each_field_range() {
         let mut draft = draft();
         draft.nodes[0].kind = "wait_condition".into();
         draft.nodes[0].config = json!({"interval":{"input":draft.inputs[0].id}, "timeout":2});
@@ -299,8 +283,49 @@ mod tests {
             recognition: Default::default(),
         };
         assert!(resolve(&workflow, &Values::from([(draft.inputs[0].id.clone(), 0.)])).is_err());
-        let mut wrong_unit = workflow.clone();
-        wrong_unit.inputs[0].unit = "milliseconds".into();
-        assert!(resolve(&wrong_unit, &Values::new()).is_err());
+        assert!(resolve(&workflow, &Values::new()).is_ok());
+    }
+
+    #[test]
+    fn legacy_unit_is_discarded_and_nodes_interpret_the_same_numeric_value() {
+        let mut value = serde_json::to_value(draft()).unwrap();
+        value["inputs"][0]["unit"] = json!("milliseconds");
+        value["inputs"][0]["max"] = json!(1000);
+        value["inputs"][0]["default"] = json!(300);
+        let mut draft: Draft = serde_json::from_value(value).unwrap();
+        let id = draft.inputs[0].id.clone();
+        assert!(
+            serde_json::to_value(&draft).unwrap()["inputs"][0]
+                .get("unit")
+                .is_none()
+        );
+        draft.nodes[0].targets.insert("next".into(), "swipe".into());
+        draft.nodes.insert(1, crate::drafts::DraftNode {
+            id: "swipe".into(), kind: "swipe".into(), label: "滑动".into(),
+            config: json!({"from_x":0.5,"from_y":0.8,"to_x":0.5,"to_y":0.2,"count":1,"interval":0,"duration_ms":{"input":id},"profiles":[{"device_id":"mock-phone","width":400,"height":800,"display":"0","x":0.5,"y":0.8,"to_x":0.5,"to_y":0.2}]}),
+            targets: std::collections::HashMap::from([("next".into(), "end".into())]),
+            position: [0., 0.],
+        });
+        let workflow = canvas::compile(&draft).unwrap();
+        let (resolved, values) = resolve(&workflow, &Values::new()).unwrap();
+        assert_eq!(values[&id], 300.);
+        for (index, key) in [(0, "seconds"), (1, "duration_ms")] {
+            let Action::Canvas { step } = &resolved.nodes[index].action else {
+                panic!()
+            };
+            assert_eq!(step.config[key], json!(300.));
+        }
+        assert!(resolve(&workflow, &Values::from([(id.clone(), 1.)])).is_err());
+        let mut count = draft.clone();
+        count.nodes[0].kind = "loop".into();
+        count.nodes[0].config = json!({"count":{"input":id},"interval":0});
+        count.nodes[0].targets = std::collections::HashMap::from([
+            ("body".into(), "swipe".into()),
+            ("done".into(), "end".into()),
+        ]);
+        count.nodes[1].targets.insert("next".into(), "wait".into());
+        assert!(canvas::compile(&count).is_err());
+        count.inputs[0].kind = "integer".into();
+        assert!(canvas::compile(&count).is_ok());
     }
 }

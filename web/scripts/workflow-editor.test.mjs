@@ -237,7 +237,40 @@ import {
   inputIssues,
   inputLabel,
   inputOptionLabel,
+  compatible,
+  normalizeInputs,
+  resolveNodes,
 } from "../src/lib/workflow-inputs.ts";
+test("变量只保存数值，旧单位不影响引用，不按秒与毫秒换算", () => {
+  const legacy = {
+    id: "scalar",
+    name: "数值",
+    type: "number",
+    default: 300,
+    unit: "seconds",
+  };
+  const inputs = normalizeInputs([legacy]);
+  assert.equal(Object.hasOwn(inputs[0], "unit"), false);
+  assert.equal(legacy.unit, "seconds");
+  assert.equal(compatible(inputs[0], "count"), false);
+  assert.equal(compatible({ ...inputs[0], type: "integer" }, "count"), true);
+  for (const field of ["seconds", "duration_ms", "interval"])
+    assert.equal(compatible(inputs[0], field), true);
+  const nodes = [
+    node("wait", "wait", {}, { seconds: { input: "scalar" } }),
+    node("swipe", "swipe", {}, { duration_ms: { input: "scalar" } }),
+  ];
+  assert.deepEqual(inputIssues(inputs, nodes), []);
+  const resolved = resolveNodes(nodes, inputs);
+  assert.equal(resolved[0].config.seconds, 300);
+  assert.equal(resolved[1].config.duration_ms, 300);
+  assert.ok(
+    inputIssues(inputs, nodes, { scalar: 1 }).some((issue) =>
+      issue.message.includes("滑动时长"),
+    ),
+  );
+  assert.deepEqual(nodes[0].config.seconds, { input: "scalar" });
+});
 test("显示别名用于标签和报错，旧变量及空白别名回退名称，引用编号不变", () => {
   const input = {
     id: "stable-id",

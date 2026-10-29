@@ -54,7 +54,11 @@
     type Config,
     type Issue,
   } from "$lib/workflow-editor";
-  import { inputLabel, type InputDefinition } from "$lib/workflow-inputs";
+  import {
+    inputLabel,
+    normalizeInputs,
+    type InputDefinition,
+  } from "$lib/workflow-inputs";
   import StepNode from "./StepNode.svelte";
   import StepPicker, {
     stepPickerContext,
@@ -265,7 +269,7 @@
   }
   function contentOf(draft: Draft) {
     const { revision: _revision, updated_at: _updated, ...value } = draft;
-    return canonical({ ...value, inputs: value.inputs ?? [] });
+    return canonical({ ...value, inputs: normalizeInputs(value.inputs ?? []) });
   }
   async function restoreWorkflow(draftId: string) {
     try {
@@ -278,7 +282,7 @@
         name: latest.name,
         description: latest.description,
         entry: latest.entry,
-        inputs: latest.inputs ?? [],
+        inputs: normalizeInputs(latest.inputs ?? []),
         nodes: latest.nodes.map((node) => {
           if (node.type === "end")
             return {
@@ -306,7 +310,7 @@
     name = draft.name;
     description = draft.description;
     entry = draft.entry;
-    inputs = draft.inputs ?? [];
+    inputs = normalizeInputs(draft.inputs ?? []);
     nodes = toCanvas(draft);
     viewport = {
       x: draft.viewport[0],
@@ -577,7 +581,7 @@
     name = value.name;
     description = value.description;
     entry = value.entry;
-    inputs = value.inputs ?? [];
+    inputs = normalizeInputs(value.inputs ?? []);
     nodes = toCanvas(value);
     viewport = {
       x: value.viewport[0],

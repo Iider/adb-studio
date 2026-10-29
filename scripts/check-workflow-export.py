@@ -223,7 +223,7 @@ def main():
                 print('通过：重启后导入结果可确认、已删除副本不重建、清理中断残留只处理无引用的本次图片', flush=True)
                 variable_id = str(uuid.uuid4())
                 variable_draft = copy.deepcopy(draft)
-                variable_draft.update(id=str(uuid.uuid4()), revision=0, inputs=[{"id":variable_id,"name":"delay","alias":"等待时长","type":"number","default":0.2,"unit":"seconds"}])
+                variable_draft.update(id=str(uuid.uuid4()), revision=0, inputs=[{"id":variable_id,"name":"delay","alias":"等待时长","type":"number","default":0.2}])
                 variable_draft["nodes"][0]["config"]["seconds"] = {"input":variable_id}
                 variable_path = '/workflow-drafts/' + variable_draft['id']
                 saved_variable = call(variable_path,'PUT',variable_draft)[0]
@@ -234,6 +234,19 @@ def main():
                 assert exported['format_revision'] == 2 and headers['X-Workflow-Draft-State'] == 'modified'
                 assert exported['content']['workflow']['inputs'][0]['default'] == 0.2
                 assert exported['content']['draft']['inputs'][0]['default'] == 0.4
+                assert 'unit' not in exported['content']['workflow']['inputs'][0]
+                legacy = copy.deepcopy(exported)
+                legacy['content']['workflow']['inputs'][0]['unit'] = 'milliseconds'
+                legacy['content']['draft']['inputs'][0]['unit'] = 'seconds'
+                legacy_result = call('/workflow-import','POST',request_file(legacy))[0]
+                legacy_draft = call('/workflow-drafts/' + legacy_result['draft_id'])[0]
+                legacy_workflow = next(w for w in call('/workflows')[0] if w['id'] == legacy_result['workflow_id'])
+                assert legacy_draft['inputs'] == saved_variable['inputs']
+                assert legacy_workflow['inputs'] == variable_workflow['inputs']
+                assert legacy_workflow['nodes'][0]['step']['config']['seconds'] == {'input':variable_id}
+                legacy_export = call('/workflows/' + legacy_workflow['id'] + '/export')[0]
+                assert 'unit' not in legacy_export['content']['workflow']['inputs'][0]
+                assert 'unit' not in legacy_export['content']['draft']['inputs'][0]
                 imported_variables = call('/workflow-import','POST',request_file(exported))[0]
                 imported_draft = call('/workflow-drafts/' + imported_variables['draft_id'])[0]
                 imported_workflow = next(w for w in call('/workflows')[0] if w['id'] == imported_variables['workflow_id'])
@@ -253,7 +266,7 @@ def main():
                 unfinished = call(variable_path + '/export?revision=' + str(saved_variable['revision']))[0]
                 unfinished_copy = call('/workflow-import','POST',request_file(unfinished))[0]
                 assert unfinished_copy['workflow_id'] is None
-                print('通过：变量与引用往返、草稿和本体默认值分别保留、导入后临时填写运行、未完成变量草稿保留、伪造版本与失效本体引用拒绝', flush=True)
+                print('通过：变量与引用往返、旧变量单位丢弃且数值不换算、草稿和本体默认值分别保留、导入后临时填写运行、未完成变量草稿保留、伪造版本与失效本体引用拒绝', flush=True)
             finally:
                 stop(process, data)
                 process.wait(timeout=15)

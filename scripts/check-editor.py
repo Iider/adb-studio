@@ -504,7 +504,7 @@ def main():
                     "id":str(uuid.uuid4()), "revision":0, "name":"运行变量检查", "description":"", "entry":"loop", "viewport":[0,0,1],
                     "inputs":[
                         {"id":rounds_id,"name":"执行轮数","type":"integer","default":3,"min":1,"max":10},
-                        {"id":wait_id,"name":"结束后等待","type":"number","default":0.05,"unit":"seconds"},
+                        {"id":wait_id,"name":"结束后等待","type":"number","default":0.05},
                     ],
                     "nodes":[
                         node("loop","loop",{"body":"tap","done":"end"},count={"input":rounds_id},interval=0),

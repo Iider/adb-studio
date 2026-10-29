@@ -8,7 +8,6 @@ export type InputDefinition = {
   default: number | null;
   min?: number | null;
   max?: number | null;
-  unit?: "" | "seconds" | "milliseconds";
   description?: string;
 };
 export type InputReference = { input: string };
@@ -30,12 +29,14 @@ export function isReference(value: unknown): value is InputReference {
     typeof value.input === "string"
   );
 }
-export function unitLabel(input: InputDefinition) {
-  return input.unit === "seconds"
-    ? "秒"
-    : input.unit === "milliseconds"
-      ? "毫秒"
-      : "";
+export function normalizeInputs(inputs: InputDefinition[]): InputDefinition[] {
+  // 旧浏览器恢复副本可能带 unit，丢弃旧字段但不换算数值。
+  return inputs.map((input) => {
+    const { unit: _legacyUnit, ...value } = input as InputDefinition & {
+      unit?: unknown;
+    };
+    return value;
+  });
 }
 export function inputFields(kind: string): string[] {
   if (kind === "loop") return ["count", "interval"];
@@ -47,12 +48,7 @@ export function inputFields(kind: string): string[] {
   return [];
 }
 export function compatible(input: InputDefinition, key: string) {
-  const unit =
-    key === "count" ? "" : key === "duration_ms" ? "milliseconds" : "seconds";
-  return (
-    (key !== "count" || input.type === "integer") &&
-    (!input.unit || input.unit === unit)
-  );
+  return key !== "count" || input.type === "integer";
 }
 export function inputError(
   input: InputDefinition,
@@ -113,7 +109,7 @@ export function inputIssues(
       const error = !input
         ? "引用的变量已不存在"
         : !inputFields(node.kind).includes(key) || !compatible(input, key)
-          ? "变量类型或单位不匹配"
+          ? "变量类型不匹配"
           : fieldError(
               node.kind,
               key,
