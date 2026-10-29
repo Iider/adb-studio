@@ -16,6 +16,8 @@
 
 Windows 本机部署、模拟检查及用户真机 Wi-Fi 连接、截图、投屏验收通过。安装、启动、停止、自启和 ZIP 使用见 `docs/deployment.md`。待完成：Mac 完整实机回归与完整 Linux 后台回归。
 
+Windows 正式服务 17841 已部署变量显示别名与紧凑运行参数表单，用户验收通过；见 `docs/changes/2026-10-29-增加变量显示别名.md`。工作流运行变量、模型优先条件判断与重启 ADB 已部署；此前部署核对及模型时限检查限制见 `docs/changes/2026-10-29-Windows更新本地工作台.md`。
+
 工作流副本导入已通过用户验收并部署，新建／导入按钮放在任务页右上角；覆盖导入待开发。当前接口与方案见 `docs/workflow-import-export.md`。
 
 条件判断与等待条件的模型优先规则已通过用户验收并部署至本地正式服务；直接填写 Key／Base URL 等设置调整仍待实施，见 `docs/recognition-fallback-plan.md`。

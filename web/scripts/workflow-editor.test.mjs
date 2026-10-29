@@ -232,7 +232,36 @@ test("变量草稿保存、默认值检查与运行参数计算不覆盖引用",
   );
 });
 
-import { parseInputValues, inputIssues } from "../src/lib/workflow-inputs.ts";
+import {
+  parseInputValues,
+  inputIssues,
+  inputLabel,
+  inputOptionLabel,
+} from "../src/lib/workflow-inputs.ts";
+test("显示别名用于标签和报错，旧变量及空白别名回退名称，引用编号不变", () => {
+  const input = {
+    id: "stable-id",
+    name: "count",
+    alias: " 点击次数 ",
+    type: "integer",
+    default: 10,
+  };
+  assert.equal(inputLabel(input), "点击次数");
+  assert.equal(inputOptionLabel(input), "点击次数（count）");
+  assert.equal(inputLabel({ ...input, alias: " " }), "count");
+  assert.equal(inputLabel({ ...input, alias: undefined }), "count");
+  assert.deepEqual(parseInputValues([input], { "stable-id": "2" }), {
+    "stable-id": 2,
+  });
+  assert.match(
+    inputIssues([input], [], { "stable-id": 1.5 })[0].message,
+    /^点击次数：/,
+  );
+  assert.match(
+    inputIssues([{ ...input, alias: "字".repeat(41) }], [])[0].message,
+    /别名最多 40 字/,
+  );
+});
 test("各运行入口共用变量解析，留空默认、零值保留、非法整数拒绝", () => {
   const inputs = [
     { id: "count", name: "轮次", type: "integer", default: 20 },

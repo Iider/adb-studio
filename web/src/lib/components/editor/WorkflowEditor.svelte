@@ -54,7 +54,7 @@
     type Config,
     type Issue,
   } from "$lib/workflow-editor";
-  import type { InputDefinition } from "$lib/workflow-inputs";
+  import { inputLabel, type InputDefinition } from "$lib/workflow-inputs";
   import StepNode from "./StepNode.svelte";
   import StepInspector from "./StepInspector.svelte";
   import CoordinatePicker from "./CoordinatePicker.svelte";
@@ -157,7 +157,7 @@
   const operationLimit = $derived(actionLimit(JSON.parse(content) as Draft));
   $effect(() => {
     const inputNames = Object.fromEntries(
-      inputs.map((input) => [input.id, input.name]),
+      inputs.map((input) => [input.id, inputLabel(input)]),
     );
     if (
       nodes.some(

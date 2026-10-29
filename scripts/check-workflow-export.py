@@ -223,7 +223,7 @@ def main():
                 print('通过：重启后导入结果可确认、已删除副本不重建、清理中断残留只处理无引用的本次图片', flush=True)
                 variable_id = str(uuid.uuid4())
                 variable_draft = copy.deepcopy(draft)
-                variable_draft.update(id=str(uuid.uuid4()), revision=0, inputs=[{"id":variable_id,"name":"等待秒数","type":"number","default":0.2,"unit":"seconds"}])
+                variable_draft.update(id=str(uuid.uuid4()), revision=0, inputs=[{"id":variable_id,"name":"delay","alias":"等待时长","type":"number","default":0.2,"unit":"seconds"}])
                 variable_draft["nodes"][0]["config"]["seconds"] = {"input":variable_id}
                 variable_path = '/workflow-drafts/' + variable_draft['id']
                 saved_variable = call(variable_path,'PUT',variable_draft)[0]
@@ -239,6 +239,7 @@ def main():
                 imported_workflow = next(w for w in call('/workflows')[0] if w['id'] == imported_variables['workflow_id'])
                 assert imported_draft['inputs'] == exported['content']['draft']['inputs']
                 assert imported_workflow['inputs'] == variable_workflow['inputs']
+                assert imported_workflow['inputs'][0]['alias'] == '等待时长'
                 assert imported_workflow['nodes'][0]['step']['config']['seconds'] == {'input':variable_id}
                 variable_run = call('/runs','POST',{'device_id':'mock-phone','workflow_id':imported_workflow['id'],'inputs':{variable_id:0}})[0]
                 assert done(variable_run['id'])['state'] == 'succeeded'

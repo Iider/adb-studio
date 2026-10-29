@@ -3,6 +3,7 @@ import type { DraftNode, Issue } from "./workflow-editor";
 export type InputDefinition = {
   id: string;
   name: string;
+  alias?: string;
   type: "integer" | "number";
   default: number | null;
   min?: number | null;
@@ -12,6 +13,15 @@ export type InputDefinition = {
 };
 export type InputReference = { input: string };
 export type NumericValue = number | InputReference;
+export function inputLabel(input: InputDefinition) {
+  return input.alias?.trim() || input.name.trim() || "未命名变量";
+}
+export function inputOptionLabel(input: InputDefinition) {
+  const label = inputLabel(input);
+  return input.name.trim() && label !== input.name.trim()
+    ? `${label}（${input.name.trim()}）`
+    : label;
+}
 export function isReference(value: unknown): value is InputReference {
   return (
     !!value &&
@@ -86,12 +96,14 @@ export function inputIssues(
     const error =
       !name || names.has(name)
         ? "变量名称不能为空或重复"
-        : inputError(input, overrides[input.id] ?? input.default);
+        : Array.from(input.alias ?? "").length > 40
+          ? "显示别名最多 40 字"
+          : inputError(input, overrides[input.id] ?? input.default);
     names.add(name);
     if (error)
       issues.push({
         node: "__entry",
-        message: `${name || "未命名变量"}：${error}`,
+        message: `${inputLabel(input)}：${error}`,
       });
   }
   for (const node of nodes) {
@@ -110,7 +122,7 @@ export function inputIssues(
       if (error)
         issues.push({
           node: node.id,
-          message: `${node.label} · ${input?.name ?? key}：${error}`,
+          message: `${node.label} · ${input ? inputLabel(input) : key}：${error}`,
         });
     }
   }

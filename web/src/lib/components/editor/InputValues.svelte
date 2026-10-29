@@ -3,6 +3,7 @@
     compatible,
     fieldError,
     inputError,
+    inputLabel,
     isReference,
     unitLabel,
     type InputDefinition,
@@ -37,53 +38,63 @@
 </script>
 
 {#if inputs.length}
-  <fieldset {disabled}>
-    <legend>本次运行参数</legend>
-    <p>留空使用默认值，只影响这次运行。</p>
-    {#each inputs as input (input.id)}
-      {@const issue = error(input)}
-      <label for={`run-input-${input.id}`}
-        >{input.name || "未命名变量"}{unitLabel(input)
-          ? `（${unitLabel(input)}）`
-          : ""}</label
-      >
-      <input
-        id={`run-input-${input.id}`}
-        inputmode="decimal"
-        autocomplete="off"
-        value={values[input.id] ?? ""}
-        aria-invalid={!!issue}
-        aria-describedby={`run-input-help-${input.id}`}
-        oninput={(event) =>
-          (values = { ...values, [input.id]: event.currentTarget.value })}
-      />
-      <p id={`run-input-help-${input.id}`} class:error={!!issue}>
-        {issue ||
-          `${values[input.id]?.trim() ? "默认值" : "使用默认值"}：${input.default ?? "未填写"}${unitLabel(input)}`}
-        {#if input.min != null || input.max != null}
-          · 范围 {input.min ?? "不限"}～{input.max ?? "不限"}{/if}
-      </p>
-      {#if input.description}<p>{input.description}</p>{/if}
-    {/each}
-    <button type="button" onclick={() => (values = {})}>全部恢复默认</button>
+  <fieldset {disabled} aria-label="本次运行参数">
+    <div class="input-fields">
+      {#each inputs as input (input.id)}
+        {@const issue = error(input)}
+        <div class="input-field">
+          <label for={`run-input-${input.id}`}
+            >{inputLabel(input)}{unitLabel(input)
+              ? `（${unitLabel(input)}）`
+              : ""}</label
+          >
+          <input
+            id={`run-input-${input.id}`}
+            inputmode="decimal"
+            autocomplete="off"
+            value={values[input.id] ?? input.default ?? ""}
+            aria-invalid={!!issue}
+            aria-describedby={issue || input.description
+              ? `run-input-help-${input.id}`
+              : undefined}
+            oninput={(event) =>
+              (values = { ...values, [input.id]: event.currentTarget.value })}
+          />
+          {#if issue || input.description}
+            <p id={`run-input-help-${input.id}`} class:error={!!issue}>
+              {issue || input.description}
+            </p>
+          {/if}
+        </div>
+      {/each}
+    </div>
   </fieldset>
 {/if}
 
 <style>
   fieldset {
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 12px;
+    border: 0;
+    padding: 0;
     min-width: 0;
-    margin-top: 16px;
+    width: fit-content;
+    max-width: 100%;
+    box-sizing: border-box;
+    margin: 16px 0 0;
   }
-  legend,
+  .input-fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 16px;
+  }
+  .input-field {
+    flex: 0 1 180px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
   label {
     font-size: 13px;
-  }
-  label {
     display: block;
-    margin: 12px 0 6px;
+    margin: 0 0 6px;
   }
   input {
     width: 100%;
@@ -97,14 +108,5 @@
   }
   .error {
     color: var(--red);
-  }
-  button {
-    padding: 7px 10px;
-    margin-top: 8px;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    background: var(--panel);
-    color: var(--text);
-    font-size: 13px;
   }
 </style>

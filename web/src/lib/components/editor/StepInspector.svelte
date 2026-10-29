@@ -3,6 +3,7 @@
   import {
     compatible,
     isReference,
+    inputOptionLabel,
     type InputDefinition,
   } from "$lib/workflow-inputs";
   import ConditionSamples from "./ConditionSamples.svelte";
@@ -259,7 +260,7 @@
             .filter((input) => compatible(input, field.key))
             .map((input) => ({
               value: input.id,
-              label: `使用变量：${input.name || "未命名"}`,
+              label: `使用变量：${inputOptionLabel(input)}`,
             })),
           ...(reference &&
           !inputs.some(

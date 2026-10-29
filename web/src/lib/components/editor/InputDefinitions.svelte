@@ -41,7 +41,9 @@
 
 <div class="definitions">
   <h3>运行变量</h3>
-  <p>在其他节点选择使用变量；每次运行可临时填写，留空用默认值。</p>
+  <p>
+    在其他节点选择使用变量；每次运行可临时填写。运行时显示别名，未填别名则显示名称。
+  </p>
   {#each inputs as input, index (input.id)}
     {@const used = references(input.id)}
     {@const error = !input.name.trim()
@@ -51,7 +53,9 @@
               other.id !== input.id && other.name.trim() === input.name.trim(),
           )
         ? "变量名称不能重复"
-        : inputError(input, input.default)}
+        : Array.from(input.alias ?? "").length > 40
+          ? "显示别名最多 40 字"
+          : inputError(input, input.default)}
     <fieldset>
       <legend>变量 {index + 1}</legend>
       <label
@@ -61,6 +65,16 @@
           value={input.name}
           oninput={(event) =>
             update(input.id, { name: event.currentTarget.value })}
+        /></label
+      >
+      <label
+        >显示别名（选填）<input
+          aria-label={`变量 ${index + 1} 显示别名`}
+          maxlength="40"
+          placeholder="例如：点击次数"
+          value={input.alias ?? ""}
+          oninput={(event) =>
+            update(input.id, { alias: event.currentTarget.value })}
         /></label
       >
       <label

@@ -11,6 +11,8 @@ pub type Values = BTreeMap<String, f64>;
 pub struct Input {
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub alias: String,
     #[serde(rename = "type")]
     pub kind: String,
     pub default: Option<f64>,
@@ -54,6 +56,7 @@ pub fn validate_definitions(inputs: &[Input], complete: bool) -> Result<()> {
             input.name.chars().count() <= 40 && input.description.chars().count() <= 200,
             "变量名称最多 40 字，说明最多 200 字"
         );
+        ensure!(input.alias.chars().count() <= 40, "显示别名最多 40 字");
         ensure!(
             matches!(input.kind.as_str(), "integer" | "number"),
             "变量类型无效"
@@ -77,12 +80,12 @@ pub fn validate_definitions(inputs: &[Input], complete: bool) -> Result<()> {
             ensure!(
                 !matches!((input.min, input.max), (Some(min), Some(max)) if min > max),
                 "{}：最小值不能大于最大值",
-                input.name
+                input.label()
             );
             input.check(
                 input
                     .default
-                    .with_context(|| format!("{}：请填写默认值", input.name))?,
+                    .with_context(|| format!("{}：请填写默认值", input.label()))?,
             )?;
         }
     }
@@ -90,11 +93,20 @@ pub fn validate_definitions(inputs: &[Input], complete: bool) -> Result<()> {
 }
 
 impl Input {
+    pub fn label(&self) -> &str {
+        let alias = self.alias.trim();
+        if alias.is_empty() {
+            self.name.trim()
+        } else {
+            alias
+        }
+    }
+
     fn check(&self, value: f64) -> Result<()> {
         ensure!(
             value.is_finite() && (self.kind != "integer" || value.fract() == 0.),
             "{}：请填写有效的{}",
-            self.name,
+            self.label(),
             if self.kind == "integer" {
                 "整数"
             } else {
@@ -104,7 +116,7 @@ impl Input {
         ensure!(
             self.min.is_none_or(|min| value >= min) && self.max.is_none_or(|max| value <= max),
             "{}：数值超出变量设置的范围",
-            self.name
+            self.label()
         );
         Ok(())
     }
@@ -166,7 +178,7 @@ pub fn resolve(workflow: &Workflow, overrides: &Values) -> Result<(Workflow, Val
                 input.unit.is_empty() || input.unit == unit,
                 "{}：变量“{}”的单位不适用于{label}",
                 step.label,
-                input.name
+                input.label()
             );
             let valid = if key == "count" {
                 input.kind == "integer" && number.fract() == 0. && (1. ..=10000.).contains(&number)
@@ -179,7 +191,7 @@ pub fn resolve(workflow: &Workflow, overrides: &Values) -> Result<(Workflow, Val
                 valid,
                 "{}：变量“{}”不符合{label}的范围或类型要求",
                 step.label,
-                input.name
+                input.label()
             );
             *value = serde_json::json!(number);
         }
@@ -203,6 +215,28 @@ mod tests {
             ]
         })).unwrap()
     }
+    #[test]
+    fn aliases_are_optional_preserved_and_do_not_change_references() {
+        let mut draft = draft();
+        assert_eq!(draft.inputs[0].label(), "等待时间");
+        let id = draft.inputs[0].id.clone();
+        draft.inputs[0].name = "delay".into();
+        draft.inputs[0].alias = "  点击间隔  ".into();
+        let workflow = canvas::compile(&draft).unwrap();
+        assert_eq!(workflow.inputs[0].label(), "点击间隔");
+        let (resolved, values) = resolve(&workflow, &Values::from([(id.clone(), 0.)])).unwrap();
+        assert_eq!(values[&id], 0.);
+        assert_eq!(resolved.inputs[0].alias, "  点击间隔  ");
+        let error = resolve(&workflow, &Values::from([(id.clone(), -1.)]))
+            .unwrap_err()
+            .to_string();
+        assert!(error.starts_with("点击间隔："));
+        draft.inputs[0].alias = " ".into();
+        assert_eq!(draft.inputs[0].label(), "delay");
+        draft.inputs[0].alias = "字".repeat(41);
+        assert!(validate_definitions(&draft.inputs, false).is_err());
+    }
+
     #[test]
     fn overrides_are_isolated_and_zero_is_not_a_default() {
         let draft = draft();
