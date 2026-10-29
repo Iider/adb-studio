@@ -1443,6 +1443,38 @@ dialog::backdrop,
   gap: 10px;
   margin-bottom: 8px;
 }
+.live-brightness {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.live-brightness label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+}
+.live-brightness input[type="range"] {
+  width: clamp(80px, 15cqw, 160px);
+  min-height: 32px;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.live-brightness-value {
+  min-width: 4ch;
+  font-size: 13px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.live-brightness .hint {
+  margin: 0;
+}
 .live-navigation {
   width: 100%;
   display: grid;
@@ -1495,7 +1527,7 @@ dialog::backdrop,
   width: 100%;
 }
 .live-stage:fullscreen .device-screenshot {
-  max-height: calc(100dvh - 175px);
+  max-height: calc(100dvh - 235px);
   max-width: 100%;
   border: none;
   border-radius: 0;

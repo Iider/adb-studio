@@ -51,6 +51,8 @@
   let supported = $state(false);
   let canFullscreen = $state(false);
   let isFullscreen = $state(false);
+  let brightness = $state(100);
+  const brightnessKey = "adb-studio-screen-brightness";
   let requesting = $state(false);
   let gesture = $state(false);
   let pointer = $state<number | undefined>();
@@ -60,6 +62,15 @@
   let gestureVersion = 0;
   let connection: ReturnType<typeof startMirror> | undefined;
   let pendingPower: boolean | undefined;
+
+  function setBrightness(value: number) {
+    brightness = Math.min(150, Math.max(20, value));
+    try {
+      localStorage.setItem(brightnessKey, String(brightness));
+    } catch {
+      // 浏览器禁用存储时，仍可调节当前画面。
+    }
+  }
 
   function cancelTouch() {
     gestureVersion++;
@@ -296,6 +307,13 @@
     }
   }
   onMount(() => {
+    try {
+      const saved = Number(localStorage.getItem(brightnessKey));
+      if (Number.isFinite(saved) && saved >= 20 && saved <= 150)
+        brightness = saved;
+    } catch {
+      // 无法读取浏览器存储时使用默认亮度。
+    }
     supported = window.isSecureContext && "VideoDecoder" in window;
     canFullscreen = document.fullscreenEnabled;
     const navigation = performance.getEntriesByType("navigation")[0] as
@@ -469,6 +487,7 @@
         class="device-screenshot live-canvas"
         class:visible={viewState === "live"}
         class:controllable={controlled}
+        style:filter={`brightness(${brightness}%)`}
         aria-label={`${name}实时屏幕${controlled ? "，可点按拖动，方向键滑动" : "，仅观看"}`}
         tabindex={controlled ? 0 : -1}
         onpointerdown={down}
@@ -488,6 +507,7 @@
     {:else if viewState !== "live"}
       {#if picture && viewState !== "error"}<img
           class="device-screenshot"
+          style:filter={`brightness(${brightness}%)`}
           src={picture}
           alt={`${name}最近一次截图`}
         />
@@ -507,6 +527,28 @@
           >
         </div>{/if}
     {/if}
+  </div>
+  <div class="live-brightness">
+    <label>
+      <span>网页亮度</span>
+      <input
+        type="range"
+        min="20"
+        max="150"
+        step="5"
+        value={brightness}
+        aria-valuetext={`${brightness}%`}
+        oninput={(event) => setBrightness(event.currentTarget.valueAsNumber)}
+      />
+    </label>
+    <span class="live-brightness-value">{brightness}%</span>
+    <Button
+      variant="ghost"
+      size="sm"
+      disabled={brightness === 100}
+      onclick={() => setBrightness(100)}>恢复</Button
+    >
+    <span class="hint">仅影响网页画面</span>
   </div>
   {#if viewState === "live" && (!controlled || isFullscreen)}
     <div class="live-control-area">
