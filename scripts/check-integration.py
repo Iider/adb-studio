@@ -83,6 +83,7 @@ def main():
         }.items():
             (fake / key).write_text(value)
         (fake / "screen.png").write_bytes(png())
+        (fake / "foreground-unavailable").touch()
         adb = data / "adb"
         shutil.copy2(ROOT / "scripts/fake-adb.py", adb)
         adb = python_program(adb)
@@ -342,9 +343,8 @@ def main():
             before = count()
             stop(process, data); process.wait(timeout=15); process = boot()
             assert record(r["id"])["state"] == "paused" and count() == before
+            (fake / "foreground-unavailable").unlink()
             (fake / "foreground").write_text("other.app/.Main")
-            call("/runs/" + r["id"] + "/resume", "POST", expected=400)
-            (fake / "foreground").unlink()
             call("/runs/" + r["id"] + "/resume", "POST")
             wait(lambda: count() > before)
             call("/runs/" + r["id"] + "/stop", "POST")
@@ -352,10 +352,13 @@ def main():
             before = count()
             stop(process, data); process.wait(timeout=15); process = boot()
             assert record(r["id"])["state"] == "cancelled" and count() == before
+            (fake / "foreground-unavailable").touch()
             call("/runs/" + r["id"] + "/resume", "POST")
             assert done(r["id"])["state"] == "succeeded"
             assert count() == 8 + 12
-            print("通过：暂停与停止不自动恢复、原记录继续、换应用拒绝继续、不重复动作", flush=True)
+            (fake / "foreground").unlink()
+            assert not any(json.loads(line)[-4:] == ["shell", "dumpsys", "activity", "activities"] for line in (fake / "commands").read_text().splitlines())
+            print("通过：暂停与停止不自动恢复、原记录继续、不重复动作；应用未知或改变不阻断动作与继续，全程不查询应用", flush=True)
 
             flow, _ = save(workflow("离线恢复", count=6, interval=0.5))
             before = count()

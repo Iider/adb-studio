@@ -171,7 +171,10 @@ elif args[:1] in (["-s"], ["-t"]):
         else:
             sys.stdout.buffer.write((root / "screen.raw").read_bytes() if (root / "screen.raw").exists() else b"unsupported raw format")
     elif command[:3] == ["shell", "dumpsys", "activity"]:
-        print("mResumedActivity: " + ((root / "foreground").read_text() if (root / "foreground").exists() else "com.luna.music") + "/MainActivity")
+        if (root / "foreground-unavailable").exists():
+            print("mResumedActivity: null")
+        else:
+            print("mResumedActivity: " + ((root / "foreground").read_text() if (root / "foreground").exists() else "com.luna.music") + "/MainActivity")
     elif command[:3] == ["shell", "dumpsys", "package"]:
         print("versionName=21.1.0")
     elif command[:3] == ["shell", "dumpsys", "window"]:

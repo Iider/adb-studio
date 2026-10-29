@@ -731,7 +731,14 @@ async fn observe_inner(
     step: &DraftNode,
     record_negative: bool,
 ) -> Result<bool> {
-    let activity = app.adb.foreground(&r.device_id).await?;
+    let needs_app = step.config["conditions"]
+        .as_array()
+        .is_some_and(|items| items.iter().any(|c| c["source"] == "app"));
+    let activity = if needs_app {
+        app.adb.foreground(&r.device_id).await?
+    } else {
+        String::new()
+    };
     let mut frame = if needs_text(step) {
         Some(recognition::capture(app, &r.device_id).await?)
     } else {
@@ -865,12 +872,6 @@ pub async fn execute(app: &App, r: &mut Run, step: &DraftNode) -> Result<()> {
                             && p.display == screen.display
                     })
                     .context("当前手机或屏幕形态没有匹配标注，请停止任务并重新标注")?;
-                let activity = app.adb.foreground(&r.device_id).await?;
-                let current = package(&activity).context("未能确认当前应用")?;
-                if let Some(expected) = r.checkpoint["foreground"].as_str() {
-                    ensure!(expected == current, "应用已改变，已停止重复动作");
-                }
-                r.checkpoint["foreground"] = json!(current);
                 r.pending = Some(format!("canvas_{}", step.kind));
                 engine::save(app, r).await?;
                 let pixel =

@@ -26,6 +26,7 @@ def main():
         data = Path(folder)
         fake = data / "fake"
         fake.mkdir()
+        (fake / "foreground-unavailable").touch()
         helpers = runpy.run_path(str(ROOT / "scripts/check-integration.py"))
         (fake / "screen.png").write_bytes(helpers["png"]())
         (data / "bin").mkdir()
@@ -312,12 +313,21 @@ def main():
                 assert result["state"] == "needs_help" and result["node"] == "await"
                 print("通过：识别失败、低可信文字不会误走超时或符合分支")
 
+                def app_queries():
+                    return sum(json.loads(line)[-4:] == ["shell", "dumpsys", "activity", "activities"] for line in (fake / "commands").read_text().splitlines())
+
+                assert app_queries() == 0
+                print("通过：点击、滑动、暂停恢复、文字与轮次条件均不查询当前应用")
                 app_condition = [{"source":"app", "operator":"is", "value":"com.example.ready", "guard":""}]
                 app_samples = [{"app":"com.example.ready", "expected":"yes"}, {"app":"com.luna.music", "expected":"no"}]
                 workflow, _ = save_workflow([
                     node("await", "wait_condition", {"yes":"end", "timeout":"timeout"}, mode="all", conditions=app_condition, samples=app_samples, interval=0.2, timeout=2),
                     node("end", "end", result="succeeded"), node("timeout", "end", result="needs_help"),
                 ], "await")
+                result = finish(run_workflow(workflow)["id"])
+                assert result["state"] == "needs_help" and result["node"] == "await", result
+                assert app_queries() == 1
+                (fake / "foreground-unavailable").unlink()
                 started = time.monotonic()
                 run = run_workflow(workflow)
                 wait_value(lambda: record(run["id"])["checkpoint"].get("condition_elapsed", 0) >= 0.2)
@@ -333,6 +343,8 @@ def main():
                 result = finish(run_workflow(workflow)["id"])
                 assert result["state"] == "succeeded"
                 (fake / "foreground").unlink()
+                explicit_app_queries = app_queries()
+                (fake / "foreground-unavailable").touch()
                 print("通过：当前应用条件、等待条件暂停期间不计时")
 
                 workflow, _ = save_workflow([
@@ -564,6 +576,7 @@ def main():
                 assert finish(scheduled['id'])['state'] == 'succeeded'
                 assert record(scheduled['id'])['inputs'][rounds_id] == 4 and taps() - before == 4
                 assert record(scheduled['id'])['input_overrides'] == {}
+                assert app_queries() == explicit_app_queries
                 print('通过：变量断线恢复保持原值，定时使用当前默认值且不沿用手动输入', flush=True)
             finally:
                 stop(process, data)

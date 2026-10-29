@@ -68,6 +68,7 @@ def main():
         data = Path(folder)
         fake = data / "fake"
         fake.mkdir()
+        (fake / "foreground-unavailable").touch()
         (fake / "online").touch()
         (fake / "screen.png").write_bytes(helpers["png"]())
         (data / "web").mkdir()
@@ -197,6 +198,8 @@ print(json.dumps([{"text":"奖励","x":100,"y":100,"confidence":1}]))
             assert ocr_calls() == before_ocr
             print("通过：两种接口的否定、未知与低可信均走不符合，包含与不包含均不反转结果；鉴权、格式与截断失败仍请求处理", flush=True)
             Model.mode = "unknown"
+            assert not any(json.loads(line)[-4:] == ["shell", "dumpsys", "activity", "activities"] for line in (fake / "commands").read_text().splitlines())
+            (fake / "foreground-unavailable").unlink()
             r = run(flow(conditions=[{"source":"text","operator":"contains","value":"奖励"},{"source":"app","operator":"is","value":"com.luna.music"}], mode="any"))
             assert r["state"] == "succeeded" and r["node"] == "yes", r
             r = run(flow(conditions=[{"source":"text","operator":"contains","value":"奖励"},{"source":"app","operator":"is","value":"com.luna.music"}], mode="all"))
@@ -251,7 +254,9 @@ print(json.dumps([{"text":"奖励","x":100,"y":100,"confidence":1}]))
             with closing(sqlite3.connect(data / "data.sqlite")) as db, db:
                 r["state"] = "paused"
                 r["ended_at"] = None
-                r["resume_app"] = "com.luna.music"
+                # 旧记录的原应用字段不再限制继续；调用限额仍需检查。
+                r["resume_app"] = "other.app"
+                r["checkpoint"]["foreground"] = "other.app"
                 r["workflow"]["model_limit"] = 1
                 db.execute("UPDATE records SET body=? WHERE kind='runs' AND id=?", (json.dumps(r), id))
             process = boot()

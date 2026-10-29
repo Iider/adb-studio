@@ -127,8 +127,6 @@ pub struct Run {
     #[serde(default)]
     pub error_detail: Option<String>,
     #[serde(default)]
-    pub resume_app: Option<String>,
-    #[serde(default)]
     pub resume_size: Option<[u32; 2]>,
     #[serde(default)]
     pub model_settings: Option<ModelSettings>,

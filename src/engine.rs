@@ -113,7 +113,6 @@ pub async fn start_with_inputs(
         pending: None,
         last_shot: None,
         error_detail: None,
-        resume_app: None,
         resume_size: None,
         model_settings,
         text_recognition: Some(text_recognition),
@@ -195,15 +194,6 @@ pub async fn resume(app: Arc<App>, id: &str) -> Result<Run> {
         bail!("上次动作结果未确认，不能继续。请核对页面后重新开始，避免重复操作。")
     }
     app.adb.check_unlocked(&r.device_id).await?;
-    let expected = r
-        .resume_app
-        .as_deref()
-        .or_else(|| r.checkpoint["foreground"].as_str())
-        .context("暂停或停止时未能确认原应用，请在目标页面重新开始")?;
-    let current = foreground_package(&app.adb.foreground(&r.device_id).await?);
-    if current.as_deref() != Some(expected) {
-        bail!("请先回到暂停或停止前的应用和目标页面，再点击继续")
-    }
     if let Some([width, height]) = r.resume_size {
         if app.adb.size(&r.device_id).await? != (width, height) {
             bail!("屏幕尺寸与任务启动时不同，请停止任务并在工作流编辑器重新取图标注")
@@ -340,17 +330,6 @@ async fn execute(app: Arc<App>, mut r: Run, control: Arc<RunControl>) {
             }
         }
     }
-    if matches!(r.state.as_str(), "paused" | "cancelled") {
-        r.resume_app = r.checkpoint["foreground"].as_str().map(str::to_owned);
-        if r.resume_app.is_none() {
-            r.resume_app =
-                tokio::time::timeout(Duration::from_secs(3), app.adb.foreground(&r.device_id))
-                    .await
-                    .ok()
-                    .and_then(Result::ok)
-                    .and_then(|activity| foreground_package(&activity));
-        }
-    }
     if !r.busy() {
         r.ended_at = Some(now());
     }
@@ -412,12 +391,4 @@ async fn step(app: &App, r: &mut Run, n: &Node) -> Result<Option<&'static str>> 
         }
     }
     Ok(None)
-}
-
-fn foreground_package(activity: &str) -> Option<String> {
-    activity.split_whitespace().find_map(|value| {
-        value
-            .split_once('/')
-            .map(|(package, _)| package.trim_start_matches('{').to_owned())
-    })
 }
