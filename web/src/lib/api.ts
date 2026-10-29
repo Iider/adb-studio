@@ -86,7 +86,6 @@ export interface Workflow {
   devices: string[];
   entry: string;
   nodes: Node[];
-  model_limit: number;
   tests?: { image?: string }[];
   recognition?: "local" | "vision";
 }

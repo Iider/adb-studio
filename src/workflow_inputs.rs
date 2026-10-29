@@ -278,7 +278,6 @@ mod tests {
                     step: draft.nodes[0].clone(),
                 },
             }],
-            model_limit: 0,
             tests: vec![],
             recognition: Default::default(),
         };

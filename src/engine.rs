@@ -55,7 +55,7 @@ pub async fn start_with_inputs(
     let _gate = app.run_gate.lock().await;
     let template = workflow(&app, workflow_id).await?;
     validate(&template)?;
-    let (mut w, inputs) = crate::workflow_inputs::resolve(&template, &overrides)?;
+    let (w, inputs) = crate::workflow_inputs::resolve(&template, &overrides)?;
     crate::canvas::validate_resolved(&w)?;
     let needs_text = w.nodes.iter().any(|n| {
         if let Action::Canvas { step } = &n.action {
@@ -65,9 +65,6 @@ pub async fn start_with_inputs(
     });
     let settings = recognition::settings(&app).await?;
     let text_recognition = if needs_text && recognition::configured(&app, &settings) {
-        if w.model_limit == 0 {
-            w.model_limit = 10;
-        }
         TextRecognition::Model
     } else {
         if needs_text && !crate::platform::has_local_ocr(&app.root, &app.data) {

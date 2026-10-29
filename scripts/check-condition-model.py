@@ -117,7 +117,7 @@ print(json.dumps([{"text":"奖励","x":100,"y":100,"confidence":1}]))
             call("/settings/model", "PUT", {"endpoint": f"http://127.0.0.1:{model_server.server_port}", "api": api,
                  "model": "mock-condition", "key_env": "CONDITION_TEST_KEY" if configured else "UNCONFIGURED_CONDITION_TEST_KEY"})
 
-        def flow(kind="condition", conditions=None, timeout=0, interval=0.2, mode="all"):
+        def flow(kind="condition", conditions=None, timeout=0, interval=0.2, mode="all", checks=1):
             condition = {"source": "text", "operator": "contains", "value": "奖励", "guard": "任务页", "regions": [{
                 "device_id": "mock-phone", "display": "default", "width": 400, "height": 800,
                 "x": 0, "y": 0, "to_x": 0.5, "to_y": 0.25}]}
@@ -126,7 +126,8 @@ print(json.dumps([{"text":"奖励","x":100,"y":100,"confidence":1}]))
             if kind == "wait_condition":
                 config.update(timeout=timeout, interval=interval)
             draft = {"id": str(uuid.uuid4()), "revision": 0, "name": "模型条件检查", "description": "", "entry": "c", "viewport": [0, 0, 1], "nodes": [
-                {"id": "c", "kind": kind, "label": "判断", "config": config, "targets": targets, "position": [0, 0]},
+                *[{"id": "c" if i == 0 else f"c{i}", "kind": kind, "label": "判断", "config": config,
+                   "targets": {key: f"c{i+1}" for key in targets} if i + 1 < checks else targets, "position": [0, i * 200]} for i in range(checks)],
                 *[{"id": key, "kind": "end", "label": key, "config": {"result": "succeeded"}, "targets": {}, "position": [300, 0]} for key in ["yes", "no"]]]}
             saved = call("/workflow-drafts/" + draft["id"], "PUT", draft)
             return call("/workflow-drafts/" + draft["id"] + "/save", "POST", {"revision": saved["revision"]})
@@ -162,7 +163,7 @@ print(json.dumps([{"text":"奖励","x":100,"y":100,"confidence":1}]))
             settings()
             before_ocr = ocr_calls()
             r = run(flow())
-            assert r["state"] == "succeeded" and r["node"] == "yes" and r["model_calls"] == 1 and r["workflow"]["model_limit"] == 10, r
+            assert r["state"] == "succeeded" and r["node"] == "yes" and r["model_calls"] == 1 and "model_limit" not in r["workflow"], r
             content = Model.calls[-1]["input"][0]["content"]
             dimensions = [struct.unpack(">II", base64.b64decode(item["image_url"].split(",")[1])[16:24]) for item in content[:-1]]
             assert dimensions == [(400, 800), (200, 200)], dimensions
@@ -222,6 +223,19 @@ print(json.dumps([{"text":"奖励","x":100,"y":100,"confidence":1}]))
             r = run(flow("wait_condition", timeout=0.5))
             assert r["state"] == "needs_help" and r["node"] == "c" and "时限" in r["reason"], r
             print("通过：组合条件仍由程序合并，非文字条件不用模型；等待未确认走超时，模型请求超过截止时间仍报错", flush=True)
+            Model.mode = "yes"
+            r = run(flow(checks=12))
+            assert r["state"] == "succeeded" and r["model_calls"] == 12, r
+            Model.mode = "no"
+            id = start(flow("wait_condition", timeout=30, interval=0.05))["id"]
+            helpers["wait"](lambda: record(id)["model_calls"] >= 11, timeout=30)
+            Model.mode = "yes"
+            r = finish(id)
+            assert r["state"] == "succeeded" and r["node"] == "yes" and r["model_calls"] >= 12, r
+            events = call("/runs/" + id + "/events")
+            assert any(event["message"] == "模型判断：第 11 次调用" for event in events), events
+            print("通过：连续条件判断与等待条件均可调用超过 10 次，日志只显示累计次数", flush=True)
+            Model.mode = "slow"
             Model.received.clear()
             id = start(flow())["id"]
             assert Model.received.wait(5)
@@ -248,26 +262,28 @@ print(json.dumps([{"text":"奖励","x":100,"y":100,"confidence":1}]))
             time.sleep(2.1)
             assert record(id)["state"] == "cancelled" and record(id)["node"] == "c"
             print("通过：暂停与停止取消在途模型，迟到结果不跳步骤；重启与更改设置后仍按原运行快照继续，次数不丢失", flush=True)
-            # 限额与旧记录恢复均使用隔离数据库，不触及正式任务。
+            # 旧记录恢复使用隔离数据库，不触及正式任务。
             stop(process, data)
             process.wait(timeout=15)
             with closing(sqlite3.connect(data / "data.sqlite")) as db, db:
                 r["state"] = "paused"
                 r["ended_at"] = None
-                # 旧记录的原应用字段不再限制继续；调用限额仍需检查。
+                # 旧记录的原应用与模型上限字段不再限制继续。
                 r["resume_app"] = "other.app"
                 r["checkpoint"]["foreground"] = "other.app"
                 r["workflow"]["model_limit"] = 1
                 db.execute("UPDATE records SET body=? WHERE kind='runs' AND id=?", (json.dumps(r), id))
             process = boot()
+            Model.mode = "yes"
             call("/runs/" + id + "/resume", "POST")
             r = finish(id)
-            assert r["state"] == "needs_help" and "次数已达上限" in r["reason"] and r["model_calls"] == 1, r
+            assert r["state"] == "succeeded" and r["node"] == "yes" and r["model_calls"] == 2, r
             stop(process, data)
             process.wait(timeout=15)
             with closing(sqlite3.connect(data / "data.sqlite")) as db, db:
                 r["state"] = "paused"
                 r["ended_at"] = None
+                r["node"] = "c"
                 r.pop("text_recognition", None)
                 for node in r["workflow"]["nodes"]:
                     if node.get("step", {}).get("kind") == "condition":
@@ -276,8 +292,8 @@ print(json.dumps([{"text":"奖励","x":100,"y":100,"confidence":1}]))
             process = boot()
             call("/runs/" + id + "/resume", "POST")
             r = finish(id)
-            assert r["node"] == "yes" and r["model_calls"] == 1 and ocr_calls() == before_ocr + 1, r
-            print("通过：达到原有预算后不再发送；旧记录恢复不自动改为外部模型；密钥只用于虚构本机服务，未接触真实手机或正式数据", flush=True)
+            assert r["node"] == "yes" and r["model_calls"] == 2 and ocr_calls() == before_ocr + 1, r
+            print("通过：旧上限不再限制继续，计数保留；旧记录恢复不自动改为外部模型；未接触真实手机或正式数据", flush=True)
         finally:
             if process and process.poll() is None:
                 stop(process, data)

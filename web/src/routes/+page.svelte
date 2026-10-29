@@ -680,7 +680,7 @@
       </p>{/if}
     <div class="run-meta">
       <span>当前步骤：{stepTitle(run.workflow, run.node)}</span><span
-        >模型：{run.model_calls} / {run.workflow.model_limit} 次</span
+        >模型已调用：{run.model_calls} 次</span
       >
     </div>
     {#if typeof run.checkpoint.done === "number"}
@@ -955,7 +955,6 @@
               适用：{flow.devices.length
                 ? flow.devices.map(name).join("、")
                 : "所有已登记手机"}
-              <span>模型上限：{flow.model_limit || 10} 次 / 使用模型时</span>
             </div>
           </article>
         {/if}

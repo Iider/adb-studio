@@ -138,11 +138,6 @@ pub async fn observe(
     frame: &Frame,
     areas: &HashMap<usize, [f64; 4]>,
 ) -> Result<Observation> {
-    ensure!(
-        run.model_calls < run.workflow.model_limit,
-        "模型调用次数已达上限（{} 次），无法继续确认条件",
-        run.workflow.model_limit
-    );
     let settings = run
         .model_settings
         .clone()
@@ -165,14 +160,8 @@ pub async fn observe(
     // 请求前保存尝试次数，重启或取消也不能抹去已发出的调用。
     run.model_calls += 1;
     engine::save(app, run).await?;
-    app.event(
-        run,
-        &format!(
-            "模型判断：第 {} / {} 次调用",
-            run.model_calls, run.workflow.model_limit
-        ),
-    )
-    .await?;
+    app.event(run, &format!("模型判断：第 {} 次调用", run.model_calls))
+        .await?;
     let images: Vec<&[u8]> = images.iter().map(Vec::as_slice).collect();
     let answer = recognition::request_json(app, &settings, &images, &prompt, 4096).await?;
     let (observation, messages) = decisions(answer, &expected)?;

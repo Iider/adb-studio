@@ -196,7 +196,6 @@ pub fn compile(draft: &Draft) -> Result<Workflow> {
         devices,
         entry: draft.entry.clone(),
         nodes,
-        model_limit: 0,
         tests,
         recognition: RecognitionMode::Local,
     };

@@ -59,8 +59,6 @@ pub struct Workflow {
     pub devices: Vec<String>,
     pub entry: String,
     pub nodes: Vec<Node>,
-    #[serde(default = "ten")]
-    pub model_limit: u32,
     #[serde(default)]
     pub tests: Vec<SampleCase>,
     #[serde(default)]
@@ -72,9 +70,6 @@ pub enum RecognitionMode {
     #[default]
     Local,
     Vision,
-}
-fn ten() -> u32 {
-    10
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Node {
