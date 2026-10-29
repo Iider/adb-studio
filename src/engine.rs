@@ -124,7 +124,7 @@ pub async fn start_with_inputs(
         app.event(
             &r,
             if text_recognition == TextRecognition::Model {
-                "文字条件优先使用已配置模型；无法确认时停止，不切换本地识别"
+                "文字条件使用已配置模型；未可靠确认按不符合处理，请求失败时停止"
             } else {
                 "未配置模型，文字条件使用本地识别"
             },

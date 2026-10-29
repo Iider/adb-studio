@@ -48,8 +48,8 @@ class Model(http.server.BaseHTTPRequestHandler):
             self.send_response(401)
             self.end_headers()
             return
-        results = [{"index": rule["index"], "choice": "no" if mode == "no" else "unknown" if mode == "unknown" else "yes",
-                    "reason": "页面依据不明确" if mode == "unknown" else "模拟选区判断", "confidence": 0.3 if mode == "low" else 1} for rule in rules]
+        results = [{"index": rule["index"], "choice": "no" if mode in ["no", "low_no"] else "unknown" if mode == "unknown" else "yes",
+                    "reason": "局部截图无法确认" if mode == "unknown" else "模拟选区判断", "confidence": 0.3 if mode in ["low", "low_no"] else 1} for rule in rules]
         if mode == "missing":
             results = []
         raw = "not-json" if mode == "malformed" else json.dumps({"results": results})
@@ -171,6 +171,7 @@ print(json.dumps([{"text":"奖励","x":100,"y":100,"confidence":1}]))
             assert run(w)["node"] == "yes"
             content = Model.calls[-1]["input"][0]["content"]
             assert len(content) == 2 and '"operator":"not_contains"' in content[-1]["text"]
+            assert "该图就是完整检查范围" in content[-1]["text"]
             draft_id = w["id"].removeprefix("manual-")
             draft = call("/workflow-drafts/" + draft_id)
             draft["nodes"][0]["config"]["conditions"][0]["regions"][0]["width"] = 401
@@ -182,19 +183,24 @@ print(json.dumps([{"text":"奖励","x":100,"y":100,"confidence":1}]))
             print("通过：无模型走本地；配置模型后优先看图，页面依据看整页、条件只看裁剪选区，旧任务无需重建", flush=True)
             for api in ["responses", "chat_completions"]:
                 settings(api)
-                Model.mode = "no"
-                r = run(flow())
-                assert r["state"] == "succeeded" and r["node"] == "no" and r["model_calls"] == 1, r
+                for operator in ["contains", "not_contains"]:
+                    for guard in ["", "任务页"]:
+                        for mode in ["no", "unknown", "low", "low_no"]:
+                            Model.mode = mode
+                            r = run(flow(conditions=[{"source":"text", "operator":operator, "value":"奖励", "guard":guard}]))
+                            assert r["state"] == "succeeded" and r["node"] == "no" and r["model_calls"] == 1, r
             settings()
-            for mode, reason in [("unknown", "页面依据不明确"), ("low", "可信度"), ("http401", "HTTP 401"), ("malformed", "格式错误"), ("missing", "数量不完整"), ("truncated", "未完成")]:
+            for mode, reason in [("http401", "HTTP 401"), ("malformed", "格式错误"), ("missing", "数量不完整"), ("truncated", "未完成")]:
                 Model.mode = mode
                 r = run(flow())
                 assert r["state"] == "needs_help" and r["node"] == "c" and r["model_calls"] == 1 and reason in r["reason"], r
             assert ocr_calls() == before_ocr
-            print("通过：两种接口明确否定走原分支；未知、低可信、鉴权、格式与截断失败保留原因，不切回本地或误走否定分支", flush=True)
+            print("通过：两种接口的否定、未知与低可信均走不符合，包含与不包含均不反转结果；鉴权、格式与截断失败仍请求处理", flush=True)
             Model.mode = "unknown"
             r = run(flow(conditions=[{"source":"text","operator":"contains","value":"奖励"},{"source":"app","operator":"is","value":"com.luna.music"}], mode="any"))
             assert r["state"] == "succeeded" and r["node"] == "yes", r
+            r = run(flow(conditions=[{"source":"text","operator":"contains","value":"奖励"},{"source":"app","operator":"is","value":"com.luna.music"}], mode="all"))
+            assert r["state"] == "succeeded" and r["node"] == "no", r
             count = len(Model.calls)
             r = run(flow(conditions=[{"source":"app","operator":"is","value":"com.luna.music"}]))
             assert r["state"] == "succeeded" and r["model_calls"] == 0 and len(Model.calls) == count
@@ -205,10 +211,14 @@ print(json.dumps([{"text":"奖励","x":100,"y":100,"confidence":1}]))
             assert r["node"] == "no" and r["model_calls"] == 1, r
             r = run(flow("wait_condition", timeout=1, interval=0.05))
             assert r["state"] == "succeeded" and r["node"] == "no", r
+            for mode in ["unknown", "low"]:
+                Model.mode = mode
+                r = run(flow("wait_condition", timeout=1, interval=1))
+                assert r["state"] == "succeeded" and r["node"] == "no" and r["model_calls"] == 1, r
             Model.mode = "slow"
             r = run(flow("wait_condition", timeout=0.5))
             assert r["state"] == "needs_help" and r["node"] == "c" and "时限" in r["reason"], r
-            print("通过：组合条件仍由程序合并，非文字条件不用模型；等待立即满足、正常否定超时、模型慢于截止时间均保留原含义", flush=True)
+            print("通过：组合条件仍由程序合并，非文字条件不用模型；等待未确认走超时，模型请求超过截止时间仍报错", flush=True)
             Model.received.clear()
             id = start(flow())["id"]
             assert Model.received.wait(5)

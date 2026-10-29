@@ -779,13 +779,7 @@ async fn observe_inner(
                 None,
                 Some(&observed.values),
             )
-            .with_context(|| {
-                if observed.uncertain.is_empty() {
-                    "当前应用或轮次无法确认，请检查非文字条件".to_owned()
-                } else {
-                    format!("模型无法确认条件：{}", observed.uncertain)
-                }
-            });
+            .context("当前应用或轮次无法确认，请检查非文字条件");
         }
     }
     if let Some(frame) = &mut frame {
