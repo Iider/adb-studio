@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, setContext } from "svelte";
   import { graphlib, layout } from "@dagrejs/dagre";
   import {
     SvelteFlow,
@@ -56,6 +56,10 @@
   } from "$lib/workflow-editor";
   import { inputLabel, type InputDefinition } from "$lib/workflow-inputs";
   import StepNode from "./StepNode.svelte";
+  import StepPicker, {
+    stepPickerContext,
+    type OpenStepPicker,
+  } from "./StepPicker.svelte";
   import StepInspector from "./StepInspector.svelte";
   import CoordinatePicker from "./CoordinatePicker.svelte";
   import EditorRunPanel from "./EditorRunPanel.svelte";
@@ -97,11 +101,68 @@
   let historyIndex = $state(0);
   let issues = $state<Issue[]>([]);
   let checksOpen = $state(false);
-  let search = $state("");
-  let panel = $state<"palette" | "settings">("palette");
+  let stepPicker: StepPicker;
+  let insertion = $state<{
+    source: string;
+    port: string;
+    type: "source" | "target";
+  } | null>(null);
+  let incomingChoice = $state("");
+  const incomingConnections = $derived(
+    insertion?.type === "target"
+      ? [
+          ...(entry === insertion.source
+            ? [
+                {
+                  value: "__entry:next",
+                  label: "开始 · 开始执行",
+                  source: "__entry",
+                  port: "next",
+                },
+              ]
+            : []),
+          ...nodes.flatMap((node) =>
+            ports(node.data.kind)
+              .filter(
+                (port) => node.data.targets[port.id] === insertion?.source,
+              )
+              .map((port) => ({
+                value: `${node.id}:${port.id}`,
+                label: `${node.data.label} · ${port.label}`,
+                source: node.id,
+                port: port.id,
+              })),
+          ),
+        ]
+      : [],
+  );
+  const insertionSource = $derived(
+    insertion?.type === "target"
+      ? incomingConnections.find(
+          (connection) => connection.value === incomingChoice,
+        )
+      : insertion,
+  );
+  const insertionTarget = $derived(
+    insertion?.type === "target"
+      ? insertion.source
+      : insertion?.source === "__entry"
+        ? entry
+        : nodes.find((node) => node.id === insertion?.source)?.data.targets[
+            insertion?.port ?? ""
+          ],
+  );
+  setContext<OpenStepPicker>(
+    stepPickerContext,
+    (source, port, anchor, type = "source") => {
+      if (switching) return;
+      insertion = { source, port, type };
+      incomingChoice = incomingConnections[0]?.value ?? "";
+      void stepPicker.open(anchor);
+    },
+  );
   let dark = $state(false);
   let deleteDialog = $state<HTMLDialogElement>();
-  let canvas = $state<HTMLDivElement>();
   let morePopover = $state<HTMLElement>();
   let problemsPopover = $state<HTMLElement>();
   let moreOpen = $state(false);
@@ -169,11 +230,6 @@
         data: { ...node.data, inputNames },
       }));
   });
-  const visiblePalette = $derived(
-    palette.filter((item) =>
-      `${item.label}${item.hint}`.includes(search.trim()),
-    ),
-  );
   const saveStatus = $derived(
     saveError
       ? "保存失败，内容仍在当前页面"
@@ -241,6 +297,8 @@
     }
   }
   function loadDraft(draft: Draft, saved = true) {
+    stepPicker?.close();
+    insertion = null;
     ready = false;
     id = draft.id;
     draftChoice = draft.id;
@@ -508,6 +566,7 @@
     historyIndex = history.length - 1;
   }
   function undo(direction: number) {
+    stepPicker?.close();
     const index = historyIndex + direction;
     if (index < 0 || index >= history.length) return;
     const value: Draft = {
@@ -536,21 +595,35 @@
     selected = nodeId;
     nodes = nodes.map((node) => ({ ...node, selected: node.id === nodeId }));
     selectedEdge = "";
-    panel = "settings";
   }
   function addNode(kind: Kind) {
     if (nodes.length > 200) {
       notify.error("最多添加 200 个步骤");
       return;
     }
-    const box = canvas?.getBoundingClientRect();
-    const point = box
-      ? flow.screenToFlowPosition({
-          x: box.left + box.width / 2 - 100,
-          y: box.top + box.height / 2 - 40,
-        })
-      : { x: 280, y: 150 };
-    const offset = (nodes.length % 4) * 24;
+    const from = insertion;
+    const link = insertionSource;
+    const source = nodes.find((node) => node.id === link?.source);
+    const before =
+      from?.type === "target"
+        ? nodes.find((node) => node.id === from.source)
+        : null;
+    if (
+      !from ||
+      (from.type === "target" && !before) ||
+      (link &&
+        (!source ||
+          !ports(source.data.kind).some((port) => port.id === link.port)))
+    )
+      return;
+    const target = insertionTarget;
+    const continuation = kind === "loop" ? "done" : ports(kind)[0]?.id;
+    if (target && !continuation) {
+      notify.error("此处需要能连接后续步骤的节点");
+      return;
+    }
+    const outputs = source ? ports(source.data.kind) : [];
+    const index = outputs.findIndex((port) => port.id === link?.port);
     const node: CanvasNode = {
       id: crypto.randomUUID(),
       type: "step",
@@ -558,17 +631,46 @@
         kind,
         label: palette.find((item) => item.kind === kind)!.label,
         config: defaults(kind),
-        targets: {},
+        targets: target && continuation ? { [continuation]: target } : {},
       },
-      position: {
-        x: Math.round(point.x + offset),
-        y: Math.round(point.y + offset),
-      },
+      position: before
+        ? { ...before.position }
+        : {
+            x: Math.round(
+              source!.position.x +
+                (index - (outputs.length - 1) / 2) * 300 +
+                (target ? 280 : 0),
+            ),
+            y: Math.round(
+              source!.position.y + (source!.measured?.height ?? 150) + 90,
+            ),
+          },
     };
+    if (before)
+      nodes = nodes.map((node) =>
+        node.id !== "__entry" && node.position.y >= before.position.y
+          ? {
+              ...node,
+              position: { ...node.position, y: node.position.y + 220 },
+            }
+          : node,
+      );
     nodes = [...nodes, node];
-    if (!entry) entry = node.id;
     choose(node.id);
-    remember();
+    if (link) setTarget(link.source, link.port, node.id);
+    else remember();
+    void tick().then(() =>
+      flow.fitView({
+        nodes: [
+          ...(source ? [{ id: source.id }] : []),
+          { id: node.id },
+          ...(before ? [{ id: before.id }] : []),
+        ],
+        padding: 0.4,
+        maxZoom: 1,
+        duration: 200,
+      }),
+    );
   }
   function editNode(patch: Partial<CanvasNode["data"]>) {
     nodes = nodes.map((node) =>
@@ -1019,47 +1121,7 @@
     </div>
   {:else if !ready}<div class="editor-loading">正在读取工作流草稿…</div>
   {:else}
-    <nav class="compact-panels" aria-label="编辑面板">
-      <button
-        class:active={panel === "palette"}
-        onclick={() => (panel = "palette")}>添加步骤</button
-      ><button
-        class:active={panel === "settings"}
-        onclick={() => (panel = "settings")}>步骤设置</button
-      >
-    </nav>
     <div class="editor-body" inert={switching}>
-      <aside class="editor-palette" class:compact-hidden={panel !== "palette"}>
-        <div class="side-heading">
-          <h2>添加步骤</h2>
-          <p>点击添加，也可拖动画布上的步骤</p>
-        </div>
-        <label class="palette-search"
-          ><span class="visually-hidden">搜索步骤</span><input
-            type="search"
-            placeholder="搜索步骤"
-            bind:value={search}
-          /></label
-        >
-        {#each ["基础动作", "流程控制"] as group}
-          {#if visiblePalette.some((item) => item.group === group)}<h3
-              class="palette-group"
-            >
-              {group}
-            </h3>{/if}
-          {#each visiblePalette.filter((item) => item.group === group) as item (item.kind)}
-            <button class="palette-item" onclick={() => addNode(item.kind)}
-              ><span
-                ><strong>{item.label}</strong><small>{item.hint}</small></span
-              ><Plus size={16} /></button
-            >
-          {/each}
-        {/each}
-        {#if !visiblePalette.length}<p class="palette-empty">
-            没有符合的步骤
-          </p>{/if}
-      </aside>
-
       <section class="canvas-section" aria-label="工作流画布">
         <div class="canvas-toolbar">
           <div class="toolbar-group">
@@ -1082,7 +1144,7 @@
             >
           </div>
         </div>
-        <div class="workflow-canvas" bind:this={canvas}>
+        <div class="workflow-canvas">
           <SvelteFlow
             bind:nodes
             {edges}
@@ -1091,6 +1153,7 @@
             minZoom={0.15}
             maxZoom={2}
             deleteKey={null}
+            clickConnect={false}
             colorMode={dark ? "dark" : "light"}
             isValidConnection={(connection) =>
               connection.source !== connection.target &&
@@ -1107,7 +1170,6 @@
               selectedEdge = edge.id;
               selected = "";
               nodes = nodes.map((node) => ({ ...node, selected: false }));
-              panel = "settings";
             }}
             onpaneclick={() => {
               selected = "";
@@ -1147,10 +1209,7 @@
           </div>{/if}
       </section>
 
-      <aside
-        class="editor-settings"
-        class:compact-hidden={panel !== "settings"}
-      >
+      <aside class="editor-settings">
         <div class="side-heading">
           <h2>
             {current ? "步骤设置" : selectedEdge ? "连线设置" : "工作流设置"}
@@ -1255,6 +1314,18 @@
     </div>
   {/if}
 </main>
+
+<StepPicker
+  bind:this={stepPicker}
+  hasNext={!!insertionTarget}
+  connections={incomingConnections}
+  bind:connection={incomingChoice}
+  hint={insertion?.type === "target" && !incomingConnections.length
+    ? "添加到当前节点之前"
+    : "插入当前连线，保留原下一步"}
+  onchoose={addNode}
+  onclose={() => (insertion = null)}
+/>
 <WorkflowExport
   request={exportRequest}
   onclose={() => (exportRequest = null)}
@@ -1511,18 +1582,14 @@
   }
   .editor-body {
     display: grid;
-    grid-template-columns: 215px minmax(0, 1fr) 290px;
+    grid-template-columns: minmax(0, 1fr) 290px;
     flex: 1;
     min-height: 0;
   }
-  .editor-palette,
   .editor-settings {
     background: var(--panel);
     overflow-y: auto;
     scrollbar-gutter: stable;
-  }
-  .editor-palette {
-    border-right: 1px solid var(--line);
   }
   .editor-settings {
     border-left: 1px solid var(--line);
@@ -1532,59 +1599,6 @@
   }
   .side-heading h2 {
     font-size: 16px;
-  }
-  .side-heading p {
-    font-size: 12px;
-    line-height: 1.6;
-    color: var(--dim);
-    margin-top: 7px;
-  }
-  .palette-search {
-    margin: 0 14px 15px;
-  }
-  .palette-search input {
-    min-height: 38px;
-    font-size: 13px;
-  }
-  .palette-group {
-    color: var(--dim);
-    font-size: 12px;
-    font-weight: 500;
-    padding: 8px 18px;
-  }
-  .palette-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    width: calc(100% - 24px);
-    text-align: left;
-    margin: 0 12px 7px;
-    border: 1px solid var(--line);
-    border-radius: 9px;
-    padding: 11px 12px;
-    background: var(--panel);
-    color: var(--text);
-  }
-  .palette-item:hover {
-    border-color: var(--accent);
-    background: var(--accentsoft);
-  }
-  .palette-item strong {
-    display: block;
-    font-size: 13px;
-    font-weight: 600;
-  }
-  .palette-item small {
-    display: block;
-    color: var(--dim);
-    font-size: 11px;
-    line-height: 1.6;
-    margin-top: 3px;
-  }
-  .palette-empty {
-    padding: 18px;
-    color: var(--dim);
   }
   .canvas-section {
     position: relative;
@@ -1712,9 +1726,6 @@
   .editor-loading h2 {
     font-size: 20px;
   }
-  .compact-panels {
-    display: none;
-  }
   dialog {
     max-width: 420px;
     width: calc(100% - 32px);
@@ -1747,7 +1758,7 @@
   }
   @media (max-width: 1100px) {
     .editor-body {
-      grid-template-columns: 185px minmax(0, 1fr) 260px;
+      grid-template-columns: minmax(0, 1fr) 260px;
     }
     .wide-action {
       display: none;
@@ -1760,39 +1771,10 @@
     .workflow-editor {
       min-height: 740px;
       height: auto;
-      padding-bottom: 70px;
     }
     .editor-header {
       padding-inline: 12px;
       gap: 8px;
-    }
-    .compact-panels {
-      display: flex;
-      position: fixed;
-      inset: auto auto 16px 50%;
-      transform: translateX(-50%);
-      z-index: 20;
-      gap: 8px;
-      padding: 6px;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: var(--panel);
-      box-shadow: 0 4px 20px rgb(0 0 0 / 15%);
-    }
-    .compact-panels button {
-      min-height: 40px;
-      border: 1px solid transparent;
-      border-radius: 7px;
-      color: var(--dim);
-      background: var(--panel);
-      padding: 9px 14px;
-      font-size: 13px;
-      white-space: nowrap;
-    }
-    .compact-panels button.active {
-      background: var(--accentsoft);
-      color: var(--accent2);
-      border-color: var(--accent);
     }
     .editor-body {
       display: flex;
@@ -1803,24 +1785,17 @@
       height: 460px;
       flex-shrink: 0;
     }
-    .editor-palette,
     .editor-settings {
       order: 1;
       max-height: 420px;
       border: 0;
       border-top: 1px solid var(--line);
     }
-    .compact-hidden {
-      display: none;
-    }
     .toolbar-group {
       gap: 4px;
     }
     .toolbar-group span {
       display: none;
-    }
-    .palette-item {
-      min-height: 52px;
     }
   }
   @media (max-width: 600px) {

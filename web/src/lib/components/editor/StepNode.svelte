@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getContext } from "svelte";
   import { Handle, Position, type NodeProps } from "@xyflow/svelte";
   import {
     ArrowLeft,
@@ -16,7 +17,17 @@
     Play,
   } from "@lucide/svelte";
   import { ports, summary, type CanvasNode } from "$lib/workflow-editor";
-  let { data, selected }: NodeProps<CanvasNode> = $props();
+  import { stepPickerContext, type OpenStepPicker } from "./StepPicker.svelte";
+  let { id, data, selected }: NodeProps<CanvasNode> = $props();
+  const openPicker = getContext<OpenStepPicker>(stepPickerContext);
+  function pick(
+    event: MouseEvent | KeyboardEvent,
+    port: string,
+    type: "source" | "target" = "source",
+  ) {
+    event.stopPropagation();
+    openPicker(id, port, event.currentTarget as HTMLElement, type);
+  }
   const icons = {
     back: ArrowLeft,
     home: House,
@@ -47,6 +58,15 @@
       type="target"
       position={Position.Top}
       aria-label="连接上一步"
+      title="点击在此步骤前添加，也可拖线连接已有步骤"
+      tabindex={0}
+      onclick={(event) => pick(event, "", "target")}
+      onkeydown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          pick(event, "", "target");
+        }
+      }}
     />{/if}
   <div class="step-title">
     <span class="step-icon"><Icon size={19} /></span><strong
@@ -65,6 +85,15 @@
           position={Position.Bottom}
           style={`left: ${((i + 0.5) / outputs.length) * 100}%`}
           aria-label={`连接${port.label}`}
+          title="点击添加步骤，也可拖线连接已有步骤"
+          tabindex={0}
+          onclick={(event) => pick(event, port.id)}
+          onkeydown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              pick(event, port.id);
+            }
+          }}
         />
       {/each}
     </div>
