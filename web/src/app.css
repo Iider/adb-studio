@@ -18,6 +18,7 @@
 
 :root {
   --scrollbar-size: 4px;
+  --workspace-gap: 18px;
   --bg: #f1f5f7;
   --panel: #fff;
   --panel2: #f7f9fb;
@@ -238,7 +239,6 @@ span[data-slot="badge"] {
 }
 .shell {
   --brand-height: 72px;
-  --workspace-gap: 18px;
   display: flex;
   height: 100dvh;
   min-height: 0;

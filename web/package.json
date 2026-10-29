@@ -9,6 +9,7 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test:editor": "node --test scripts/workflow-editor.test.mjs",
     "test:navigation": "node --test scripts/home-navigation.test.mjs",
+    "test:recording": "node --test scripts/operation-recording.test.mjs",
     "test:mirror": "node --test scripts/mirror-session.test.mjs"
   },
   "devDependencies": {

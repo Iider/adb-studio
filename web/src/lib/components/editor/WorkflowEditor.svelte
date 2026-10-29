@@ -25,6 +25,7 @@
     AlertCircle,
     RefreshCw,
     MoreHorizontal,
+    Circle,
     X,
   } from "@lucide/svelte";
   import {
@@ -59,6 +60,11 @@
     normalizeInputs,
     type InputDefinition,
   } from "$lib/workflow-inputs";
+  import OperationRecorder from "./OperationRecorder.svelte";
+  import {
+    recordingNodes,
+    type RecordedAction,
+  } from "$lib/operation-recording";
   import StepNode from "./StepNode.svelte";
   import StepPicker, {
     stepPickerContext,
@@ -90,6 +96,7 @@
   let inputs = $state<InputDefinition[]>([]);
   let nodes = $state.raw<CanvasNode[]>([]);
   let viewport = $state<Viewport>({ x: 30, y: 25, zoom: 0.9 });
+  let recordingOpen = $state(false);
   let selected = $state("");
   let selectedEdge = $state("");
   let ready = $state(false);
@@ -600,6 +607,32 @@
     nodes = nodes.map((node) => ({ ...node, selected: node.id === nodeId }));
     selectedEdge = "";
   }
+  function insertRecording(actions: RecordedAction[], recordedDevice: string) {
+    try {
+      const added = recordingNodes(actions, nodes);
+      if (!added.length) return;
+      nodes = [
+        ...nodes.map((node) => ({ ...node, selected: false })),
+        ...added,
+      ];
+      deviceId = recordedDevice;
+      selected = "";
+      selectedEdge = "";
+      recordingOpen = false;
+      remember();
+      notify.success(`已加入 ${added.length} 个节点，请连接到流程`);
+      void tick().then(() =>
+        flow.fitView({
+          nodes: added.map((node) => ({ id: node.id })),
+          padding: 0.3,
+          maxZoom: 1,
+          duration: 200,
+        }),
+      );
+    } catch (error) {
+      notify.error(message(error));
+    }
+  }
   function addNode(kind: Kind) {
     if (nodes.length > 200) {
       notify.error("最多添加 200 个步骤");
@@ -931,6 +964,14 @@
         ><Save size={16} /><span class="save-label"
           >{savingWorkflow ? "正在保存…" : "保存"}</span
         ></button
+      >
+      <button
+        class="editor-button"
+        title="录制操作"
+        aria-label="录制操作"
+        disabled={!ready || switching || !!recovery || nodes.length > 200}
+        onclick={() => (recordingOpen = true)}
+        ><Circle size={16} /><span class="save-label">录制</span></button
       >
       <EditorRunPanel
         {inputs}
@@ -1318,6 +1359,14 @@
     </div>
   {/if}
 </main>
+
+{#if recordingOpen}<OperationRecorder
+    {devices}
+    initialDevice={deviceId}
+    capacity={200 - nodes.filter((node) => node.data.kind !== "entry").length}
+    oncomplete={insertRecording}
+    onclose={() => (recordingOpen = false)}
+  />{/if}
 
 <StepPicker
   bind:this={stepPicker}

@@ -23,6 +23,8 @@
   } from "$lib/mirror-session";
   import { screenPoint, type ScreenPoint } from "$lib/touch";
 
+  import type { RecordedInput } from "$lib/operation-recording";
+
   let {
     id,
     name,
@@ -32,6 +34,11 @@
     controlled = $bindable(false),
     screenOff = $bindable(false),
     powerPending = $bindable(false),
+    inputEnabled = true,
+    fill = false,
+    showBrightness = true,
+    onrecordinput,
+    oninterrupt,
   }: {
     id: string;
     name: string;
@@ -41,6 +48,11 @@
     controlled?: boolean;
     screenOff?: boolean;
     powerPending?: boolean;
+    inputEnabled?: boolean;
+    fill?: boolean;
+    showBrightness?: boolean;
+    onrecordinput?: (input: RecordedInput, confirmed: Promise<void>) => void;
+    oninterrupt?: (reason: string) => void;
   } = $props();
   let canvas: HTMLCanvasElement;
   let stage: HTMLDivElement;
@@ -52,10 +64,14 @@
   let canFullscreen = $state(false);
   let isFullscreen = $state(false);
   let brightness = $state(100);
+  let screenAspect = $state(0.5);
+  const displayBrightness = $derived(showBrightness ? brightness : 100);
   const brightnessKey = "adb-studio-screen-brightness";
   let requesting = $state(false);
   let gesture = $state(false);
   let pointer = $state<number | undefined>();
+  let recordedPoints: ScreenPoint[] = [];
+  let gestureStarted = 0;
   let lastPoint: ScreenPoint | undefined;
   let pendingPoint: ScreenPoint | undefined;
   let moveFrame = 0;
@@ -72,7 +88,13 @@
     }
   }
 
+  function record(input: RecordedInput) {
+    if (onrecordinput && connection)
+      onrecordinput(input, connection.checkpoint());
+  }
   function cancelTouch() {
+    if (lastPoint) oninterrupt?.("手势已中断，未完成动作没有记录");
+    recordedPoints = [];
     gestureVersion++;
     gesture = false;
     cancelAnimationFrame(moveFrame);
@@ -135,11 +157,13 @@
         const firstFrame = viewState === "connecting";
         viewState = "live";
         dimensions = `${width} × ${height}`;
+        screenAspect = width / height;
         if (firstFrame) requestControl();
       },
       (message, reason) => {
         forgetMirror(id);
         viewState = reason === "taken_over" ? "taken_over" : "error";
+        oninterrupt?.(message);
         if (reason !== "taken_over") notify.error(message);
         dimensions = "";
         pendingPower = undefined;
@@ -155,6 +179,7 @@
           connection?.setDisplayPower(target);
         }
         if (!enabled) {
+          oninterrupt?.(message || "操作权已断开，请重新开启投屏后继续");
           pendingPower = undefined;
           powerPending = false;
           cancelTouch();
@@ -162,6 +187,8 @@
         if (message) notify.error(message);
       },
       (width, height) => {
+        screenAspect = width / height;
+        oninterrupt?.("投屏尺寸已变化，请核对屏幕后继续");
         if (lastPoint)
           lastPoint = {
             x: Math.min(lastPoint.x, width - 1),
@@ -211,7 +238,13 @@
     );
   }
   function down(event: PointerEvent) {
+    if (!event.isPrimary && onrecordinput && inputEnabled) {
+      oninterrupt?.("暂不支持多指操作；已暂停录制");
+      cancelTouch();
+      return;
+    }
     if (
+      !inputEnabled ||
       !controlled ||
       gesture ||
       pointer !== undefined ||
@@ -226,7 +259,10 @@
     pointer = event.pointerId;
     lastPoint = target;
     canvas.setPointerCapture(event.pointerId);
-    connection?.touch(0, target);
+    if (connection?.touch(0, target)) {
+      gestureStarted = performance.now();
+      recordedPoints = onrecordinput ? [target] : [];
+    }
   }
   function move(event: PointerEvent) {
     if (pointer !== event.pointerId) return;
@@ -237,7 +273,13 @@
         moveFrame = 0;
         if (pointer !== undefined && pendingPoint) {
           lastPoint = pendingPoint;
-          connection?.touch(2, pendingPoint);
+          if (connection?.touch(2, pendingPoint) && onrecordinput) {
+            recordedPoints.push(pendingPoint);
+            if (recordedPoints.length > 512) {
+              oninterrupt?.("手势过长；本次手势未记录");
+              cancelTouch();
+            }
+          }
           pendingPoint = undefined;
         }
       });
@@ -249,18 +291,31 @@
     moveFrame = 0;
     pendingPoint = undefined;
     const target = point(event, true) || lastPoint;
-    if (target) connection?.touch(1, target);
+    const sent = target && connection?.touch(1, target);
+    const points = target ? [...recordedPoints, target] : [];
+    recordedPoints = [];
     lastPoint = undefined;
     pointer = undefined;
     if (canvas.hasPointerCapture(event.pointerId))
       canvas.releasePointerCapture(event.pointerId);
+    if (sent && inputEnabled)
+      record({
+        type: "gesture",
+        points,
+        started: gestureStarted,
+        ended: performance.now(),
+      });
   }
   function navigate(key: 3 | 4 | 187) {
-    if (controlled && !gesture && pointer === undefined)
-      connection?.navigate(key);
+    if (inputEnabled && controlled && !gesture && pointer === undefined) {
+      const started = performance.now();
+      if (connection?.navigate(key))
+        record({ type: "key", key, started, ended: performance.now() });
+    }
   }
   function swipe(direction: "up" | "down" | "left" | "right") {
-    if (!controlled || gesture || pointer !== undefined) return;
+    if (!inputEnabled || !controlled || gesture || pointer !== undefined)
+      return;
     gesture = true;
     const version = ++gestureVersion;
     const vertical = direction === "up" || direction === "down";
@@ -280,20 +335,28 @@
     lastPoint = position(0);
     connection?.touch(0, lastPoint);
     const started = performance.now();
+    const first = { ...lastPoint };
     function step(now: number) {
-      if (version !== gestureVersion || !controlled) return;
+      if (version !== gestureVersion || !controlled || !inputEnabled) return;
       const progress = Math.min(1, (now - started) / 280);
       lastPoint = position(progress);
-      connection?.touch(progress === 1 ? 1 : 2, lastPoint);
+      const sent = connection?.touch(progress === 1 ? 1 : 2, lastPoint);
       if (progress === 1) {
         lastPoint = undefined;
         gesture = false;
+        if (sent)
+          record({
+            type: "gesture",
+            points: [first, position(1)],
+            started,
+            ended: now,
+          });
       } else requestAnimationFrame(step);
     }
     requestAnimationFrame(step);
   }
   function keyboard(event: KeyboardEvent) {
-    if (!controlled) return;
+    if (!controlled || !inputEnabled) return;
     const directions = {
       ArrowUp: "up",
       ArrowDown: "down",
@@ -308,7 +371,9 @@
   }
   onMount(() => {
     try {
-      const saved = Number(localStorage.getItem(brightnessKey));
+      const saved = showBrightness
+        ? Number(localStorage.getItem(brightnessKey))
+        : 100;
       if (Number.isFinite(saved) && saved >= 20 && saved <= 150)
         brightness = saved;
     } catch {
@@ -341,25 +406,35 @@
       }
     };
     const visibility = () => {
-      if (document.hidden) cancelTouch();
+      if (document.hidden) {
+        oninterrupt?.("页面已隐藏，录制已暂停");
+        cancelTouch();
+      }
     };
     const fullscreenChanged = () => {
       isFullscreen = document.fullscreenElement === stage;
     };
     document.addEventListener("visibilitychange", visibility);
     document.addEventListener("fullscreenchange", fullscreenChanged);
-    window.addEventListener("blur", cancelTouch);
+    const blurred = () => {
+      oninterrupt?.("窗口已失去焦点，录制已暂停");
+      cancelTouch();
+    };
+    window.addEventListener("blur", blurred);
     window.addEventListener("pagehide", pageHidden);
     window.addEventListener("pageshow", pageShown);
     return () => {
       document.removeEventListener("visibilitychange", visibility);
       document.removeEventListener("fullscreenchange", fullscreenChanged);
-      window.removeEventListener("blur", cancelTouch);
+      window.removeEventListener("blur", blurred);
       window.removeEventListener("pagehide", pageHidden);
       window.removeEventListener("pageshow", pageShown);
       if (leavingDocument) disconnect();
       else stop();
     };
+  });
+  $effect(() => {
+    if (!inputEnabled) cancelTouch();
   });
   $effect(() => {
     if (!online) {
@@ -377,7 +452,10 @@
       size="icon"
       aria-label="上滑"
       title="上滑"
-      disabled={!controlled || gesture || pointer !== undefined}
+      disabled={!inputEnabled ||
+        !controlled ||
+        gesture ||
+        pointer !== undefined}
       onclick={() => swipe("up")}><ArrowUp size={20} /></Button
     >
     <Button
@@ -385,7 +463,10 @@
       size="icon"
       aria-label="下滑"
       title="下滑"
-      disabled={!controlled || gesture || pointer !== undefined}
+      disabled={!inputEnabled ||
+        !controlled ||
+        gesture ||
+        pointer !== undefined}
       onclick={() => swipe("down")}><ArrowDown size={20} /></Button
     >
     <Button
@@ -393,7 +474,10 @@
       size="icon"
       aria-label="左滑"
       title="左滑"
-      disabled={!controlled || gesture || pointer !== undefined}
+      disabled={!inputEnabled ||
+        !controlled ||
+        gesture ||
+        pointer !== undefined}
       onclick={() => swipe("left")}><ArrowLeft size={20} /></Button
     >
     <Button
@@ -401,7 +485,10 @@
       size="icon"
       aria-label="右滑"
       title="右滑"
-      disabled={!controlled || gesture || pointer !== undefined}
+      disabled={!inputEnabled ||
+        !controlled ||
+        gesture ||
+        pointer !== undefined}
       onclick={() => swipe("right")}><ArrowRight size={20} /></Button
     >
   </div>
@@ -433,7 +520,9 @@
       role="status"
       ><span class="status-dot" aria-hidden="true"></span>{viewState === "live"
         ? controlled
-          ? "操作中"
+          ? onrecordinput && !inputEnabled
+            ? "仅观看"
+            : "操作中"
           : "实时画面"
         : viewState === "connecting"
           ? "连接中"
@@ -441,7 +530,12 @@
     >
   </div>
 </div>
-<div class="live-stage" bind:this={stage}>
+<div
+  class="live-stage"
+  class:fill
+  bind:this={stage}
+  style:--live-aspect={screenAspect}
+>
   <div class="device-screen-body">
     <div class="live-device" class:visible={viewState === "live"}>
       {#if viewState === "live"}
@@ -451,7 +545,10 @@
             size="icon"
             aria-label="返回"
             title="返回"
-            disabled={!controlled || gesture || pointer !== undefined}
+            disabled={!inputEnabled ||
+              !controlled ||
+              gesture ||
+              pointer !== undefined}
             onclick={() => navigate(4)}><ArrowLeft size={20} /></Button
           >
           <Button
@@ -459,7 +556,10 @@
             size="icon"
             aria-label="主页"
             title="主页"
-            disabled={!controlled || gesture || pointer !== undefined}
+            disabled={!inputEnabled ||
+              !controlled ||
+              gesture ||
+              pointer !== undefined}
             onclick={() => navigate(3)}><Circle size={20} /></Button
           >
           <Button
@@ -467,10 +567,13 @@
             size="icon"
             aria-label="最近任务"
             title="最近任务"
-            disabled={!controlled || gesture || pointer !== undefined}
+            disabled={!inputEnabled ||
+              !controlled ||
+              gesture ||
+              pointer !== undefined}
             onclick={() => navigate(187)}><PanelsTopLeft size={20} /></Button
           >
-          {#if canFullscreen}<Button
+          {#if canFullscreen && !fill}<Button
               variant="ghost"
               size="icon"
               aria-label={isFullscreen ? "退出全屏" : "全屏观看"}
@@ -486,10 +589,10 @@
         bind:this={canvas}
         class="device-screenshot live-canvas"
         class:visible={viewState === "live"}
-        class:controllable={controlled}
-        style:filter={`brightness(${brightness}%)`}
-        aria-label={`${name}实时屏幕${controlled ? "，可点按拖动，方向键滑动" : "，仅观看"}`}
-        tabindex={controlled ? 0 : -1}
+        class:controllable={controlled && inputEnabled}
+        style:filter={`brightness(${displayBrightness}%)`}
+        aria-label={`${name}实时屏幕${controlled && inputEnabled ? "，可点按拖动，方向键滑动" : "，仅观看"}`}
+        tabindex={controlled && inputEnabled ? 0 : -1}
         onpointerdown={down}
         onpointermove={move}
         onpointerup={up}
@@ -507,7 +610,7 @@
     {:else if viewState !== "live"}
       {#if picture && viewState !== "error"}<img
           class="device-screenshot"
-          style:filter={`brightness(${brightness}%)`}
+          style:filter={`brightness(${displayBrightness}%)`}
           src={picture}
           alt={`${name}最近一次截图`}
         />
@@ -528,28 +631,29 @@
         </div>{/if}
     {/if}
   </div>
-  <div class="live-brightness">
-    <label>
-      <span>网页亮度</span>
-      <input
-        type="range"
-        min="20"
-        max="150"
-        step="5"
-        value={brightness}
-        aria-valuetext={`${brightness}%`}
-        oninput={(event) => setBrightness(event.currentTarget.valueAsNumber)}
-      />
-    </label>
-    <span class="live-brightness-value">{brightness}%</span>
-    <Button
-      variant="ghost"
-      size="sm"
-      disabled={brightness === 100}
-      onclick={() => setBrightness(100)}>恢复</Button
-    >
-    <span class="hint">仅影响网页画面</span>
-  </div>
+  {#if showBrightness}<div class="live-brightness">
+      <label>
+        <span>网页亮度</span>
+        <input
+          type="range"
+          min="20"
+          max="150"
+          step="5"
+          value={brightness}
+          aria-valuetext={`${brightness}%`}
+          oninput={(event) => setBrightness(event.currentTarget.valueAsNumber)}
+        />
+      </label>
+      <span class="live-brightness-value">{brightness}%</span>
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={brightness === 100}
+        onclick={() => setBrightness(100)}>恢复</Button
+      >
+      <span class="hint">仅影响网页画面</span>
+    </div>
+  {/if}
   {#if viewState === "live" && (!controlled || isFullscreen)}
     <div class="live-control-area">
       {#if !controlled && !requesting}<Button
@@ -567,6 +671,61 @@
     127.0.0.1；其他设备需 HTTPS。
   </p>
 {/if}
-<p class="hint live-footnote">
-  开启投屏会切换到当前页面；刷新自动恢复，离开设备页后停止投屏。
-</p>
+{#if !fill}<p class="hint live-footnote">
+    {onrecordinput
+      ? "操作会真实作用于手机；暂停录制时仅观看画面。"
+      : "开启投屏会切换到当前页面；刷新自动恢复，离开设备页后停止投屏。"}
+  </p>
+{/if}
+
+<style>
+  .live-stage.fill {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+  .fill .device-screen-body {
+    container-type: size;
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    margin: 0;
+    overflow: hidden;
+  }
+  .fill .live-device {
+    max-width: 100%;
+    padding: 0;
+    border-width: 1px;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+  .fill .live-device .live-canvas {
+    width: min(calc(100cqw - 2px), calc((100cqh - 48px) * var(--live-aspect)));
+    height: auto;
+    max-height: none;
+    max-width: none;
+    border-radius: 0 0 11px 11px;
+  }
+  .fill .live-navigation {
+    height: 44px;
+    grid-template-columns: repeat(3, minmax(44px, 1fr));
+    align-items: center;
+  }
+  .fill .live-navigation :global(button[data-slot="button"]) {
+    height: 40px;
+  }
+  .fill .device-screen-placeholder {
+    width: min(100cqw, 360px);
+    min-height: 0;
+    height: min(100cqh, 540px);
+    border-width: 1px;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+  .fill .live-control-area {
+    flex-shrink: 0;
+    margin: 8px 0 0;
+  }
+</style>

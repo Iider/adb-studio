@@ -22,6 +22,28 @@ export function startMirror(
   let stopped = false;
   let controlled = false;
   let wantsControl = false;
+  let checkpointSequence = 0;
+  const checkpoints = new Map<
+    number,
+    {
+      resolve: () => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
+  function checkpoint(): Promise<void> {
+    if (!controlled || stopped || socket.readyState !== WebSocket.OPEN)
+      return Promise.reject(new Error("操作未确认，请检查连接后继续"));
+    const sequence = ++checkpointSequence;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        checkpoints.delete(sequence);
+        reject(new Error("动作确认超时；本次动作未记录，请核对手机画面"));
+      }, 4000);
+      checkpoints.set(sequence, { resolve, reject, timer });
+      socket.send(JSON.stringify({ type: "input_checkpoint", sequence }));
+    });
+  }
   const options = new ScrcpyOptions3_1({
     sendDeviceMeta: false,
     sendDummyByte: false,
@@ -37,21 +59,22 @@ export function startMirror(
     } else if (enabled) onControl(false, "投屏尚未连接，请稍后重试");
   }
   function send(data: Uint8Array) {
-    if (!controlled || !wantsControl || stopped) return;
+    if (!controlled || !wantsControl || stopped) return false;
     if (
       socket.readyState !== WebSocket.OPEN ||
       socket.bufferedAmount > 64 * 1024
     ) {
       fail("操作传输过慢，已停止投屏，请检查连接后重试");
-      return;
+      return false;
     }
     socket.send(new Uint8Array(data));
+    return true;
   }
   function touch(
     action: number,
     point: { x: number; y: number; width: number; height: number },
   ) {
-    send(
+    return send(
       serializer.injectTouch({
         action,
         pointerId: 0n,
@@ -81,7 +104,7 @@ export function startMirror(
     const packet = new Uint8Array(down.length + up.length);
     packet.set(down);
     packet.set(up, down.length);
-    send(packet);
+    return send(packet);
   }
   let decoder: WebCodecsVideoDecoder | undefined;
   const timeout = setTimeout(
@@ -106,6 +129,11 @@ export function startMirror(
   function stop() {
     if (stopped) return;
     stopped = true;
+    for (const pending of checkpoints.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("投屏中断，未确认动作未记录，请核对手机画面"));
+    }
+    checkpoints.clear();
     controlled = false;
     wantsControl = false;
     onControl(false);
@@ -130,6 +158,15 @@ export function startMirror(
           controlled = message.enabled && wantsControl;
           onControl(controlled, message.error || undefined);
           if (message.enabled && !wantsControl) setControl(false);
+        } else if (message.type === "input_checkpoint") {
+          const pending = checkpoints.get(message.sequence);
+          if (pending) {
+            clearTimeout(pending.timer);
+            checkpoints.delete(message.sequence);
+            if (message.accepted) pending.resolve();
+            else
+              pending.reject(new Error("手机未接受完整动作；本次动作未记录"));
+          }
         } else if (message.type === "display_power") {
           onDisplayPower(message.enabled, message.initial === true);
         } else if (message.type === "taken_over") {
@@ -191,5 +228,5 @@ export function startMirror(
       ),
     );
   }
-  return { stop, setControl, touch, navigate, setDisplayPower };
+  return { stop, setControl, touch, navigate, setDisplayPower, checkpoint };
 }

@@ -59,6 +59,7 @@ pub async fn serve(app: Arc<App>, id: String, mut socket: WebSocket) {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum Request {
     Control { enabled: bool },
+    InputCheckpoint { sequence: u32 },
 }
 
 #[derive(Default)]
@@ -323,6 +324,16 @@ async fn relay(
                             state.release(control).await?;
                             free(app,id).await;
                             control_status(socket,false,None).await?;
+                        },
+                        Request::InputCheckpoint { sequence } => {
+                            // WebSocket 保序：这里只确认此前输入已校验并写入手机通道，
+                            // 不代表应用页面已经加载完成。
+                            let accepted = state.enabled && !disabled && !state.poisoned
+                                && state.touch.is_none() && state.key_up.is_none();
+                            tokio::time::timeout(Duration::from_secs(2), socket.send(Message::Text(
+                                json!({"type":"input_checkpoint","sequence":sequence,"accepted":accepted})
+                                    .to_string().into()
+                            ))).await??;
                         },
                     }
                 },

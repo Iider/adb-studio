@@ -205,6 +205,8 @@ def main():
                 workflow = call(path + "/save", {"revision":saved["revision"]})
                 body={"device_id":"mock-phone","workflow_id":workflow["id"]}
                 manual=viewer()
+                send(manual,1,json.dumps({"type":"input_checkpoint","sequence":1}).encode())
+                assert json.loads(frame(manual)[1]) == {"type":"input_checkpoint","sequence":1,"accepted":False}
                 assert control_message(manual,True)["enabled"]
                 run = call("/runs",body)
                 wait(lambda: swipes() > 0)
@@ -212,6 +214,8 @@ def main():
                 assert "手动操作" in call("/devices/mock-phone/screen",{"action":"lock"},400)["error"]
                 for action in [0,2,1]: send(manual,2,touch(action))
                 for key in [3,4,187]: send(manual,2,keys(key))
+                send(manual,1,json.dumps({"type":"input_checkpoint","sequence":2}).encode())
+                assert json.loads(frame(manual)[1]) == {"type":"input_checkpoint","sequence":2,"accepted":True}
                 wait(lambda: len(records()) == 9)
                 assert [record[1] for record in records()[:3]] == [0,2,1]
                 assert [int.from_bytes(record[2:6],"big") for record in records()[3::2]] == [3,4,187]
@@ -222,6 +226,8 @@ def main():
                 wait(lambda: len(records()) == 12)
                 assert records()[-3:] == [bytes([10,0]),bytes([10,2]),bytes([10,0])]
                 send(manual,2,touch(0))
+                send(manual,1,json.dumps({"type":"input_checkpoint","sequence":3}).encode())
+                assert json.loads(frame(manual)[1]) == {"type":"input_checkpoint","sequence":3,"accepted":False}
                 wait(lambda: len(records()) == 13)
                 assert not control_message(manual,False)["enabled"]
                 wait(lambda: records()[-1][1] == 3)

@@ -14,6 +14,8 @@
 
 ## 当前状态与下一步
 
+画布操作录制已通过用户验收并更新 Mac 正式服务 17841；范围与验收步骤见 `docs/workflow-recording.md`。
+
 Windows 本机部署、模拟检查及用户真机 Wi-Fi 连接、截图、投屏验收通过。安装、启动、停止、自启和 ZIP 使用见 `docs/deployment.md`。待完成：Mac 完整实机回归与完整 Linux 后台回归。
 
 投屏网页亮度调节已通过用户验收；Mac 本地部署已通过用户验收。Windows 的该项部署状态仍待确认。使用说明见 `docs/ui-components.md` 的设备右栏章节；Mac 部署记录见 `docs/changes/2026-10-29-Mac更新本地工作台.md`。
