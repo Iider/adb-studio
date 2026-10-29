@@ -1,6 +1,6 @@
 # Mac／Linux／Windows 部署与发行
 
-macOS、Linux、Windows 共用 Rust 后台与静态网页。Mac 可使用苹果文字识别；Linux、Windows 可运行工作流、截图、投屏；文字条件需要本地读字工具。本地读字任务在没有兼容识别程序时会在开始前提示原因。
+macOS、Linux、Windows 共用 Rust 后台与静态网页，可运行工作流、截图和投屏。文字条件在配置模型及可读取密钥时优先由模型判断；未配置时使用本地读字，两者都不可用则在开始前提示原因。Mac 可使用苹果文字识别。
 
 ## 平台范围
 
@@ -51,7 +51,7 @@ python scripts/install-service.py remove
 
 无线配对时保持手机的配对码弹窗打开，关闭后重新获取地址和配对码。配对成功后使用“无线调试”主页面的连接端口连接，两种端口不同。若提示未收到配对回复，先检查手机与电脑的网络是否互通；代理或 VPN 应绕过局域网。电脑接主路由器、手机接访客 Wi-Fi 或下级路由器时，可能无法互通。
 
-独立模型看图检查需在“系统设置”配置模型及密钥。Windows 不附带本地读字引擎；需要读字的步骤会提示缺少识别程序。可自行提供 `data/bin/ocr.exe` 或 `ocr.py`，协议见下方环境变量说明。
+文字条件与独立模型看图检查使用“系统设置”中的模型配置，密钥通过环境变量或后台 `.env` 提供。直接填写 Key／Base URL 的设置调整仍待实施，见[模型设置方案](recognition-fallback-plan.md)。Windows 不附带本地读字引擎；不使用模型时，可自行提供 `data/bin/ocr.exe` 或 `ocr.py`，协议见下方环境变量说明。
 
 Windows ZIP 发行包包含后台、网页、ADB 及投屏组件。解压后可运行 `.\adb-studio.exe`；关闭时按 Ctrl+C。需要登录自启时，在解压目录执行 `python scripts/install-service.py install`。源码构建后可用 `python scripts/package-release.py --skip-build` 生成 ZIP，使用 `python scripts/check-release.py dist/adb-studio-windows-x86_64.zip` 验证。
 
