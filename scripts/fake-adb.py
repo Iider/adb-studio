@@ -8,6 +8,7 @@ import sys
 import time
 import socket
 import select
+import struct
 
 root = Path(os.environ["FAKE_ADB_DIR"])
 args = sys.argv[1:]
@@ -162,6 +163,27 @@ elif args[:1] in (["-s"], ["-t"]):
     elif command[:3] == ["shell", "input", "swipe"]:
         with (root / "swipes").open("a") as f:
             f.write(json.dumps(command) + "\n")
+    elif len(command) == 2 and command[0] == "exec-out" and command[1].endswith(" | head -c 12"):
+        if (root / "timeout-size-header").exists():
+            time.sleep(14)
+        if (root / "unsupported-size-header").exists():
+            sys.stdout.buffer.write(b"head: unavailable")
+            sys.exit(0)
+        capture = command[1].removesuffix(" | head -c 12").split()
+        if capture[:1] != ["screencap"] or (root / "expected-display").exists() and capture[-2:] != ["-d", (root / "expected-display").read_text()]:
+            print("wrong header display", file=sys.stderr)
+            sys.exit(1)
+        append_log("size-headers", command[1])
+        if (root / "size-header").exists():
+            header = (root / "size-header").read_bytes()
+        else:
+            png = (root / "screen.png").read_bytes()
+            w, h = struct.unpack(">II", png[16:24]) if png.startswith(b"\x89PNG\r\n\x1a\n") else (400, 800)
+            header = struct.pack("<III", w, h, 1)
+        sys.stdout.buffer.write(header)
+        if (root / "switch-display-after-size").exists():
+            display = (root / "displays").read_text()
+            (root / "displays").write_text(display.replace("state OFF,", "state TEMP,").replace("state ON,", "state OFF,").replace("state TEMP,", "state ON,"))
     elif command[:2] == ["exec-out", "screencap"]:
         if (root / "expected-display").exists():
             expected = (root / "expected-display").read_text()
@@ -171,6 +193,8 @@ elif args[:1] in (["-s"], ["-t"]):
         with (root / "captures").open("a") as f:
             f.write("capture\n")
         if "-p" in command:
+            if (root / "timeout-png").exists():
+                time.sleep(14)
             sys.stdout.buffer.write((root / "screen.png").read_bytes())
         else:
             sys.stdout.buffer.write((root / "screen.raw").read_bytes() if (root / "screen.raw").exists() else b"unsupported raw format")

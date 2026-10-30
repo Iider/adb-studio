@@ -545,7 +545,30 @@ impl Adb {
         }
         Ok(())
     }
+    #[tracing::instrument(skip_all, fields(device_id = id))]
     pub async fn size(&self, id: &str) -> Result<(u32, u32)> {
+        let mut target = self.target(id).await?;
+        let dump = String::from_utf8(
+            self.at_target(&target, &["shell", "dumpsys", "display"])
+                .await?,
+        )?;
+        let display = active_capture_display(&dump)?;
+        // 在手机端截断原始头部，跳过 PNG 压缩和整图传输；显示屏编号已限制为数字。
+        let command = match display.as_deref() {
+            Some(display) => format!("screencap -d {display} | head -c 12"),
+            None => "screencap | head -c 12".into(),
+        };
+        if target.transport.is_none() {
+            target = self.target(id).await?;
+        }
+        // 连接或命令超时直接返回，不再追加一轮完整截图。
+        let header = self.at_target(&target, &["exec-out", &command]).await?;
+        match raw_screen_size(&header) {
+            Ok(size) => return Ok(size),
+            Err(error) => {
+                tracing::warn!(%id, %error, bytes = header.len(), size_source = "png_fallback", "屏幕尺寸头部不可用，回退完整截图");
+            }
+        }
         let png = self.shot(id).await?;
         screen_size(&png)
     }
@@ -745,6 +768,19 @@ fn clean_screenshot(mut output: Vec<u8>) -> Result<(Vec<u8>, image::DynamicImage
     Ok((output, image))
 }
 
+fn raw_screen_size(header: &[u8]) -> Result<(u32, u32)> {
+    anyhow::ensure!(header.len() == 12, "原始尺寸头部长度无效");
+    let word = |offset: usize| u32::from_le_bytes(header[offset..offset + 4].try_into().unwrap());
+    let (width, height, format) = (word(0), word(4), word(8));
+    anyhow::ensure!(
+        (1..=10000).contains(&width)
+            && (1..=10000).contains(&height)
+            && matches!(format, 1..=5 | 22 | 43),
+        "原始尺寸头部或像素格式不支持"
+    );
+    Ok((width, height))
+}
+
 fn screen_size(png: &[u8]) -> Result<(u32, u32)> {
     if png.len() < 24 || &png[..8] != b"\x89PNG\r\n\x1a\n" {
         bail!("截图无法读取当前屏幕尺寸")
@@ -759,6 +795,32 @@ fn screen_size(png: &[u8]) -> Result<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dimension_header_supports_rotation_and_rejects_ambiguous_data() {
+        let header =
+            |w: u32, h: u32, f: u32| [w.to_le_bytes(), h.to_le_bytes(), f.to_le_bytes()].concat();
+        for (w, h) in [(1080, 2400), (2400, 1080), (1060, 2376)] {
+            for format in [1, 2, 3, 4, 5, 22, 43] {
+                assert_eq!(raw_screen_size(&header(w, h, format)).unwrap(), (w, h));
+            }
+        }
+        for invalid in [
+            header(0, 2400, 1),
+            header(10001, 2400, 1),
+            header(1080, 2400, 0),
+            header(1080, 2400, 999),
+            b"[Warning] hi".to_vec(),
+        ] {
+            assert!(raw_screen_size(&invalid).is_err());
+        }
+        let valid = header(1080, 2400, 1);
+        for length in 0..valid.len() {
+            assert!(raw_screen_size(&valid[..length]).is_err());
+        }
+        let mut extra = valid;
+        extra.push(0);
+        assert!(raw_screen_size(&extra).is_err());
+    }
     #[test]
     fn connection_kind_handles_mdns_ip_and_usb_metadata() {
         for endpoint in [

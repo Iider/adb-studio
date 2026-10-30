@@ -6,6 +6,7 @@ from pathlib import Path
 import runpy
 import shutil
 import socket
+import struct
 import subprocess
 import tempfile
 import urllib.error
@@ -87,6 +88,59 @@ def main():
                 r = finish(call("/runs", "POST", {"workflow_id": workflow["id"], "device_id": "mock-phone"})["id"])
                 assert r["state"] == "succeeded" and taps() == before, r
                 print("通过：未配置孤儿节点及其缺省变量保留在草稿，保存与运行忽略", flush=True)
+
+                geometry_profile = {"device_id": "mock-phone", "width": 400, "height": 800, "display": "default", "x": .2, "y": .3, "to_x": .2, "to_y": .3}
+                geometry_body = draft([node("geometry-tap", "tap", {"profiles": [geometry_profile], "count": 2, "interval": 0})], "")
+                before = taps()
+                captures = (fake / "captures").read_text()
+                index = len((fake / "commands").read_text().splitlines())
+                (fake / "timeout-png").touch()
+                r = finish(test(geometry_body, "geometry-tap")["id"])
+                assert r["state"] == "succeeded" and taps() == before + 2, r
+                assert (fake / "captures").read_text() == captures
+                commands = [json.loads(line) for line in (fake / "commands").read_text().splitlines()[index:]]
+                assert sum(c[2:] == ["exec-out", "screencap | head -c 12"] for c in commands) == 2, commands
+                (fake / "timeout-png").unlink()
+                print("通过：PNG 路径卡住时，单步重复点击仍仅取 12 字节尺寸头部，不请求整图", flush=True)
+
+                before = taps()
+                (fake / "unsupported-size-header").touch()
+                r = finish(test(geometry_body, "geometry-tap")["id"])
+                assert r["state"] == "succeeded" and taps() == before + 2, r
+                assert len((fake / "captures").read_text()) > len(captures)
+                assert "png_fallback" in (data / "server.log").read_text(encoding="utf-8")
+                (fake / "unsupported-size-header").unlink()
+                print("通过：头部不兼容时回退原截图路径，保留实际尺寸检查", flush=True)
+
+                before = taps()
+                (fake / "size-header").write_bytes(struct.pack("<III", 800, 400, 1))
+                r = finish(test(geometry_body, "geometry-tap")["id"])
+                assert r["state"] == "needs_help" and "没有匹配标注" in r["reason"] and taps() == before, r
+                (fake / "size-header").unlink()
+                print("通过：旋转后的实际尺寸与标注不同，拒绝点击", flush=True)
+
+                fold = json.loads(json.dumps(geometry_body))
+                fold["nodes"][0]["config"]["profiles"][0]["display"] = "200"
+                (fake / "displays").write_text('DisplayDeviceInfo{uniqueId="local:100", type INTERNAL, state OFF,}\nDisplayDeviceInfo{uniqueId="local:200", type INTERNAL, state ON,}\nmDisplayId=0\nDisplayInfo{local:100}\nmDisplayId=3\nDisplayInfo{local:200}')
+                (fake / "expected-display").write_text("200")
+                (fake / "switch-display-after-size").touch()
+                r = finish(test(fold, "geometry-tap")["id"])
+                assert r["state"] == "needs_help" and "屏幕形态已改变" in r["reason"] and taps() == before, r
+                for flag in ["displays", "expected-display", "switch-display-after-size"]:
+                    (fake / flag).unlink()
+                print("通过：按指定物理屏幕取头部，检查中折叠换屏时拒绝点击", flush=True)
+
+                captures = (fake / "captures").read_text()
+                (fake / "timeout-size-header").touch()
+                rid = test(geometry_body, "geometry-tap")["id"]
+                helpers["wait"](lambda: record(rid)["state"] == "paused")
+                r = record(rid)
+                assert r["pending"] is None and "head -c 12" in r["error_detail"] and taps() == before, r
+                assert (fake / "captures").read_text() == captures
+                (fake / "timeout-size-header").unlink()
+                call("/runs/" + rid + "/stop", "POST")
+                helpers["wait"](lambda: record(rid)["state"] == "cancelled")
+                print("通过：头部命令超时保留暂停与进度，不追加 PNG 重试或手机动作", flush=True)
 
                 observed = call("/editor/observe/mock-phone?retain=true")
                 capture = observed["capture_id"]
