@@ -38,6 +38,8 @@ elif args == ["devices", "-l"]:
     if online:
         if (root / "legacy-transport").exists():
             print("mock-usb device usb:1-1 model:Test\n127.0.0.1:5555 device model:Test")
+        elif (root / "mdns-only").exists():
+            print("adb-mock-phone._adb-tls-connect._tcp device model:Test transport_id:2")
         elif (root / "wireless-only").exists():
             print("127.0.0.1:5555 device model:Test transport_id:2")
         else:
@@ -129,6 +131,8 @@ elif args[:1] in (["-s"], ["-t"]):
         identity = (root / "identity").read_text() if (root / "identity").exists() else "mock-phone"
         print(identity if command[-1] == "ro.serialno" else "模拟手机")
     elif command == ["shell", "dumpsys", "display"]:
+        if (root / "timeout-display").exists():
+            time.sleep(14)
         print((root / "displays").read_text() if (root / "displays").exists() else "")
         if (root / "disconnect-after-display").exists():
             (root / "transport-gone").touch()

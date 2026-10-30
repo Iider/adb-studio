@@ -293,6 +293,21 @@ def main():
             (fake / "screen.raw").unlink()
             print("通过：截图分段计时、原始画面、新图与旋转尺寸、内外屏选择、损坏回退、身份核验、断线不换机、旧版 ADB 与无线截图", flush=True)
 
+            def device_connection(expected, endpoint_count, endpoint=None):
+                device = next(d for d in call("/devices") if d["id"] == "mock-phone")
+                return (device["connection"] == expected and len(device["endpoints"]) == endpoint_count
+                        and (endpoint is None or device["endpoints"] == [endpoint]))
+
+            wait(lambda: device_connection("USB", 2))
+            (fake / "mdns-only").touch()
+            wait(lambda: device_connection("无线", 1, "adb-mock-phone._adb-tls-connect._tcp"))
+            (fake / "mdns-only").unlink()
+            (fake / "wireless-only").touch()
+            wait(lambda: device_connection("无线", 1, "127.0.0.1:5555"))
+            (fake / "wireless-only").unlink()
+            wait(lambda: device_connection("USB", 2))
+            print("通过：mDNS 与 IP 无线端点显示无线；USB 与无线并存时保留 USB 优先", flush=True)
+
             for _ in range(2):
                 assert call("/devices/mock-phone/screen", "POST", {"action": "lock"})["message"] == "屏幕已关闭"
                 assert (fake / "asleep").exists()
@@ -332,6 +347,33 @@ def main():
             assert start_workflow(replacement)["workflow"]["name"] == "保存的新内容"
             wait(lambda: all(not row["state"] in {"running","recovering","waiting_device"} for row in call("/runs")))
             print("通过：只允许工作流创建、运行快照、重复保存与同机互斥", flush=True)
+
+            flow, _ = save(workflow("超时诊断", count=1, interval=0))
+            before = count()
+            (fake / "timeout-display").touch()
+            r = start_workflow(flow)
+            wait(lambda: record(r["id"])["state"] == "paused")
+            paused = record(r["id"])
+            assert paused["pending"] is None and count() == before
+            assert "shell dumpsys display" in paused["error_detail"] and "时限 12 秒" in paused["error_detail"]
+            assert "连接：-s mock-usb" in paused["error_detail"]
+            log_text = (data / "server.log").read_text(encoding="utf-8")
+            assert all(value in log_text for value in ["ADB 命令超时", "shell dumpsys display", "canvas_screen", "mock-phone", "adb_target=", "elapsed_ms=", "timeout_ms=12000"]), log_text
+            print("超时详情示例：" + paused["error_detail"], flush=True)
+            (fake / "timeout-display").unlink()
+            (fake / "timeout-input").touch()
+            call("/runs/" + r["id"] + "/resume", "POST")
+            wait(lambda: record(r["id"])["state"] == "paused")
+            paused = record(r["id"])
+            assert paused["pending"] == "canvas_swipe" and count() == before
+            assert "shell input swipe" in paused["error_detail"]
+            assert "shell input swipe" in (data / "server.log").read_text(encoding="utf-8")
+            (fake / "timeout-input").unlink()
+            call("/runs/" + r["id"] + "/resume", "POST", expected=400)
+            assert count() == before
+            call("/runs/" + r["id"] + "/stop", "POST")
+            wait(lambda: record(r["id"])["state"] == "cancelled")
+            print("通过：屏幕检查与滑动超时均记录命令、连接、耗时；日志带请求手机与阶段，待确认动作不重复", flush=True)
 
             flow, _ = save(workflow("暂停与恢复", count=12, interval=0.5))
             r = start_workflow(flow)

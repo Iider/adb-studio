@@ -14,13 +14,19 @@ use std::{
 
 #[derive(Debug)]
 pub enum AdbIssue {
-    TimedOut,
+    TimedOut {
+        command: String,
+        selector: String,
+        elapsed_ms: u64,
+    },
     InputDenied(String),
 }
 impl AdbIssue {
     pub fn summary(&self) -> &'static str {
         match self {
-            Self::TimedOut => "ADB 响应超时，已暂停。请检查手机连接与其他 ADB 操作，再点击继续。",
+            Self::TimedOut { .. } => {
+                "ADB 响应超时，已暂停。请检查手机连接与其他 ADB 操作，再点击继续。"
+            }
             Self::InputDenied(_) => {
                 "手机拒绝触控，已暂停。请检查手机状态、调试权限或操作冲突，再点击继续。"
             }
@@ -30,12 +36,57 @@ impl AdbIssue {
 impl std::fmt::Display for AdbIssue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::TimedOut => f.write_str("ADB 响应超时"),
+            Self::TimedOut {
+                command,
+                selector,
+                elapsed_ms,
+            } => write!(
+                f,
+                "ADB 响应超时：{command}；连接：{selector}；耗时 {:.1} 秒（时限 12 秒）",
+                *elapsed_ms as f64 / 1000.0
+            ),
             Self::InputDenied(detail) => write!(f, "ADB：{detail}"),
         }
     }
 }
 impl std::error::Error for AdbIssue {}
+
+fn command_diagnostic(args: &[&str]) -> (String, String) {
+    let (selector, command) = if args.len() >= 2 && matches!(args[0], "-s" | "-t") {
+        (format!("{} {}", args[0], args[1]), &args[2..])
+    } else {
+        ("ADB 服务".into(), args)
+    };
+    let safe = if command.first() == Some(&"pair") {
+        format!("pair {} [配对码已隐藏]", command.get(1).unwrap_or(&""))
+    } else if command.starts_with(&["shell", "input"]) && command.contains(&"text") {
+        "shell input text [内容已隐藏]".into()
+    } else {
+        command.join(" ")
+    };
+    let clean = |value: String| {
+        value
+            .chars()
+            .take(512)
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect()
+    };
+    (clean(selector), clean(safe))
+}
+
+fn connection_kind(endpoint: &str, metadata: &[&str]) -> &'static str {
+    let endpoint = endpoint.trim_end_matches('.');
+    if metadata.iter().any(|part| part.starts_with("usb:")) {
+        "USB"
+    } else if endpoint.contains(':')
+        || endpoint.ends_with("._adb-tls-connect._tcp")
+        || endpoint.ends_with("._adb._tcp")
+    {
+        "无线"
+    } else {
+        "USB"
+    }
+}
 
 pub struct Screenshot {
     pub png: Vec<u8>,
@@ -123,9 +174,15 @@ impl Adb {
             cmd.env("ADB_LIBUSB", "1");
         }
         cmd.args(args).kill_on_drop(true);
+        let started = Instant::now();
         let out = tokio::time::timeout(Duration::from_secs(12), cmd.output())
             .await
-            .map_err(|_| AdbIssue::TimedOut)??;
+            .map_err(|_| {
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                let (selector, command) = command_diagnostic(args);
+                tracing::warn!(%command, adb_target = %selector, elapsed_ms, timeout_ms = 12000, "ADB 命令超时");
+                AdbIssue::TimedOut { command, selector, elapsed_ms }
+            })??;
         if !out.status.success() {
             let detail = String::from_utf8_lossy(&out.stderr).trim().to_owned();
             if detail.contains("INJECT_EVENTS") {
@@ -141,6 +198,7 @@ impl Adb {
     pub async fn endpoint(&self, id: &str) -> Result<String> {
         Ok(self.target(id).await?.endpoint)
     }
+    #[tracing::instrument(skip_all, fields(device_id = id))]
     async fn target(&self, id: &str) -> Result<Target> {
         let listing = self.text(&["devices", "-l"]).await?;
         let hints = self
@@ -202,6 +260,7 @@ impl Adb {
             }
         }
     }
+    #[tracing::instrument(skip_all, fields(device_id = id))]
     pub async fn phone(&self, id: &str, args: &[&str]) -> Result<Vec<u8>> {
         let endpoint = self.endpoint(id).await?;
         let mut all = vec!["-s", endpoint.as_str()];
@@ -218,6 +277,7 @@ impl Adb {
             .trim()
             .into())
     }
+    #[tracing::instrument(skip_all, fields(device_id = id))]
     pub async fn video(
         &self,
         id: &str,
@@ -341,6 +401,7 @@ impl Adb {
     pub async fn shot(&self, id: &str) -> Result<Vec<u8>> {
         Ok(self.capture(id).await?.png)
     }
+    #[tracing::instrument(skip_all, fields(device_id = id))]
     pub async fn capture(&self, id: &str) -> Result<Screenshot> {
         let started = Instant::now();
         let mut timing = ScreenshotTiming::default();
@@ -489,6 +550,7 @@ impl Adb {
         screen_size(&png)
     }
 
+    #[tracing::instrument(skip_all, fields(device_id = id))]
     pub async fn canvas_screen(&self, id: &str) -> Result<ScreenGeometry> {
         let dump = String::from_utf8(self.phone(id, &["shell", "dumpsys", "display"]).await?)?;
         let physical = active_capture_display(&dump)?;
@@ -697,6 +759,51 @@ fn screen_size(png: &[u8]) -> Result<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn connection_kind_handles_mdns_ip_and_usb_metadata() {
+        for endpoint in [
+            "192.168.1.20:37123",
+            "[fd00::2]:5555",
+            "adb-phone._adb-tls-connect._tcp",
+            "adb-phone._adb-tls-connect._tcp.",
+            "adb-phone._adb._tcp",
+        ] {
+            assert_eq!(connection_kind(endpoint, &[]), "无线");
+        }
+        assert_eq!(connection_kind("phone-serial", &[]), "USB");
+        assert_eq!(connection_kind("usb:serial", &["usb:1-1"]), "USB");
+    }
+
+    #[test]
+    fn timeout_diagnostic_preserves_command_and_hides_sensitive_arguments() {
+        let (selector, command) = command_diagnostic(&["-t", "300", "exec-out", "screencap", "-p"]);
+        assert_eq!(selector, "-t 300");
+        assert_eq!(command, "exec-out screencap -p");
+        let error = AdbIssue::TimedOut {
+            command,
+            selector,
+            elapsed_ms: 12042,
+        };
+        assert!(error.to_string().contains("12.0 秒"));
+        assert!(error.to_string().contains("exec-out screencap -p"));
+        let (_, pair) = command_diagnostic(&["pair", "192.168.1.20:12345", "654321"]);
+        assert!(!pair.contains("654321"));
+        let (_, text) = command_diagnostic(&[
+            "-s",
+            "phone",
+            "shell",
+            "input",
+            "-d",
+            "0",
+            "text",
+            "private-content",
+        ]);
+        assert!(!text.contains("private-content"));
+        assert_eq!(
+            command_diagnostic(&["devices", "-l"]),
+            ("ADB 服务".into(), "devices -l".into())
+        );
+    }
     #[test]
     fn touch_display_requires_its_own_explicit_mapping() {
         let dump = "mDisplayId=0\nDisplayInfo{local:100}\nmDisplayId=3\nDisplayInfo{local:200}";
@@ -1001,11 +1108,10 @@ pub async fn refresh(app: &App) -> Result<()> {
         d.endpoints.push(endpoint.into());
         d.last_seen = Some(now());
         d.model = model;
-        d.connection = if endpoint.contains(':') {
-            "无线".into()
-        } else {
-            "USB".into()
-        };
+        let connection = connection_kind(endpoint, &parts);
+        if d.endpoints.len() == 1 || connection == "USB" {
+            d.connection = connection.into();
+        }
         let lock = app
             .adb
             .text(&["-s", endpoint, "shell", "dumpsys", "window", "policy"])

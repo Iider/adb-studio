@@ -40,6 +40,8 @@ python scripts/install-service.py remove
 
 `remove` 正常停止后台、关闭自启，保留数据。重新执行 `install` 会更新并启动，保留数据库、令牌和已有 `.env`。查看日志：安装目录的 `logs/service.log`、`logs/service-error.log`。安装目录可用 `--runtime "目录"` 指定，后续安装、状态、移除都需使用相同参数。
 
+ADB 超时导致任务暂停后，“技术详情”保留具体命令、连接选择器、实际耗时与 12 秒时限；后台 `service.log` 记录同一条超时命令。在动作前屏幕检查、截图或连接核验中，还会附带请求手机编号及 `canvas_screen`、`capture`、`target` 等调用阶段。全局命令没有连接选择器时显示“ADB 服务”。配对码与输入文字隐藏，不记录命令输出；原有历史超时记录不回填新信息。
+
 已安装但后台停止时，按 Win+R，输入 `shell:startup`，双击 `ADB Studio` 快捷方式即可启动；无需重新构建。程序隐藏运行，启动后打开工作台确认。登录自启不会在退出登录、关机或休眠时维持任务运行。
 
 连接手机：
