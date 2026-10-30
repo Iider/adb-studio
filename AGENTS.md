@@ -15,6 +15,12 @@
 
 ## 当前状态与下一步
 
+Windows 正式服务 17841 基于 `1ab475d` 部署画布录制、节点编辑／单步测试、随机参数及条件判断修正，并包含下列本地修复与优化。构建、模拟设备和数据保留核对完成，用户验收通过；模型 1 秒用例限制与补充诊断见 `docs/changes/2026-10-30-Windows更新本地工作台.md`。
+
+无线连接误标与 ADB 超时诊断已修复并部署 Windows 正式服务 17841，用户验收通过；见 `docs/changes/2026-10-30-修正无线显示并补充超时诊断.md`。新日志已定位一次动作前 PNG 截图命令超时，手机截图与无线回传的具体卡点仍待区分，证据见 `docs/adb-timeout-diagnosis.md`。
+
+动作前屏幕检查已按 `docs/screen-check-optimization-plan.md` 优化并部署 Windows 正式服务：优先读取 12 字节原始截图头部，保留编号、尺寸与形态核验。模拟检查通过，V2171A 实机尺寸阶段通过且没有回退，用户验收通过；整图取图仍可能超时，范围见 `docs/changes/2026-10-30-轻量化屏幕尺寸检查.md`。
+
 节点编辑、保留标注截图、右键克隆／删除、独立单步测试及孤立备用节点支持已通过用户验收并部署 Mac 本地服务 17841，见 `docs/workflow-node-editing-plan.md`。
 
 随机参数已通过用户验收并部署 Mac 本地服务 17841，见 `docs/random-parameters.md`。
@@ -23,7 +29,7 @@
 
 Windows 本机部署、模拟检查及用户真机 Wi-Fi 连接、截图、投屏验收通过。安装、启动、停止、自启和 ZIP 使用见 `docs/deployment.md`。待完成：Mac 完整实机回归与完整 Linux 后台回归。
 
-投屏网页亮度调节已通过用户验收；Mac 本地部署已通过用户验收。Windows 的该项部署状态仍待确认。使用说明见 `docs/ui-components.md` 的设备右栏章节；Mac 部署记录见 `docs/changes/2026-10-29-Mac更新本地工作台.md`。
+投屏网页亮度调节已部署 Mac 与 Windows 正式服务并通过用户验收。Windows 亮度下限为 5%，见 `docs/changes/2026-10-30-降低网页亮度下限.md`。使用说明见 `docs/ui-components.md` 的设备右栏章节；Mac 部署记录见 `docs/changes/2026-10-29-Mac更新本地工作台.md`。
 
 Windows 正式服务 17841 已部署变量显示别名与紧凑运行参数表单，用户验收通过；见 `docs/changes/2026-10-29-增加变量显示别名.md`。工作流运行变量、模型优先条件判断与重启 ADB 已部署；此前部署核对及模型时限检查限制见 `docs/changes/2026-10-29-Windows更新本地工作台.md`。
 
