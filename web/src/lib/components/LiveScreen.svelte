@@ -80,7 +80,7 @@
   let pendingPower: boolean | undefined;
 
   function setBrightness(value: number) {
-    brightness = Math.min(150, Math.max(20, value));
+    brightness = Math.min(150, Math.max(5, value));
     try {
       localStorage.setItem(brightnessKey, String(brightness));
     } catch {
@@ -374,7 +374,7 @@
       const saved = showBrightness
         ? Number(localStorage.getItem(brightnessKey))
         : 100;
-      if (Number.isFinite(saved) && saved >= 20 && saved <= 150)
+      if (Number.isFinite(saved) && saved >= 5 && saved <= 150)
         brightness = saved;
     } catch {
       // 无法读取浏览器存储时使用默认亮度。
@@ -636,7 +636,7 @@
         <span>网页亮度</span>
         <input
           type="range"
-          min="20"
+          min="5"
           max="150"
           step="5"
           value={brightness}
