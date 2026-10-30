@@ -54,9 +54,36 @@ pub async fn start_with_inputs(
 ) -> Result<Run> {
     let _gate = app.run_gate.lock().await;
     let template = workflow(&app, workflow_id).await?;
-    validate(&template)?;
+    start_locked(app.clone(), device_id, template, overrides, None).await
+}
+
+pub async fn start_template(
+    app: Arc<App>,
+    device_id: &str,
+    template: Workflow,
+    overrides: crate::workflow_inputs::Values,
+    single_step: Option<String>,
+) -> Result<Run> {
+    let _gate = app.run_gate.lock().await;
+    start_locked(app.clone(), device_id, template, overrides, single_step).await
+}
+
+async fn start_locked(
+    app: Arc<App>,
+    device_id: &str,
+    template: Workflow,
+    overrides: crate::workflow_inputs::Values,
+    single_step: Option<String>,
+) -> Result<Run> {
+    if single_step.is_none() {
+        validate(&template)?;
+    }
     let (w, inputs) = crate::workflow_inputs::resolve(&template, &overrides)?;
-    crate::canvas::validate_resolved(&w)?;
+    if single_step.is_some() {
+        crate::canvas::validate_test(&w)?;
+    } else {
+        crate::canvas::validate_resolved(&w)?;
+    }
     let needs_text = w.nodes.iter().any(|n| {
         if let Action::Canvas { step } = &n.action {
             return crate::canvas::needs_text(step);
@@ -93,13 +120,22 @@ pub async fn start_with_inputs(
     {
         bail!("这台手机已有任务")
     }
+    let mut progress = json!({});
+    if let Some(id) = &single_step {
+        if let Some(owner) = w.nodes.iter().find(|node| node.id == w.entry) {
+            if owner.id != *id {
+                progress = json!({"loops":{owner.id.clone():{"phase":"body","round":1,"ended":0}}});
+            }
+        }
+    }
     let r = Run {
+        node: single_step.clone().unwrap_or_else(|| w.entry.clone()),
+        single_step,
         inputs,
         input_overrides: overrides,
-        canvas_progress: json!({}),
+        canvas_progress: progress,
         id: uuid::Uuid::new_v4().to_string(),
         device_id: device_id.into(),
-        node: w.entry.clone(),
         workflow: w,
         state: "running".into(),
         started_at: now(),
@@ -163,6 +199,7 @@ pub async fn resume(app: Arc<App>, id: &str) -> Result<Run> {
         .get::<Workflow>("workflows", &r.workflow.id)
         .await?
         .is_none()
+        && r.single_step.is_none()
     {
         bail!("任务已移除，无法继续")
     }
@@ -338,6 +375,9 @@ async fn execute(app: Arc<App>, mut r: Run, control: Arc<RunControl>) {
 
 async fn run_steps(app: &App, r: &mut Run) -> Result<&'static str> {
     let mut steps = 0u32;
+    if r.single_step.is_some() && r.checkpoint["single_step_done"] == true {
+        return Ok("succeeded");
+    }
     loop {
         ready(app, r).await?;
         steps += 1;
@@ -370,6 +410,13 @@ async fn run_steps(app: &App, r: &mut Run) -> Result<&'static str> {
         }
         r.pending = None;
         r.checkpoint = json!({});
+        if let Some(id) = &r.single_step {
+            r.node = id.clone();
+            r.checkpoint["single_step_done"] = json!(true);
+            save(app, r).await?;
+            app.event(r, "此步骤测试完成，后续步骤未执行").await?;
+            return Ok("succeeded");
+        }
         save(app, r).await?;
     }
 }

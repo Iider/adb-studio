@@ -161,8 +161,32 @@ fn sample_ids(content: &Content) -> anyhow::Result<BTreeSet<String>> {
             }
         }
     }
+    let value = serde_json::to_value(content)?;
+    capture_ids(&value, &mut ids)?;
     ensure!(ids.len() <= ASSET_COUNT_LIMIT, "图片样本最多携带 40 张");
     Ok(ids)
+}
+
+fn capture_ids(value: &Value, ids: &mut BTreeSet<String>) -> anyhow::Result<()> {
+    match value {
+        Value::Object(fields) => {
+            if let Some(id) = fields.get("capture_id") {
+                let id = id.as_str().context("标注截图编号无效")?;
+                ensure!(uuid::Uuid::parse_str(id).is_ok(), "标注截图编号无效");
+                ids.insert(format!("{id}.png"));
+            }
+            for child in fields.values() {
+                capture_ids(child, ids)?;
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                capture_ids(child, ids)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 async fn build_file(app: &App, content: Content) -> Result<WorkflowFile, Failure> {

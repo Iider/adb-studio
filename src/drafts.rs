@@ -177,6 +177,7 @@ pub fn validate(draft: &Draft) -> anyhow::Result<()> {
         draft.entry.is_empty() || ids.contains(draft.entry.as_str()),
         "入口步骤不存在"
     );
+    let active = connected_ids(draft);
     for node in &draft.nodes {
         anyhow::ensure!(
             !node.id.is_empty()
@@ -210,7 +211,9 @@ pub fn validate(draft: &Draft) -> anyhow::Result<()> {
             node.config.is_object() && serde_json::to_vec(&node.config)?.len() <= 65536,
             "步骤设置无效或过大"
         );
-        validate_config(&node.config, &node.kind)?;
+        if active.contains(node.id.as_str()) {
+            validate_config(&node.config, &node.kind)?;
+        }
         anyhow::ensure!(
             node.targets
                 .iter()
@@ -220,6 +223,18 @@ pub fn validate(draft: &Draft) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+// 只有完全没有连线且不是入口的节点可以作为备用节点忽略。
+pub fn connected_ids(draft: &Draft) -> HashSet<&str> {
+    let mut ids = HashSet::from([draft.entry.as_str()]);
+    for node in &draft.nodes {
+        if !node.targets.is_empty() {
+            ids.insert(node.id.as_str());
+            ids.extend(node.targets.values().map(String::as_str));
+        }
+    }
+    ids
 }
 
 fn validate_config(config: &Value, kind: &str) -> anyhow::Result<()> {

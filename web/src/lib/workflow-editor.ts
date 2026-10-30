@@ -48,6 +48,8 @@ export type Config = {
   result?: "succeeded" | "needs_help";
 };
 export type CoordinateProfile = {
+  capture_id?: string;
+  captured_at?: string;
   device_id: string;
   width: number;
   height: number;
@@ -108,7 +110,60 @@ export function canonical(value: unknown): string {
   return JSON.stringify(ordered(value));
 }
 
+export function connectedNodes(
+  draft: Pick<Draft, "nodes" | "entry">,
+): DraftNode[] {
+  const ids = new Set([draft.entry]);
+  for (const node of draft.nodes) {
+    if (Object.keys(node.targets).length) {
+      ids.add(node.id);
+      Object.values(node.targets).forEach((id) => ids.add(id));
+    }
+  }
+  return draft.nodes.filter((node) => ids.has(node.id));
+}
+
+export function referencedInputs(
+  nodes: DraftNode[],
+  inputs: InputDefinition[],
+): InputDefinition[] {
+  const ids = new Set(
+    nodes.flatMap((node) =>
+      Object.values(node.config)
+        .filter(isReference)
+        .map((value) => value.input),
+    ),
+  );
+  return inputs.filter((input) => ids.has(input.id));
+}
+
+export function cloneNode(node: CanvasNode, nodes: CanvasNode[]): CanvasNode {
+  const copy: CanvasNode = {
+    id: crypto.randomUUID(),
+    type: "step",
+    selected: true,
+    position: { x: node.position.x + 280, y: node.position.y },
+    data: {
+      kind: node.data.kind,
+      label: node.data.label,
+      config: JSON.parse(JSON.stringify(node.data.config)),
+      targets: {},
+    },
+  };
+  while (
+    nodes.some(
+      (item) =>
+        Math.abs(item.position.x - copy.position.x) < 250 &&
+        Math.abs(item.position.y - copy.position.y) < 160,
+    )
+  )
+    copy.position.y += 180;
+  return copy;
+}
+
 export function actionLimit(draft: Draft): number | null {
+  draft = { ...draft, nodes: connectedNodes(draft) };
+  draft.inputs = referencedInputs(draft.nodes, draft.inputs ?? []);
   if (inputIssues(draft.inputs ?? [], draft.nodes).length) return null;
   draft = { ...draft, nodes: resolveNodes(draft.nodes, draft.inputs ?? []) };
   const nodes = new Map(draft.nodes.map((node) => [node.id, node]));
@@ -429,6 +484,12 @@ export function edgesFor(
   selected = "",
 ): Edge[] {
   const ids = new Set(nodes.map((node) => node.id));
+  const connected = new Set([
+    entry,
+    ...nodes
+      .filter((node) => Object.keys(node.data.targets).length)
+      .flatMap((node) => [node.id, ...Object.values(node.data.targets)]),
+  ]);
   return nodes.flatMap((node) => {
     const targets = node.id === "__entry" ? { next: entry } : node.data.targets;
     const links = Object.entries(targets).map(([port, target]) => ({
@@ -438,6 +499,7 @@ export function edgesFor(
     }));
     if (
       ["break", "continue"].includes(node.data.kind) &&
+      connected.has(node.id) &&
       node.data.config.loop
     ) {
       const loop = nodes.find(
@@ -470,10 +532,20 @@ export function edgesFor(
 }
 
 export function checkGraph(draft: Draft): Issue[] {
+  const hadNodes = draft.nodes.length > 0;
+  draft = { ...draft, nodes: connectedNodes(draft) };
+  draft.inputs = referencedInputs(draft.nodes, draft.inputs ?? []);
   const issues: Issue[] = inputIssues(draft.inputs ?? [], draft.nodes);
   draft = { ...draft, nodes: resolveNodes(draft.nodes, draft.inputs ?? []) };
   const ids = new Set(draft.nodes.map((node) => node.id));
-  if (!draft.nodes.length) return [{ message: "先添加一个步骤" }];
+  if (!draft.nodes.length)
+    return [
+      {
+        message: hadNodes
+          ? "请连接开始标记与要执行的步骤，孤立备用节点会被忽略"
+          : "先添加一个步骤",
+      },
+    ];
   if (!ids.has(draft.entry)) issues.push({ message: "请选择开始执行的步骤" });
   for (const node of draft.nodes) {
     for (const port of ports(node.kind)) {

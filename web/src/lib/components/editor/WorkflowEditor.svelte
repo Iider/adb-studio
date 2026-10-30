@@ -46,6 +46,9 @@
     ports,
     defaults,
     checkGraph,
+    connectedNodes,
+    referencedInputs,
+    cloneNode,
     canonical,
     actionLimit,
     type DraftNode,
@@ -54,6 +57,7 @@
     type CanvasNode,
     type Config,
     type Issue,
+    type CoordinateProfile,
   } from "$lib/workflow-editor";
   import {
     inputLabel,
@@ -70,6 +74,7 @@
     stepPickerContext,
     type OpenStepPicker,
   } from "./StepPicker.svelte";
+  import StepTest from "./StepTest.svelte";
   import StepInspector from "./StepInspector.svelte";
   import CoordinatePicker from "./CoordinatePicker.svelte";
   import EditorRunPanel from "./EditorRunPanel.svelte";
@@ -82,6 +87,10 @@
   let devices = $state<Device[]>([]);
   let deviceId = $state("");
   let markNode = $state<CanvasNode | null>(null);
+  let markProfile = $state<CoordinateProfile | undefined>();
+  let testNode = $state<DraftNode | null>(null);
+  let nodeMenu: HTMLDivElement;
+  let menuNodeId = $state("");
   let markCondition = $state<number | null>(null);
   let savedWorkflow = $state<WorkflowDefinition | null>(null);
   let workflowContent = $state("");
@@ -185,6 +194,33 @@
   });
   const edges = $derived(edgesFor(nodes, entry, selectedEdge));
   const current = $derived(nodes.find((node) => node.id === selected));
+  const activeNodes = $derived(connectedNodes(snapshot()));
+  const activeInputs = $derived(referencedInputs(activeNodes, inputs));
+  function cloneSelected() {
+    const original = nodes.find((node) => node.id === menuNodeId);
+    if (!original || original.data.kind === "entry") return;
+    if (nodes.length > 200) {
+      notify.error("最多添加 200 个步骤");
+      return;
+    }
+    const copy = cloneNode(original, nodes);
+    nodes = [...nodes.map((node) => ({ ...node, selected: false })), copy];
+    selected = copy.id;
+    selectedEdge = "";
+    nodeMenu.hidePopover();
+    remember();
+  }
+  async function openNodeMenu(event: MouseEvent, node: CanvasNode) {
+    event.preventDefault();
+    menuNodeId = node.id;
+    choose(node.id);
+    await tick();
+    nodeMenu.showPopover();
+    const rect = nodeMenu.getBoundingClientRect();
+    nodeMenu.style.left = `${Math.max(8, Math.min(event.clientX, window.innerWidth - rect.width - 8))}px`;
+    nodeMenu.style.top = `${Math.max(8, Math.min(event.clientY, window.innerHeight - rect.height - 8))}px`;
+    nodeMenu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  }
   const content = $derived(
     JSON.stringify({
       id,
@@ -831,17 +867,6 @@
     await tick();
     void flow.fitView({ padding: 0.18, duration: 200 });
   }
-  function moveNode(x: number, y: number) {
-    nodes = nodes.map((node) =>
-      node.id === selected
-        ? {
-            ...node,
-            position: { x: node.position.x + x, y: node.position.y + y },
-          }
-        : node,
-    );
-    remember();
-  }
   function restoreBackup() {
     if (!recovery) return;
     const value = recovery;
@@ -974,8 +999,8 @@
         ><Circle size={16} /><span class="save-label">录制</span></button
       >
       <EditorRunPanel
-        {inputs}
-        draftNodes={snapshot().nodes}
+        inputs={activeInputs}
+        draftNodes={activeNodes}
         {entry}
         workflowId={id ? `manual-${id}` : ""}
         {savedWorkflow}
@@ -1211,6 +1236,8 @@
                 connection.target,
               )}
             onnodeclick={({ node }) => choose(node.id)}
+            onnodecontextmenu={({ event, node }) =>
+              void openNodeMenu(event as MouseEvent, node)}
             onedgeclick={({ edge }) => {
               selectedEdge = edge.id;
               selected = "";
@@ -1261,20 +1288,6 @@
           </h2>
         </div>
         <div class="settings-content">
-          <label
-            >选择步骤<Dropdown
-              label="选择步骤"
-              value={selected}
-              items={[
-                { value: "", label: "工作流设置" },
-                ...nodes.map((node) => ({
-                  value: node.id,
-                  label: node.data.label,
-                })),
-              ]}
-              onchange={choose}
-            /></label
-          >
           {#if current}
             <StepInspector
               {inputs}
@@ -1288,21 +1301,21 @@
               )}
               node={current}
               {nodes}
-              {entry}
               onLabel={(value) => editNode({ label: value })}
               onConfig={(config: Config) => editNode({ config })}
-              onTarget={(port, target) => setTarget(current.id, port, target)}
-              onEntry={() => {
-                entry = current.id;
-                remember();
-              }}
               onRemove={removeNode}
-              onMove={moveNode}
-              onMark={() => {
+              onExecute={() => {
+                testNode =
+                  snapshot().nodes.find((node) => node.id === current.id) ??
+                  null;
+              }}
+              onMark={(profile) => {
+                markProfile = profile;
                 markCondition = null;
                 markNode = current;
               }}
               onMarkCondition={(index) => {
+                markProfile = undefined;
                 markCondition = index;
                 markNode = current;
               }}
@@ -1348,7 +1361,7 @@
                 : `手机操作上限：${operationLimit} 次（含按键、点击、滑动；分支不一定全部执行）。`}
             </p>
             <p class="settings-hint">
-              选中画布上的步骤，可修改参数和连接去向。每个出口只能连接一个下一步。
+              选中画布步骤修改参数；拖动连接点连接步骤。每个出口只能连接一个下一步。
             </p>
             <p class="settings-hint">
               添加与删除支持撤销；修改会自动保存为草稿。
@@ -1379,6 +1392,58 @@
   onchoose={addNode}
   onclose={() => (insertion = null)}
 />
+<div
+  bind:this={nodeMenu}
+  popover="auto"
+  class="node-context-menu"
+  role="menu"
+  aria-label="节点操作"
+  tabindex="-1"
+  onkeydown={(event) => {
+    if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+      event.preventDefault();
+      const buttons = [
+        ...nodeMenu.querySelectorAll<HTMLButtonElement>(
+          "button:not(:disabled)",
+        ),
+      ];
+      const index = buttons.indexOf(
+        document.activeElement as HTMLButtonElement,
+      );
+      buttons[
+        (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) %
+          buttons.length
+      ]?.focus();
+    }
+  }}
+>
+  <button
+    role="menuitem"
+    disabled={menuNodeId === "__entry"}
+    onclick={cloneSelected}><Copy size={15} />克隆</button
+  >
+  <button
+    role="menuitem"
+    disabled={menuNodeId === "__entry"}
+    onclick={() => {
+      selected = menuNodeId;
+      removeNode();
+      nodeMenu.hidePopover();
+    }}><Trash2 size={15} />删除</button
+  >
+  {#if menuNodeId === "__entry"}<p>开始标记用于管理工作流入口</p>{/if}
+</div>
+{#if testNode}<StepTest
+    draft={snapshot()}
+    node={testNode}
+    {devices}
+    initialDevice={deviceId}
+    onclose={() => {
+      testNode = null;
+      showProgress("");
+    }}
+    onstate={showProgress}
+  />{/if}
 <WorkflowExport
   request={exportRequest}
   onclose={() => (exportRequest = null)}
@@ -1387,7 +1452,8 @@
     node={markNode}
     conditionIndex={markCondition}
     {devices}
-    initialDevice={deviceId}
+    initialDevice={markProfile?.device_id ?? deviceId}
+    initialProfile={markProfile}
     onClose={() => (markNode = null)}
     onSave={(profile) => {
       const markedId = markNode?.id;
@@ -1450,6 +1516,43 @@
 </dialog>
 
 <style>
+  .node-context-menu {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    width: 180px;
+    padding: 6px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: var(--shadow);
+  }
+  .node-context-menu button {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    border: 0;
+    border-radius: 6px;
+    padding: 10px;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+  }
+  .node-context-menu button:hover,
+  .node-context-menu button:focus-visible {
+    background: var(--accentsoft);
+  }
+  .node-context-menu button:disabled {
+    opacity: 0.4;
+  }
+  .node-context-menu p {
+    font-size: 12px;
+    color: var(--dim);
+    padding: 6px;
+  }
+
   .workflow-editor {
     height: 100dvh;
     min-height: 580px;
@@ -1635,7 +1738,7 @@
   }
   .editor-body {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 290px;
+    grid-template-columns: minmax(0, 1fr) 380px;
     flex: 1;
     min-height: 0;
   }
@@ -1811,7 +1914,7 @@
   }
   @media (max-width: 1100px) {
     .editor-body {
-      grid-template-columns: minmax(0, 1fr) 260px;
+      grid-template-columns: minmax(0, 1fr) 340px;
     }
     .wide-action {
       display: none;

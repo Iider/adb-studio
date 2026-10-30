@@ -113,3 +113,11 @@ python scripts/studio.py run manual-草稿UUID --device 手机自身编号 --inp
 ## 旧数据清理
 
 首次启动读取旧任务原始记录，在转成可运行内容前删除旧本体、关联定时、执行记录和事件，按清单清理运行截图。清理前在同一 data 目录生成 `before-editor-only-<UUID>.sqlite` 备份；备份失败则中止清理。工作流编辑器创建的任务、草稿、手机与模型设置保留。新启动不再预置任何任务。
+
+## 节点标注与单步测试
+
+- `GET /api/editor/observe/{device_id}?retain=true`：获取当前画面并保存不可变截图；返回 `capture_id`、`captured_at`、`screen` 和 `image`。未传 `retain` 时沿用普通临时取图。
+- `GET /api/editor/captures/{UUID}`：读取已保存的标注截图，需要工作台鉴权。`profiles`／`regions` 可保存 `capture_id` 与 `captured_at`，旧标注无需这两个字段。
+- `POST /api/editor/test-step`：提交 `{draft, node_id, device_id, inputs}`，以当前草稿测试一个普通节点，不要求保存完整流程。`inputs` 只接受此节点引用的变量；默认值缺失时必须提供。返回带 `single_step` 的运行记录，完成当前节点后停止，支持停止及原有未确认动作保护。
+
+草稿保留没有任何实际连线且不是入口的备用节点；检查与编译忽略其参数、手机适配和专用变量，保存的可运行流程不纳入这些节点。已连线但无法从入口到达的片段仍需修正。导出与副本导入同时携带标注截图，沿用附件数量及大小限制。

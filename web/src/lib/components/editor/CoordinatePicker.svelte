@@ -7,6 +7,7 @@
     node,
     devices,
     initialDevice,
+    initialProfile,
     onSave,
     onClose,
     conditionIndex = null,
@@ -14,6 +15,7 @@
     node: CanvasNode;
     devices: Device[];
     initialDevice: string;
+    initialProfile?: CoordinateProfile;
     onSave: (profile: CoordinateProfile) => void;
     onClose: () => void;
     conditionIndex?: number | null;
@@ -36,25 +38,42 @@
     to_y: 0.3,
   });
   let marked = $state(false);
+  let captureId = $state<string | undefined>();
+  let capturedAt = $state<string | undefined>();
   const area = $derived(conditionIndex !== null);
   const swipe = $derived(node.data.kind === "swipe" || area);
   async function capture() {
+    const previousScreen = screen;
+    const previousPoint = { ...point };
+    const wasMarked = marked;
     busy = true;
     error = "";
-    image = "";
-    screen = null;
-    marked = false;
     try {
       const result = await api<{
         image: string;
+        capture_id: string;
+        captured_at: string;
         screen: { width: number; height: number; display: string };
-      }>("/editor/observe/" + encodeURIComponent(device));
+      }>("/editor/observe/" + encodeURIComponent(device) + "?retain=true");
+      captureId = result.capture_id;
+      capturedAt = result.captured_at;
       image = result.image;
       screen = {
         width: result.screen.width,
         height: result.screen.height,
         display: result.screen.display,
       };
+      marked = false;
+      if (
+        wasMarked &&
+        previousScreen?.width === screen.width &&
+        previousScreen.height === screen.height &&
+        previousScreen.display === screen.display
+      ) {
+        point = previousPoint;
+        marked = true;
+        return;
+      }
       const previous = (
         conditionIndex !== null
           ? node.data.config.conditions?.[conditionIndex]?.regions
@@ -79,6 +98,43 @@
       error = e instanceof Error ? e.message : "取图失败";
     } finally {
       busy = false;
+    }
+  }
+  function restore(profile: CoordinateProfile) {
+    screen = {
+      width: profile.width,
+      height: profile.height,
+      display: profile.display,
+    };
+    captureId = profile.capture_id;
+    capturedAt = profile.captured_at;
+    image = `/api/editor/captures/${profile.capture_id}`;
+    point = {
+      x: profile.x,
+      y: profile.y,
+      to_x: profile.to_x,
+      to_y: profile.to_y,
+    };
+    marked = true;
+  }
+  function selectDevice() {
+    error = "";
+    const profiles =
+      conditionIndex !== null
+        ? node.data.config.conditions?.[conditionIndex]?.regions
+        : node.data.config.profiles;
+    const previous =
+      initialProfile?.device_id === device
+        ? initialProfile
+        : profiles?.filter((item) => item.device_id === device).at(-1);
+    if (previous?.capture_id) restore(previous);
+    else {
+      image = "";
+      screen = null;
+      marked = false;
+      captureId = undefined;
+      capturedAt = undefined;
+      if (device) void capture();
     }
   }
   function position(event: PointerEvent): [number, number] {
@@ -114,7 +170,15 @@
     start = null;
   }
   onMount(() => {
-    device = initialDevice || devices.find((item) => item.online)?.id || "";
+    const profiles =
+      conditionIndex !== null
+        ? node.data.config.conditions?.[conditionIndex]?.regions
+        : node.data.config.profiles;
+    device =
+      initialDevice ||
+      profiles?.at(-1)?.device_id ||
+      devices.find((item) => item.online)?.id ||
+      "";
     point = {
       x: node.data.config.x ?? node.data.config.from_x ?? 0.5,
       y: node.data.config.y ?? node.data.config.from_y ?? 0.8,
@@ -122,7 +186,7 @@
       to_y: node.data.config.to_y ?? 0.3,
     };
     dialog.showModal();
-    if (device) void capture();
+    selectDevice();
   });
 </script>
 
@@ -148,13 +212,15 @@
         items={devices.map((item) => ({
           value: item.id,
           label: `${item.name}${item.online ? "" : "（离线）"}`,
-          disabled: !item.online,
         }))}
-        onchange={() => void capture()}
+        disabled={busy}
+        onchange={selectDevice}
       /></label
     >
-    <button disabled={busy || !device} onclick={capture}
-      >{busy ? "正在取图…" : "重新取图"}</button
+    <button
+      disabled={busy ||
+        !devices.some((item) => item.id === device && item.online)}
+      onclick={capture}>{busy ? "正在取图…" : "重新获取"}</button
     >
   </div>
   {#if error}<p role="alert" class="error">{error}</p>{/if}
@@ -167,12 +233,21 @@
           : swipe
             ? "在截图上拖动标注滑动路线"
             : "在截图上点选位置"}
-        onpointerdown={down}
+        onpointerdown={(event) => {
+          if (!busy && !error) down(event);
+        }}
         onpointermove={move}
         onpointerup={up}
         onpointercancel={() => (start = null)}
       >
-        <img src={image} alt="用于位置标注的手机截图" draggable="false" />
+        <img
+          src={image}
+          alt="用于位置标注的手机截图"
+          draggable="false"
+          onerror={() => {
+            error = "上次截图已不可用，请点击重新获取";
+          }}
+        />
         {#if marked}<svg
             viewBox="0 0 100 100"
             preserveAspectRatio="none"
@@ -203,6 +278,9 @@
       </button>
       <div class="numeric">
         <p>画面：{screen.width} × {screen.height}</p>
+        {#if capturedAt}<p>
+            截图时间：{new Date(capturedAt).toLocaleString()}
+          </p>{/if}
         {#each swipe ? ["x", "y", "to_x", "to_y"] : ["x", "y"] as key}
           <label
             >{(
@@ -235,7 +313,9 @@
         </p>
         <button
           class="save"
-          disabled={!marked ||
+          disabled={busy ||
+            !!error ||
+            !marked ||
             Object.values(point).some((n) => n < 0 || n > 1) ||
             (area && (point.x === point.to_x || point.y === point.to_y))}
           onclick={() => {
@@ -243,6 +323,8 @@
               onSave({
                 device_id: device,
                 ...screen,
+                capture_id: captureId,
+                captured_at: capturedAt,
                 ...(area
                   ? {
                       x: Math.min(point.x, point.to_x),

@@ -312,3 +312,85 @@ test("各运行入口共用变量解析，留空默认、零值保留、非法�
     inputIssues(inputs, [], parseInputValues(inputs, { count: "bad" })).length,
   );
 });
+
+test("isolated spare nodes do not affect graph checks, inputs or action count", async () => {
+  const { connectedNodes, referencedInputs } =
+    await import("../src/lib/workflow-editor.ts");
+  const input = {
+    id: "spare-value",
+    name: "备用",
+    type: "number",
+    default: null,
+  };
+  const value = draft([
+    node("wait", "wait", { next: "end" }, { seconds: 0 }),
+    node("end", "end", {}, { result: "succeeded" }),
+    node("spare", "swipe", {}, { count: { input: input.id } }),
+  ]);
+  value.inputs = [input];
+  assert.deepEqual(
+    connectedNodes(value).map((item) => item.id),
+    ["wait", "end"],
+  );
+  assert.deepEqual(referencedInputs(connectedNodes(value), value.inputs), []);
+  assert.deepEqual(checkGraph(value), []);
+  assert.equal(actionLimit(value), 0);
+  value.nodes[0].targets.next = "spare";
+  assert.ok(checkGraph(value).some((issue) => issue.node === "spare"));
+});
+
+test("clones preserve parameters and screenshots without inherited links or shared config", async () => {
+  const { cloneNode, edgesFor } = await import("../src/lib/workflow-editor.ts");
+  for (const kind of [
+    "tap",
+    "swipe",
+    "back",
+    "home",
+    "recents",
+    "wait",
+    "loop",
+    "condition",
+    "wait_condition",
+    "break",
+    "continue",
+    "end",
+  ]) {
+    const source = {
+      id: "source",
+      type: "step",
+      position: { x: 0, y: 0 },
+      data: {
+        kind,
+        label: "原节点",
+        config: {
+          count: 3,
+          interval: 0.5,
+          profiles: [
+            { device_id: "phone", capture_id: "stored-image", x: 0.2 },
+          ],
+        },
+        targets: { next: "target" },
+      },
+    };
+    const copy = cloneNode(source, [
+      source,
+      { ...source, id: "occupied", position: { x: 280, y: 0 } },
+    ]);
+    assert.deepEqual(copy.data.config, source.data.config);
+    assert.deepEqual(copy.data.targets, {});
+    assert.notEqual(copy.id, source.id);
+    assert.equal(copy.position.x, 280);
+    assert.equal(copy.position.y, 180);
+    copy.data.config.profiles[0].x = 0.9;
+    assert.equal(source.data.config.profiles[0].x, 0.2);
+    if (kind === "continue") {
+      copy.data.config.loop = "source";
+      assert.equal(
+        edgesFor([source, copy], "source").filter(
+          (edge) => edge.source === copy.id,
+        ).length,
+        0,
+      );
+    }
+  }
+});

@@ -3,7 +3,7 @@ use anyhow::Context;
 use axum::{
     Json, Router,
     extract::{
-        DefaultBodyLimit, Path, Request, State,
+        DefaultBodyLimit, Path, Query, Request, State,
         ws::{Message, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode, header},
@@ -47,6 +47,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/workflows/{id}", axum::routing::delete(remove_workflow))
         .route("/workflow-drafts/{id}/save", post(save_draft))
         .route("/editor/observe/{id}", get(editor_observe))
+        .route("/editor/captures/{id}", get(editor_capture))
+        .route("/editor/test-step", post(test_step))
         .route("/workflows/{key}/validate", post(validate))
         .route("/runs", get(runs).post(start))
         .route("/runs/{id}", axum::routing::delete(clear_run))
@@ -363,9 +365,16 @@ async fn save_draft(
     Ok(Json(workflow))
 }
 
+#[derive(Deserialize, Default)]
+struct ObserveOptions {
+    #[serde(default)]
+    retain: bool,
+}
+
 async fn editor_observe(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
+    Query(options): Query<ObserveOptions>,
 ) -> Result<Json<Value>> {
     use base64::Engine;
     app.adb.check_unlocked(&id).await?;
@@ -375,8 +384,51 @@ async fn editor_observe(
     if (image.width(), image.height()) != (screen.width, screen.height) {
         return Err(anyhow::anyhow!("屏幕发生变化，请重新取图").into());
     }
+    let capture_id = if options.retain {
+        let id = uuid::Uuid::new_v4().to_string();
+        let folder = app.data.join("vision-samples");
+        tokio::fs::create_dir_all(&folder).await?;
+        tokio::fs::write(folder.join(format!("{id}.png")), &png).await?;
+        Some(id)
+    } else {
+        None
+    };
     Ok(Json(
-        json!({"screen":screen,"image":format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png))}),
+        json!({"screen":screen,"capture_id":capture_id,"captured_at":now(),"image":format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&png))}),
+    ))
+}
+
+async fn editor_capture(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Response> {
+    if uuid::Uuid::parse_str(&id).is_err() {
+        return Err(anyhow::anyhow!("截图编号无效").into());
+    }
+    let png = tokio::fs::read(app.data.join("vision-samples").join(format!("{id}.png")))
+        .await
+        .context("上次截图已不可用，请重新获取")?;
+    Ok(([(header::CONTENT_TYPE, "image/png")], png).into_response())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TestStep {
+    draft: crate::drafts::Draft,
+    node_id: String,
+    device_id: String,
+    #[serde(default)]
+    inputs: crate::workflow_inputs::Values,
+}
+
+async fn test_step(State(app): State<Arc<App>>, Json(body): Json<TestStep>) -> Result<Json<Run>> {
+    let workflow = crate::step_test::workflow(&body.draft, &body.node_id, &body.inputs)?;
+    Ok(Json(
+        engine::start_template(
+            app,
+            &body.device_id,
+            workflow,
+            body.inputs,
+            Some(body.node_id),
+        )
+        .await?,
     ))
 }
 async fn validate(State(app): State<Arc<App>>, Path(key): Path<String>) -> Result<Json<Value>> {

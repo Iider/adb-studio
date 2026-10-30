@@ -320,6 +320,29 @@ async fn save(
             }
         }
     }
+    fn remap_captures(value: &mut Value, replacements: &BTreeMap<String, String>) {
+        match value {
+            Value::Object(fields) => {
+                if let Some(Value::String(id)) = fields.get_mut("capture_id") {
+                    if let Some(file) = replacements.get(&format!("{id}.png")) {
+                        *id = file.trim_end_matches(".png").into();
+                    }
+                }
+                for child in fields.values_mut() {
+                    remap_captures(child, replacements);
+                }
+            }
+            Value::Array(items) => {
+                for child in items {
+                    remap_captures(child, replacements);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut content = serde_json::to_value(&parsed.content).map_err(internal)?;
+    remap_captures(&mut content, &replacements);
+    parsed.content = serde_json::from_value(content).map_err(internal)?;
     let draft = parsed
         .content
         .draft
@@ -405,13 +428,19 @@ pub async fn cleanup_imports(app: &App) -> anyhow::Result<()> {
         return Ok(());
     }
     let mut referenced = HashSet::new();
+    let mut captures = BTreeSet::new();
     for workflow in app.db.list::<Workflow>("workflows").await? {
+        super::capture_ids(&serde_json::to_value(&workflow)?, &mut captures)?;
         for test in workflow.tests {
             if let Some(image) = test.image {
                 referenced.insert(image);
             }
         }
     }
+    for draft in app.db.list::<Draft>("workflow_drafts").await? {
+        super::capture_ids(&serde_json::to_value(draft)?, &mut captures)?;
+    }
+    referenced.extend(captures);
     let mut entries = tokio::fs::read_dir(&folder).await?;
     while let Some(entry) = entries.next_entry().await? {
         if !entry.file_type().await?.is_dir()

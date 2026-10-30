@@ -12,6 +12,7 @@ mod platform;
 mod recognition;
 mod run_control;
 mod schedule;
+mod step_test;
 mod types;
 mod vision;
 mod workflow_cleanup;

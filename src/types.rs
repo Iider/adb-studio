@@ -101,6 +101,8 @@ pub struct SampleCase {
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Run {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub single_step: Option<String>,
     #[serde(default)]
     pub inputs: crate::workflow_inputs::Values,
     #[serde(default)]

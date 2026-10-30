@@ -12,6 +12,10 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captured_at: Option<String>,
     pub device_id: String,
     pub width: u32,
     pub height: u32,
@@ -103,7 +107,35 @@ fn canvas_node<'a>(w: &'a Workflow, id: &str) -> Result<&'a DraftNode> {
 }
 
 pub fn compile(draft: &Draft) -> Result<Workflow> {
+    compile_with_budget(draft, true)
+}
+
+pub fn compile_test(draft: &Draft) -> Result<Workflow> {
+    compile_with_budget(draft, false)
+}
+
+fn compile_with_budget(draft: &Draft, enforce_budget: bool) -> Result<Workflow> {
     crate::drafts::validate(draft)?;
+    let active = crate::drafts::connected_ids(draft);
+    let mut executable = draft.clone();
+    executable
+        .nodes
+        .retain(|node| active.contains(node.id.as_str()));
+    let referenced: HashSet<_> = executable
+        .nodes
+        .iter()
+        .flat_map(|node| {
+            node.config
+                .as_object()
+                .into_iter()
+                .flat_map(|c| c.values())
+                .filter_map(crate::workflow_inputs::reference)
+        })
+        .collect();
+    executable
+        .inputs
+        .retain(|input| referenced.contains(input.id.as_str()));
+    let draft = &executable;
     let mut devices: Option<HashSet<String>> = None;
     for step in &draft.nodes {
         if matches!(step.kind.as_str(), "tap" | "swipe") {
@@ -199,7 +231,12 @@ pub fn compile(draft: &Draft) -> Result<Workflow> {
         tests,
         recognition: RecognitionMode::Local,
     };
-    engine::validate(&workflow)?;
+    if enforce_budget {
+        engine::validate(&workflow)?;
+    } else {
+        let (resolved, _) = crate::workflow_inputs::resolve(&workflow, &Default::default())?;
+        validate_test(&resolved)?;
+    }
     Ok(workflow)
 }
 
@@ -213,6 +250,14 @@ pub fn validate(w: &Workflow) -> Result<()> {
 }
 
 pub fn validate_resolved(w: &Workflow) -> Result<()> {
+    validate_with_budget(w, true)
+}
+
+pub fn validate_test(w: &Workflow) -> Result<()> {
+    validate_with_budget(w, false)
+}
+
+fn validate_with_budget(w: &Workflow, enforce_budget: bool) -> Result<()> {
     ensure!(
         matches!(w.schema_version, 1 | 2)
             && !w.name.trim().is_empty()
@@ -543,7 +588,10 @@ pub fn validate_resolved(w: &Workflow) -> Result<()> {
         };
         upper = upper.saturating_add(cost.saturating_mul(rounds));
     }
-    ensure!(upper <= 10000, "预计动作上限超过 10000，请减少重复次数");
+    ensure!(
+        !enforce_budget || upper <= 10000,
+        "预计动作上限超过 10000，请减少重复次数"
+    );
     Ok(())
 }
 

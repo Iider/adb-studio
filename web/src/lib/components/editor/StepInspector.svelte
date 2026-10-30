@@ -8,33 +8,23 @@
   } from "$lib/workflow-inputs";
   import ConditionSamples from "./ConditionSamples.svelte";
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
+  import { Plus, Trash2, Play } from "@lucide/svelte";
   import {
-    Plus,
-    Trash2,
-    ArrowUp,
-    ArrowDown,
-    ArrowLeft,
-    ArrowRight,
-  } from "@lucide/svelte";
-  import {
-    ports,
     newCondition,
     type CanvasNode,
     type Config,
     type Condition,
+    type CoordinateProfile,
   } from "$lib/workflow-editor";
   let {
     inputs = [],
     onInputs,
     node,
     nodes,
-    entry,
     onLabel,
     onConfig,
-    onTarget,
-    onEntry,
     onRemove,
-    onMove,
+    onExecute,
     onMark,
     onMarkCondition,
     deviceNames = {},
@@ -44,14 +34,11 @@
     onInputs: (inputs: InputDefinition[]) => void;
     node: CanvasNode;
     nodes: CanvasNode[];
-    entry: string;
     onLabel: (value: string) => void;
     onConfig: (value: Config) => void;
-    onTarget: (port: string, target: string) => void;
-    onEntry: () => void;
     onRemove: () => void;
-    onMove: (x: number, y: number) => void;
-    onMark: () => void;
+    onExecute: () => void;
+    onMark: (profile?: CoordinateProfile) => void;
     onMarkCondition: (index: number) => void;
     deviceNames?: Record<string, string>;
     operationLimit?: number | null;
@@ -212,18 +199,12 @@
   {#if kind === "entry"}
     <InputDefinitions {inputs} {nodes} onchange={onInputs} />
   {/if}
-  {#if kind !== "entry"}
-    <button
-      class="inspector-button"
-      class:entry-active={entry === node.id}
-      onclick={onEntry}
-      disabled={entry === node.id}
-      >{entry === node.id ? "已设为开始步骤" : "从这一步开始执行"}</button
-    >
-  {/if}
+  {#if kind !== "entry"}<button class="inspector-button" onclick={onExecute}
+      ><Play size={16} />执行此步骤</button
+    >{/if}
 
   {#if kind === "tap" || kind === "swipe"}
-    <button class="inspector-button" onclick={onMark}
+    <button class="inspector-button" onclick={() => onMark()}
       >在手机截图上标注{kind === "tap" ? "位置" : "路线"}</button
     >
     {#each c.profiles ?? [] as profile, index}
@@ -232,6 +213,9 @@
           {deviceNames[profile.device_id] ?? profile.device_id}<br />屏幕 {profile.width}
           × {profile.height}
         </p>
+        <button class="inspector-button" onclick={() => onMark(profile)}
+          >编辑此标注</button
+        >
         <button
           class="inspector-button danger"
           onclick={() =>
@@ -251,55 +235,57 @@
     {@const reference = isReference(current) ? current.input : ""}
     <label
       >{field.label}
-      <Dropdown
-        label={`${field.label}来源`}
-        value={reference}
-        items={[
-          { value: "", label: "固定值" },
-          ...inputs
-            .filter((input) => compatible(input, field.key))
-            .map((input) => ({
-              value: input.id,
-              label: `使用变量：${inputOptionLabel(input)}`,
-            })),
-          ...(reference &&
-          !inputs.some(
-            (input) => input.id === reference && compatible(input, field.key),
-          )
-            ? [
-                {
-                  value: reference,
-                  label: "变量不存在或类型不匹配",
-                  disabled: true,
-                },
-              ]
-            : []),
-        ]}
-        onchange={(value) =>
-          onConfig({
-            ...c,
-            [field.key]: value
-              ? { input: value }
-              : (inputs.find((input) => input.id === reference)?.default ??
-                (typeof current === "number" ? current : field.min)),
-          })}
-      />
-      {#if reference}
-        <span class="inspector-hint"
-          >默认值：{inputs.find((input) => input.id === reference)?.default ??
-            "未填写"} · 运行时可修改</span
-        >
-      {:else}
-        <input
-          type="number"
-          min={field.min}
-          max={field.max}
-          step={field.step ?? 0.1}
-          value={numberValue(field)}
-          oninput={(event) =>
-            setNumber(field, event.currentTarget.valueAsNumber)}
+      <div class="value-row">
+        <Dropdown
+          label={`${field.label}来源`}
+          value={reference}
+          items={[
+            { value: "", label: "固定值" },
+            ...inputs
+              .filter((input) => compatible(input, field.key))
+              .map((input) => ({
+                value: input.id,
+                label: `使用变量：${inputOptionLabel(input)}`,
+              })),
+            ...(reference &&
+            !inputs.some(
+              (input) => input.id === reference && compatible(input, field.key),
+            )
+              ? [
+                  {
+                    value: reference,
+                    label: "变量不存在或类型不匹配",
+                    disabled: true,
+                  },
+                ]
+              : []),
+          ]}
+          onchange={(value) =>
+            onConfig({
+              ...c,
+              [field.key]: value
+                ? { input: value }
+                : (inputs.find((input) => input.id === reference)?.default ??
+                  (typeof current === "number" ? current : field.min)),
+            })}
         />
-      {/if}
+        {#if reference}
+          <span class="inspector-hint"
+            >默认值：{inputs.find((input) => input.id === reference)?.default ??
+              "未填写"} · 运行时可修改</span
+          >
+        {:else}
+          <input
+            type="number"
+            min={field.min}
+            max={field.max}
+            step={field.step ?? 0.1}
+            value={numberValue(field)}
+            oninput={(event) =>
+              setNumber(field, event.currentTarget.valueAsNumber)}
+          />
+        {/if}
+      </div>
     </label>
   {/each}
   {#if fields.length && !inputs.length}<p class="inspector-hint">
@@ -360,44 +346,46 @@
             }}
           /></label
         >
-        <label
-          >判断方式<Dropdown
-            label="判断方式"
-            value={condition.operator}
-            items={condition.source === "text"
-              ? [
-                  { value: "contains", label: "包含文字" },
-                  { value: "not_contains", label: "不包含文字" },
-                ]
-              : condition.source === "app"
+        <div class="condition-value-row">
+          <label
+            >判断方式<Dropdown
+              label="判断方式"
+              value={condition.operator}
+              items={condition.source === "text"
                 ? [
-                    { value: "is", label: "是这个应用" },
-                    { value: "is_not", label: "不是这个应用" },
+                    { value: "contains", label: "包含文字" },
+                    { value: "not_contains", label: "不包含文字" },
                   ]
-                : [
-                    { value: "eq", label: "等于" },
-                    { value: "gt", label: "大于" },
-                    { value: "lt", label: "小于" },
-                  ]}
-            onchange={(value) =>
-              setCondition(i, { operator: value as Condition["operator"] })}
-          /></label
-        >
-        <label
-          >{condition.source === "text"
-            ? "要查找的文字"
-            : condition.source === "app"
-              ? "应用编号"
-              : "轮次"}<input
-            value={condition.value}
-            maxlength="500"
-            placeholder={condition.source === "app"
-              ? "例如 com.example.app"
-              : ""}
-            oninput={(event) =>
-              setCondition(i, { value: event.currentTarget.value })}
-          /></label
-        >
+                : condition.source === "app"
+                  ? [
+                      { value: "is", label: "是这个应用" },
+                      { value: "is_not", label: "不是这个应用" },
+                    ]
+                  : [
+                      { value: "eq", label: "等于" },
+                      { value: "gt", label: "大于" },
+                      { value: "lt", label: "小于" },
+                    ]}
+              onchange={(value) =>
+                setCondition(i, { operator: value as Condition["operator"] })}
+            /></label
+          >
+          <label
+            >{condition.source === "text"
+              ? "要查找的文字"
+              : condition.source === "app"
+                ? "应用编号"
+                : "轮次"}<input
+              value={condition.value}
+              maxlength="500"
+              placeholder={condition.source === "app"
+                ? "例如 com.example.app"
+                : ""}
+              oninput={(event) =>
+                setCondition(i, { value: event.currentTarget.value })}
+            /></label
+          >
+        </div>
         {#if condition.source === "text"}<button
             class="inspector-button"
             onclick={() => onMarkCondition(i)}
@@ -471,43 +459,37 @@
       /></label
     >{/if}
 
-  {#if ports(kind).length}<h3>连接去向</h3>{/if}
-  {#each ports(kind) as port (port.id)}
-    <label
-      >{port.label}<Dropdown
-        label={port.label}
-        value={kind === "entry" ? entry : (node.data.targets[port.id] ?? "")}
-        placeholder="尚未连接"
-        items={[
-          { value: "", label: "尚未连接" },
-          ...nodes
-            .filter((item) => item.id !== node.id && item.id !== "__entry")
-            .map((target) => ({ value: target.id, label: target.data.label })),
-        ]}
-        onchange={(value) => onTarget(port.id, value)}
-      /></label
-    >
-  {/each}
-  {#if kind !== "entry"}
-    <h3>移动节点</h3>
-    <div class="move-buttons">
-      <button aria-label="节点左移" onclick={() => onMove(-40, 0)}
-        ><ArrowLeft size={16} /></button
-      ><button aria-label="节点上移" onclick={() => onMove(0, -40)}
-        ><ArrowUp size={16} /></button
-      ><button aria-label="节点下移" onclick={() => onMove(0, 40)}
-        ><ArrowDown size={16} /></button
-      ><button aria-label="节点右移" onclick={() => onMove(40, 0)}
-        ><ArrowRight size={16} /></button
-      >
-    </div>
-    <button class="inspector-button danger remove-step" onclick={onRemove}
-      ><Trash2 size={16} />删除步骤</button
-    >
-  {/if}
+  {#if kind !== "entry"}<button
+      class="inspector-button danger remove-step"
+      onclick={onRemove}><Trash2 size={16} />删除步骤</button
+    >{/if}
 </section>
 
 <style>
+  .value-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(90px, 0.8fr);
+    align-items: center;
+    gap: 10px;
+    margin-top: 6px;
+  }
+  .value-row input {
+    min-width: 0;
+    width: 100%;
+  }
+  .value-row .inspector-hint {
+    margin: 0;
+    font-size: 12px;
+  }
+  .condition-value-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+    gap: 10px;
+  }
+  .condition-value-row label {
+    min-width: 0;
+  }
+
   label {
     font-size: 13px;
     line-height: 1.5;
@@ -516,12 +498,7 @@
   input {
     font-size: 14px;
   }
-  h3 {
-    font-size: 14px;
-    margin: 24px 0 8px;
-  }
-  .inspector-button,
-  .move-buttons button {
+  .inspector-button {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -537,6 +514,9 @@
   .inspector-button {
     width: 100%;
     font-size: 13px;
+  }
+  .inspector-button + .inspector-button {
+    margin-top: 6px;
   }
   .inspector-button:disabled {
     color: var(--accent2);
@@ -575,11 +555,6 @@
     line-height: 1.7;
     overflow-wrap: anywhere;
     margin-bottom: 8px;
-  }
-  .move-buttons {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 6px;
   }
   .remove-step {
     margin-top: 20px;
