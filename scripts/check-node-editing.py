@@ -126,6 +126,52 @@ def main():
                     assert r["state"] == "succeeded" and taps() == before, (kind, r)
                 print("通过：所有普通节点均可独立测试，循环与控制节点不进入其他节点", flush=True)
 
+                def random_value(low, high):
+                    return {"random": {"min": low, "max": high}}
+
+                random_body = draft([node("random-tap", "tap", {"profiles": [profile], "count": random_value(2, 4),
+                    "interval": random_value(.001, .003), "after_wait": random_value(0, .001)})], "")
+                for _ in range(3):
+                    before = taps()
+                    r = finish(test(random_body, "random-tap")["id"])
+                    step = next(n["step"] for n in r["workflow"]["nodes"] if n["id"] == "random-tap")
+                    chosen = step["config"]["count"]
+                    assert r["state"] == "succeeded" and 2 <= chosen <= 4 and int(chosen) == chosen and taps() == before + chosen, r
+                    assert .001 <= step["config"]["interval"] <= .003
+                    assert r["random_fields"]["random-tap"]["count"] == {"min": 2, "max": 4}
+                random_body["nodes"][0]["config"]["count"] = random_value(4, 2)
+                before = taps()
+                test(random_body, "random-tap", expected=400)
+                assert taps() == before
+                loop_body = draft([node("loop", "loop", {"count": random_value(2, 3), "interval": 0}, {"body": "wait", "done": "end"}),
+                    node("wait", "wait", {"seconds": random_value(.001, .003)}, {"next": "continue"}),
+                    node("continue", "continue", {"loop": "loop"}), node("end", "end", {"result": "succeeded"})], "loop")
+                _, random_workflow = save(loop_body)
+                r = finish(call("/runs", "POST", {"workflow_id": random_workflow["id"], "device_id": "mock-phone"})["id"])
+                events = call("/runs/" + r["id"] + "/events")
+                samples = [e for e in events if e["message"].startswith("随机取值：")]
+                rounds = r["canvas_progress"]["loops"]["loop"]["ended"]
+                assert r["state"] == "succeeded" and 2 <= rounds <= 3
+                assert sum(e["node"] == "loop" for e in samples) == 1
+                assert sum(e["node"] == "wait" for e in samples) == rounds
+                print("通过：随机次数按区间执行，重复进入重新取值，循环轮数保持稳定，反向区间拒绝操作", flush=True)
+
+                paused = test(draft([node("random-wait", "wait", {"seconds": random_value(2, 2.2)})], ""), "random-wait")
+                helpers["wait"](lambda: record(paused["id"])["checkpoint"].get("wait_elapsed", 0) > .05)
+                call("/runs/" + paused["id"] + "/pause", "POST")
+                paused = helpers["wait"](lambda: next((r for r in [record(paused["id"])] if r["state"] == "paused"), None))
+                selected = next(n["step"]["config"]["seconds"] for n in paused["workflow"]["nodes"] if n["id"] == "random-wait")
+                stop(process, data)
+                process.wait(timeout=15)
+                process = subprocess.Popen([str(executable(ROOT / "target/debug/adb-studio"))], env=env, stdout=log, stderr=log)
+                helpers["wait"](lambda: call("/session"))
+                call("/runs/" + paused["id"] + "/resume", "POST")
+                r = finish(paused["id"])
+                assert next(n["step"]["config"]["seconds"] for n in r["workflow"]["nodes"] if n["id"] == "random-wait") == selected
+                assert sum(e["message"].startswith("随机取值：") for e in call("/runs/" + r["id"] + "/events")) == 1
+                assert r["state"] == "succeeded"
+                print("通过：暂停、服务重启与继续保留同一次随机结果，不重复抽取", flush=True)
+
                 exported = call("/workflows/" + workflow["id"] + "/export")
                 assert any(asset["id"] == capture + ".png" for asset in exported["assets"])
                 imported = call("/workflow-import", "POST", {"operation_id": str(uuid.uuid4()), "file": exported})

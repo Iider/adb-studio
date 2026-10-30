@@ -2,6 +2,7 @@ import {
   inputIssues,
   resolveNodes,
   isReference,
+  isRandom,
   type InputDefinition,
   type NumericValue,
 } from "./workflow-inputs.ts";
@@ -375,9 +376,11 @@ export function defaults(kind: Kind): Config {
 export function summary(data: CanvasData): string {
   const c = data.config;
   const show = (value: NumericValue | undefined) =>
-    isReference(value)
-      ? data.inputNames?.[value.input] || "变量"
-      : (value ?? 0);
+    isRandom(value)
+      ? `${value.random.min ?? "?"}～${value.random.max ?? "?"}`
+      : isReference(value)
+        ? data.inputNames?.[value.input] || "变量"
+        : (value ?? 0);
   switch (data.kind) {
     case "entry":
       return "从这里开始";

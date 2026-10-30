@@ -3,6 +3,7 @@
   import {
     compatible,
     isReference,
+    isRandom,
     inputOptionLabel,
     type InputDefinition,
   } from "$lib/workflow-inputs";
@@ -169,6 +170,18 @@
         : undefined,
     });
   }
+  function setRange(field: NumberField, key: "min" | "max", number: number) {
+    const current = c[field.key];
+    const range = isRandom(current)
+      ? current.random
+      : { min: field.min, max: field.min };
+    onConfig({
+      ...c,
+      [field.key]: {
+        random: { ...range, [key]: Number.isFinite(number) ? number : null },
+      },
+    });
+  }
   function setCondition(index: number, patch: Partial<Condition>) {
     onConfig({
       ...c,
@@ -233,14 +246,17 @@
   {#each fields.filter((field) => !field.percent) as field (field.key)}
     {@const current = c[field.key]}
     {@const reference = isReference(current) ? current.input : ""}
+    {@const random = isRandom(current)}
     <label
       >{field.label}
-      <div class="value-row">
+      <div class="value-row" class:variable={!!reference}>
         <Dropdown
+          class="parameter-source"
           label={`${field.label}来源`}
-          value={reference}
+          value={random ? "random" : reference}
           items={[
             { value: "", label: "固定值" },
+            { value: "random", label: "随机值" },
             ...inputs
               .filter((input) => compatible(input, field.key))
               .map((input) => ({
@@ -263,13 +279,49 @@
           onchange={(value) =>
             onConfig({
               ...c,
-              [field.key]: value
-                ? { input: value }
-                : (inputs.find((input) => input.id === reference)?.default ??
-                  (typeof current === "number" ? current : field.min)),
+              [field.key]:
+                value === "random"
+                  ? {
+                      random: {
+                        min: typeof current === "number" ? current : field.min,
+                        max: typeof current === "number" ? current : field.min,
+                      },
+                    }
+                  : value
+                    ? { input: value }
+                    : (inputs.find((input) => input.id === reference)
+                        ?.default ??
+                      (typeof current === "number"
+                        ? current
+                        : isRandom(current)
+                          ? (current.random.min ?? field.min)
+                          : field.min)),
             })}
         />
-        {#if reference}
+        {#if random && isRandom(current)}
+          <div class="random-range">
+            {#each ["min", "max"] as bound}
+              <input
+                type="number"
+                aria-label={`${field.label}${bound === "min" ? "最小值" : "最大值"}`}
+                placeholder={bound === "min" ? "最小值" : "最大值"}
+                min={field.min}
+                max={field.max}
+                step={field.key === "count" || field.key === "duration_ms"
+                  ? 1
+                  : 0.001}
+                value={current.random[bound as "min" | "max"] ?? ""}
+                oninput={(event) =>
+                  setRange(
+                    field,
+                    bound as "min" | "max",
+                    event.currentTarget.valueAsNumber,
+                  )}
+              />
+              {#if bound === "min"}<span aria-hidden="true">～</span>{/if}
+            {/each}
+          </div>
+        {:else if reference}
           <span class="inspector-hint"
             >默认值：{inputs.find((input) => input.id === reference)?.default ??
               "未填写"} · 运行时可修改</span
@@ -288,6 +340,11 @@
       </div>
     </label>
   {/each}
+  {#if fields.some((field) => isRandom(c[field.key]))}<p class="inspector-hint">
+      {kind === "loop"
+        ? "进入循环时随机一次，循环期间保持取值。"
+        : "每次进入此步骤随机一次，本次重复动作沿用取值。"}暂停继续不重新取值。
+    </p>{/if}
   {#if fields.length && !inputs.length}<p class="inspector-hint">
       如需运行时调整，请先在“开始”节点添加变量，再从字段下拉框选择引用。
     </p>{/if}
@@ -468,10 +525,30 @@
 <style>
   .value-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(90px, 0.8fr);
+    grid-template-columns: 90px minmax(0, 1fr);
     align-items: center;
     gap: 10px;
     margin-top: 6px;
+  }
+  .value-row.variable {
+    grid-template-columns: minmax(90px, 1fr) minmax(0, 1fr);
+  }
+  .value-row :global(.parameter-source) {
+    gap: 6px;
+    padding-inline: 8px;
+  }
+  .random-range {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+  }
+  .random-range input {
+    padding-inline: 8px;
+  }
+  .random-range span {
+    color: var(--dim);
   }
   .value-row input {
     min-width: 0;

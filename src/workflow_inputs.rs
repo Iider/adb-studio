@@ -143,6 +143,10 @@ pub fn resolve(workflow: &Workflow, overrides: &Values) -> Result<(Workflow, Val
         };
         let config = step.config.as_object_mut().context("步骤设置无效")?;
         for (key, value) in config.iter_mut() {
+            if let Some(range) = crate::random_values::parse(value, &step.kind, key)? {
+                *value = serde_json::json!(range.upper(&step.kind, key)?);
+                continue;
+            }
             let Some(id) = reference(value) else { continue };
             ensure!(
                 field_allowed(&step.kind, key),

@@ -39,3 +39,5 @@
 - 备份：`~/Library/Application Support/ADB Studio Backups/20261030-001905-node-editing/`。
 
 用户重点测试：原截图编辑与重新获取、克隆后单独改参数、单步不执行后续、缺值取消／确认、带孤儿节点保存运行。用户已确认验收通过。
+
+参数来源新增固定／随机选择，随机区间的两个输入框与来源同行，见[随机参数](random-parameters.md)。

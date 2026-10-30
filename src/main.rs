@@ -9,6 +9,7 @@ mod engine;
 mod legacy_cleanup;
 mod mirror;
 mod platform;
+mod random_values;
 mod recognition;
 mod run_control;
 mod schedule;

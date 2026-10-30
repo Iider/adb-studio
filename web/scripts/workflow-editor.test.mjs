@@ -394,3 +394,36 @@ test("clones preserve parameters and screenshots without inherited links or shar
     }
   }
 });
+
+test("随机区间检查上下限，次数上限按最大值计算，摘要保留区间", async () => {
+  const { randomError } = await import("../src/lib/workflow-inputs.ts");
+  const { summary } = await import("../src/lib/workflow-editor.ts");
+  const range = { random: { min: 2, max: 5 } };
+  assert.equal(randomError("tap", "count", range), "");
+  assert.ok(randomError("tap", "count", { random: { min: 1.5, max: 3 } }));
+  assert.ok(randomError("wait", "seconds", { random: { min: 4, max: 2 } }));
+  assert.ok(randomError("wait", "seconds", { random: { min: null, max: 2 } }));
+  assert.ok(
+    randomError("swipe", "duration_ms", { random: { min: 99, max: 120 } }),
+  );
+  assert.equal(
+    randomError("wait", "seconds", { random: { min: 0.15, max: 0.7 } }),
+    "",
+  );
+  const value = draft([
+    node("tap", "tap", { next: "end" }, { ...defaults("tap"), count: range }),
+    node("end", "end", {}, { result: "succeeded" }),
+  ]);
+  assert.equal(actionLimit(value), 5);
+  assert.match(
+    summary({
+      kind: "tap",
+      label: "点击",
+      targets: {},
+      config: value.nodes[0].config,
+    }),
+    /2～5/,
+  );
+  value.nodes[0].config.count = { random: { min: 6, max: 2 } };
+  assert.ok(checkGraph(value).some((issue) => /最小值/.test(issue.message)));
+});

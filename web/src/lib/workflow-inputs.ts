@@ -11,7 +11,39 @@ export type InputDefinition = {
   description?: string;
 };
 export type InputReference = { input: string };
-export type NumericValue = number | InputReference;
+export type RandomValue = {
+  random: { min: number | null; max: number | null };
+};
+export type NumericValue = number | InputReference | RandomValue;
+export function isRandom(value: unknown): value is RandomValue {
+  return !!value && typeof value === "object" && "random" in value;
+}
+export function randomError(
+  kind: string,
+  key: string,
+  value: RandomValue,
+): string {
+  const { min, max } = value.random;
+  if (
+    min == null ||
+    max == null ||
+    !Number.isFinite(min) ||
+    !Number.isFinite(max)
+  )
+    return "请填写随机区间的最小值和最大值";
+  if (min > max) return "随机最小值不能大于最大值";
+  const invalid = fieldError(kind, key, min) || fieldError(kind, key, max);
+  if (invalid) return invalid;
+  if (
+    key === "duration_ms" &&
+    (!Number.isInteger(min) || !Number.isInteger(max))
+  )
+    return "滑动时长请填写整数毫秒";
+  const scale = ["count", "duration_ms"].includes(key) ? 1 : 1000;
+  return Math.ceil(min * scale - 0.000001) > Math.floor(max * scale + 0.000001)
+    ? "区间内没有有效数值，时间精度为 0.001 秒"
+    : "";
+}
 export function inputLabel(input: InputDefinition) {
   return input.alias?.trim() || input.name.trim() || "未命名变量";
 }
@@ -104,6 +136,14 @@ export function inputIssues(
   }
   for (const node of nodes) {
     for (const [key, value] of Object.entries(node.config)) {
+      if (isRandom(value)) {
+        const error = !inputFields(node.kind).includes(key)
+          ? "此字段不支持随机值"
+          : randomError(node.kind, key, value);
+        if (error)
+          issues.push({ node: node.id, message: `${node.label}：${error}` });
+        continue;
+      }
       if (!isReference(value)) continue;
       const input = inputs.find((input) => input.id === value.input);
       const error = !input
@@ -134,11 +174,15 @@ export function resolveNodes(
     config: Object.fromEntries(
       Object.entries(node.config).map(([key, value]) => [
         key,
-        isReference(value)
-          ? (overrides[value.input] ??
-            inputs.find((input) => input.id === value.input)?.default ??
-            NaN)
-          : value,
+        isRandom(value)
+          ? value.random.max == null
+            ? NaN
+            : value.random.max
+          : isReference(value)
+            ? (overrides[value.input] ??
+              inputs.find((input) => input.id === value.input)?.default ??
+              NaN)
+            : value,
       ]),
     ),
   }));

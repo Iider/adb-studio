@@ -78,6 +78,7 @@ async fn start_locked(
     if single_step.is_none() {
         validate(&template)?;
     }
+    let random_fields = crate::random_values::fields(&template)?;
     let (w, inputs) = crate::workflow_inputs::resolve(&template, &overrides)?;
     if single_step.is_some() {
         crate::canvas::validate_test(&w)?;
@@ -129,6 +130,7 @@ async fn start_locked(
         }
     }
     let r = Run {
+        random_fields,
         node: single_step.clone().unwrap_or_else(|| w.entry.clone()),
         single_step,
         inputs,
@@ -384,7 +386,7 @@ async fn run_steps(app: &App, r: &mut Run) -> Result<&'static str> {
         if steps > 10000 {
             bail!("步骤执行超过上限")
         }
-        let n = r
+        let mut n = r
             .workflow
             .nodes
             .iter()
@@ -392,6 +394,7 @@ async fn run_steps(app: &App, r: &mut Run) -> Result<&'static str> {
             .cloned()
             .context("当前步骤不存在")?;
         app.event(r, &n.label).await?;
+        crate::random_values::prepare(app, r, &mut n).await?;
         let result = step(app, r, &n).await;
         match result {
             Ok(Some(state)) => return Ok(state),

@@ -17,6 +17,8 @@
 
 节点编辑、保留标注截图、右键克隆／删除、独立单步测试及孤立备用节点支持已通过用户验收并部署 Mac 本地服务 17841，见 `docs/workflow-node-editing-plan.md`。
 
+随机参数已通过用户验收并部署 Mac 本地服务 17841，见 `docs/random-parameters.md`。
+
 画布操作录制已通过用户验收并更新 Mac 正式服务 17841；范围与验收步骤见 `docs/workflow-recording.md`。
 
 Windows 本机部署、模拟检查及用户真机 Wi-Fi 连接、截图、投屏验收通过。安装、启动、停止、自启和 ZIP 使用见 `docs/deployment.md`。待完成：Mac 完整实机回归与完整 Linux 后台回归。

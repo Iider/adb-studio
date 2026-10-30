@@ -244,7 +244,8 @@ fn validate_config(config: &Value, kind: &str) -> anyhow::Result<()> {
             | "to_x" | "to_y" | "duration_ms" | "timeout" => {
                 value.is_number()
                     || (crate::workflow_inputs::field_allowed(kind, key)
-                        && crate::workflow_inputs::reference(value).is_some())
+                        && (crate::workflow_inputs::reference(value).is_some()
+                            || crate::random_values::is_spec(value)))
             }
             "mode" => matches!(value.as_str(), Some("all" | "any")),
             "result" => matches!(value.as_str(), Some("succeeded" | "needs_help")),
