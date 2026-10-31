@@ -134,7 +134,6 @@
       marked = false;
       captureId = undefined;
       capturedAt = undefined;
-      if (device) void capture();
     }
   }
   function position(event: PointerEvent): [number, number] {
@@ -220,10 +219,16 @@
     <button
       disabled={busy ||
         !devices.some((item) => item.id === device && item.online)}
-      onclick={capture}>{busy ? "正在取图…" : "重新获取"}</button
+      onclick={capture}
+      >{busy ? "正在取图…" : image ? "重新获取" : "获取界面"}</button
     >
   </div>
   {#if error}<p role="alert" class="error">{error}</p>{/if}
+  {#if !image}<p>
+      {device
+        ? "此手机还没有这份标注的截图，点击“获取界面”后再标注。"
+        : "请选择手机，再点击“获取界面”。"}
+    </p>{/if}
   {#if image && screen}
     <div class="picker-body">
       <button
