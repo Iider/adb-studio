@@ -13,19 +13,42 @@ use std::collections::BTreeMap;
 pub struct Range {
     pub min: f64,
     pub max: f64,
+    #[serde(default, skip_serializing_if = "Mode::is_visit")]
+    pub mode: Mode,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    #[default]
+    Visit,
+    Run,
+}
+impl Mode {
+    fn is_visit(&self) -> bool {
+        *self == Self::Visit
+    }
 }
 pub type Fields = BTreeMap<String, BTreeMap<String, Range>>;
+pub type Samples = BTreeMap<String, BTreeMap<String, f64>>;
 
 pub fn is_spec(value: &Value) -> bool {
     value.as_object().is_some_and(|object| {
         object.len() == 1
             && object.get("random").is_some_and(|range| {
                 range.as_object().is_some_and(|fields| {
-                    fields.len() == 2
+                    (2..=3).contains(&fields.len())
+                        && fields
+                            .keys()
+                            .all(|key| ["min", "max", "mode"].contains(&key.as_str()))
+                        && fields
+                            .get("mode")
+                            .is_none_or(|mode| matches!(mode.as_str(), Some("visit" | "run")))
                         && ["min", "max"].iter().all(|key| {
-                            fields
-                                .get(*key)
-                                .is_some_and(|n| n.is_number() || n.is_null())
+                            fields.get(*key).is_some_and(|n| {
+                                n.is_number()
+                                    || n.is_null()
+                                    || workflow_inputs::reference(n).is_some()
+                            })
                         })
                 })
             })
@@ -98,7 +121,13 @@ impl Range {
     }
 }
 
-pub fn parse(value: &Value, kind: &str, key: &str) -> Result<Option<Range>> {
+pub fn resolve(
+    value: &Value,
+    kind: &str,
+    key: &str,
+    inputs: &[workflow_inputs::Input],
+    values: &workflow_inputs::Values,
+) -> Result<Option<Range>> {
     if !value
         .as_object()
         .is_some_and(|object| object.contains_key("random"))
@@ -106,18 +135,32 @@ pub fn parse(value: &Value, kind: &str, key: &str) -> Result<Option<Range>> {
         return Ok(None);
     }
     ensure!(is_spec(value), "随机区间格式无效");
-    let range: Range = serde_json::from_value(value["random"].clone())
-        .context("请填写随机区间的最小值和最大值")?;
+    let mut resolved = value["random"].clone();
+    for bound in ["min", "max"] {
+        if let Some(id) = workflow_inputs::reference(&value["random"][bound]) {
+            let input = inputs
+                .iter()
+                .find(|input| input.id == id)
+                .context("随机区间引用的变量已不存在")?;
+            ensure!(
+                key != "count" || input.kind == "integer",
+                "随机次数的区间需使用整数变量"
+            );
+            resolved[bound] = json!(values.get(id).context("随机区间变量缺少数值")?);
+        }
+    }
+    let range: Range =
+        serde_json::from_value(resolved).context("请填写随机区间的最小值和最大值")?;
     range.bounds(kind, key)?;
     Ok(Some(range))
 }
 
-pub fn fields(workflow: &Workflow) -> Result<Fields> {
+pub fn fields(workflow: &Workflow, values: &workflow_inputs::Values) -> Result<Fields> {
     let mut result = Fields::new();
     for node in &workflow.nodes {
         if let Action::Canvas { step } = &node.action {
             for (key, value) in step.config.as_object().context("步骤设置无效")? {
-                if let Some(range) = parse(value, &step.kind, key)? {
+                if let Some(range) = resolve(value, &step.kind, key, &workflow.inputs, values)? {
                     result
                         .entry(node.id.clone())
                         .or_default()
@@ -144,7 +187,23 @@ pub async fn prepare(app: &App, run: &mut Run, node: &mut Node) -> Result<()> {
     }
     let mut messages = Vec::new();
     for (key, range) in fields {
-        let value = range.sample(&step.kind, &key)?;
+        let previous = run
+            .random_samples
+            .get(&node.id)
+            .and_then(|items| items.get(&key))
+            .copied();
+        let reused = range.mode == Mode::Run && previous.is_some();
+        let value = if reused {
+            previous.unwrap()
+        } else {
+            range.sample(&step.kind, &key)?
+        };
+        if range.mode == Mode::Run {
+            run.random_samples
+                .entry(node.id.clone())
+                .or_default()
+                .insert(key.clone(), value);
+        }
         step.config[&key] = json!(value);
         let label = match key.as_str() {
             "count" if step.kind == "loop" => "轮数",
@@ -156,7 +215,14 @@ pub async fn prepare(app: &App, run: &mut Run, node: &mut Node) -> Result<()> {
             "timeout" => "最长等待秒数",
             _ => &key,
         };
-        messages.push(format!("{label} {value}"));
+        let mode = if reused {
+            "沿用本次任务"
+        } else if range.mode == Mode::Run {
+            "本次任务固定"
+        } else {
+            "每次进入重抽"
+        };
+        messages.push(format!("{label} {value}（{mode}）"));
     }
     *run.workflow
         .nodes
@@ -173,6 +239,92 @@ pub async fn prepare(app: &App, run: &mut Run, node: &mut Node) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn parse(value: &Value, kind: &str, key: &str) -> Result<Option<Range>> {
+        resolve(value, kind, key, &[], &workflow_inputs::Values::new())
+    }
+
+    #[test]
+    fn old_ranges_default_to_visit_and_reject_unknown_modes() {
+        let old: Range = serde_json::from_value(json!({"min":2,"max":4})).unwrap();
+        assert_eq!(old.mode, Mode::Visit);
+        assert_eq!(
+            serde_json::to_value(old).unwrap(),
+            json!({"min":2.0,"max":4.0})
+        );
+        assert!(
+            parse(
+                &json!({"random":{"min":1,"max":2,"mode":"invalid"}}),
+                "tap",
+                "count"
+            )
+            .is_err()
+        );
+        assert_eq!(
+            parse(
+                &json!({"random":{"min":1,"max":2,"mode":"run"}}),
+                "tap",
+                "count"
+            )
+            .unwrap()
+            .unwrap()
+            .mode,
+            Mode::Run
+        );
+    }
+
+    #[test]
+    fn variable_bounds_use_values_and_validate_type_order_and_precision() {
+        let id = "00000000-0000-4000-8000-000000000001";
+        let mut inputs: Vec<workflow_inputs::Input> = serde_json::from_value(json!([
+            {"id":id,"name":"最小次数","type":"integer","default":2}
+        ]))
+        .unwrap();
+        let spec = json!({"random":{"min":{"input":id},"max":5,"mode":"run"}});
+        let range = resolve(
+            &spec,
+            "tap",
+            "count",
+            &inputs,
+            &workflow_inputs::Values::from([(id.into(), 3.)]),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!((range.min, range.max, range.mode), (3., 5., Mode::Run));
+        assert!(
+            resolve(
+                &spec,
+                "tap",
+                "count",
+                &inputs,
+                &workflow_inputs::Values::from([(id.into(), 6.)])
+            )
+            .is_err()
+        );
+        assert!(resolve(&spec, "tap", "count", &[], &workflow_inputs::Values::new()).is_err());
+        inputs[0].kind = "number".into();
+        assert!(
+            resolve(
+                &spec,
+                "tap",
+                "count",
+                &inputs,
+                &workflow_inputs::Values::from([(id.into(), 2.)])
+            )
+            .is_err()
+        );
+        let spec = json!({"random":{"min":{"input":id},"max":101}});
+        assert!(
+            resolve(
+                &spec,
+                "swipe",
+                "duration_ms",
+                &inputs,
+                &workflow_inputs::Values::from([(id.into(), 100.5)])
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     fn ranges_validate_endpoints_precision_and_equal_bounds() {
         for value in [
@@ -197,7 +349,11 @@ mod tests {
             ("wait", "seconds", 1.001, 1.005),
             ("wait", "seconds", 1.001, 1.001),
         ] {
-            let range = Range { min, max };
+            let range = Range {
+                min,
+                max,
+                mode: Mode::Visit,
+            };
             for _ in 0..100 {
                 let n = range.sample(kind, key).unwrap();
                 assert!((min..=max).contains(&n));

@@ -2,9 +2,11 @@ import {
   inputIssues,
   resolveNodes,
   isReference,
+  inputReferences,
   isRandom,
   type InputDefinition,
   type NumericValue,
+  type RandomBound,
 } from "./workflow-inputs.ts";
 import type { Node, Edge } from "@xyflow/svelte";
 
@@ -130,9 +132,7 @@ export function referencedInputs(
 ): InputDefinition[] {
   const ids = new Set(
     nodes.flatMap((node) =>
-      Object.values(node.config)
-        .filter(isReference)
-        .map((value) => value.input),
+      Object.values(node.config).flatMap(inputReferences),
     ),
   );
   return inputs.filter((input) => ids.has(input.id));
@@ -377,10 +377,14 @@ export function summary(data: CanvasData): string {
   const c = data.config;
   const show = (value: NumericValue | undefined) =>
     isRandom(value)
-      ? `${value.random.min ?? "?"}～${value.random.max ?? "?"}`
+      ? `${showBound(value.random.min)}～${showBound(value.random.max)}`
       : isReference(value)
         ? data.inputNames?.[value.input] || "变量"
         : (value ?? 0);
+  const showBound = (value: RandomBound) =>
+    isReference(value)
+      ? data.inputNames?.[value.input] || "变量"
+      : (value ?? "?");
   switch (data.kind) {
     case "entry":
       return "从这里开始";

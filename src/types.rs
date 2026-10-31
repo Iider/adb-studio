@@ -102,6 +102,8 @@ pub struct SampleCase {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Run {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub random_samples: crate::random_values::Samples,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub random_fields: crate::random_values::Fields,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub single_step: Option<String>,

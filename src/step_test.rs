@@ -22,7 +22,7 @@ pub fn workflow(draft: &Draft, node_id: &str, overrides: &Values) -> Result<Work
         .as_object()
         .into_iter()
         .flat_map(|c| c.values())
-        .filter_map(workflow_inputs::reference)
+        .flat_map(workflow_inputs::references)
         .collect();
     let mut inputs: Vec<_> = draft
         .inputs

@@ -4,6 +4,8 @@
     compatible,
     isReference,
     isRandom,
+    boundValue,
+    type RandomBound,
     inputOptionLabel,
     type InputDefinition,
   } from "$lib/workflow-inputs";
@@ -170,7 +172,11 @@
         : undefined,
     });
   }
-  function setRange(field: NumberField, key: "min" | "max", number: number) {
+  function setRange(
+    field: NumberField,
+    key: "min" | "max",
+    value: RandomBound,
+  ) {
     const current = c[field.key];
     const range = isRandom(current)
       ? current.random
@@ -178,9 +184,20 @@
     onConfig({
       ...c,
       [field.key]: {
-        random: { ...range, [key]: Number.isFinite(number) ? number : null },
+        random: { ...range, [key]: value },
       },
     });
+  }
+  function fixedValue(field: NumberField) {
+    const current = c[field.key];
+    const value = isRandom(current)
+      ? boundValue(current.random.min, inputs)
+      : isReference(current)
+        ? inputs.find((input) => input.id === current.input)?.default
+        : current;
+    return typeof value === "number" && Number.isFinite(value)
+      ? value
+      : field.min;
   }
   function setCondition(index: number, patch: Partial<Condition>) {
     onConfig({
@@ -300,36 +317,99 @@
                     }
                   : value
                     ? { input: value }
-                    : (inputs.find((input) => input.id === reference)
-                        ?.default ??
-                      (typeof current === "number"
-                        ? current
-                        : isRandom(current)
-                          ? (current.random.min ?? field.min)
-                          : field.min)),
+                    : fixedValue(field),
             })}
         />
         {#if random && isRandom(current)}
+          <Dropdown
+            label={`${field.label}取值方式`}
+            value={current.random.mode ?? "visit"}
+            items={[
+              { value: "run", label: "本次任务固定" },
+              { value: "visit", label: "每次进入重抽" },
+            ]}
+            onchange={(value) =>
+              onConfig({
+                ...c,
+                [field.key]: {
+                  random: { ...current.random, mode: value as "run" | "visit" },
+                },
+              })}
+          />
           <div class="random-range">
             {#each ["min", "max"] as bound}
-              <input
-                type="number"
-                aria-label={`${field.label}${bound === "min" ? "最小值" : "最大值"}`}
-                placeholder={bound === "min" ? "最小值" : "最大值"}
-                min={field.min}
-                max={field.max}
-                step={field.key === "count" || field.key === "duration_ms"
-                  ? 1
-                  : 0.001}
-                value={current.random[bound as "min" | "max"] ?? ""}
-                oninput={(event) =>
-                  setRange(
-                    field,
-                    bound as "min" | "max",
-                    event.currentTarget.valueAsNumber,
-                  )}
-              />
-              {#if bound === "min"}<span aria-hidden="true">～</span>{/if}
+              {@const key = bound as "min" | "max"}
+              {@const endpoint = current.random[key]}
+              {@const boundReference = isReference(endpoint)
+                ? endpoint.input
+                : ""}
+              {@const boundLabel = `${field.label}${key === "min" ? "最小值" : "最大值"}`}
+              <div class="random-bound">
+                <span>{key === "min" ? "最小值" : "最大值"}</span>
+                <Dropdown
+                  label={`${boundLabel}来源`}
+                  value={boundReference}
+                  items={[
+                    { value: "", label: "固定值" },
+                    ...inputs
+                      .filter((input) => compatible(input, field.key))
+                      .map((input) => ({
+                        value: input.id,
+                        label: `变量：${inputOptionLabel(input)}`,
+                      })),
+                    ...(boundReference &&
+                    !inputs.some(
+                      (input) =>
+                        input.id === boundReference &&
+                        compatible(input, field.key),
+                    )
+                      ? [
+                          {
+                            value: boundReference,
+                            label: "变量不存在或类型不匹配",
+                            disabled: true,
+                          },
+                        ]
+                      : []),
+                  ]}
+                  onchange={(value) =>
+                    setRange(
+                      field,
+                      key,
+                      value
+                        ? { input: value }
+                        : (inputs.find((input) => input.id === boundReference)
+                            ?.default ?? field.min),
+                    )}
+                />
+                {#if isReference(endpoint)}
+                  <span class="inspector-hint"
+                    >默认值：{inputs.find(
+                      (input) => input.id === endpoint.input,
+                    )?.default ?? "未填写"}</span
+                  >
+                {:else}
+                  <input
+                    type="number"
+                    aria-label={boundLabel}
+                    placeholder={key === "min" ? "最小值" : "最大值"}
+                    min={field.min}
+                    max={field.max}
+                    step={field.key === "count" || field.key === "duration_ms"
+                      ? 1
+                      : 0.001}
+                    value={endpoint ?? ""}
+                    oninput={(event) =>
+                      setRange(
+                        field,
+                        key,
+                        Number.isFinite(event.currentTarget.valueAsNumber)
+                          ? event.currentTarget.valueAsNumber
+                          : null,
+                      )}
+                  />
+                {/if}
+              </div>
             {/each}
           </div>
         {:else if reference}
@@ -353,8 +433,8 @@
   {/each}
   {#if fields.some((field) => isRandom(c[field.key]))}<p class="inspector-hint">
       {kind === "loop"
-        ? "进入循环时随机一次，循环期间保持取值。"
-        : "每次进入此步骤随机一次，本次重复动作沿用取值。"}暂停继续不重新取值。
+        ? "轮数和间隔在整段循环内保持不变。"
+        : "同次进入中的重复动作沿用取值。"}暂停继续不重抽；本次任务固定会在之后进入时沿用首次结果。
     </p>{/if}
   {#if fields.length && !inputs.length}<p class="inspector-hint">
       如需运行时调整，请先在“开始”节点添加变量，再从字段下拉框选择引用。
@@ -548,11 +628,21 @@
     gap: 6px;
     padding-inline: 8px;
   }
+  .value-row :global(.dropdown-trigger) {
+    min-width: 0;
+  }
   .random-range {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    align-items: center;
-    gap: 5px;
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    min-width: 0;
+  }
+  .random-bound {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
     min-width: 0;
   }
   .random-range input {

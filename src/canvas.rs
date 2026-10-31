@@ -129,7 +129,7 @@ fn compile_with_budget(draft: &Draft, enforce_budget: bool) -> Result<Workflow> 
                 .as_object()
                 .into_iter()
                 .flat_map(|c| c.values())
-                .filter_map(crate::workflow_inputs::reference)
+                .flat_map(crate::workflow_inputs::references)
         })
         .collect();
     executable

@@ -78,8 +78,8 @@ async fn start_locked(
     if single_step.is_none() {
         validate(&template)?;
     }
-    let random_fields = crate::random_values::fields(&template)?;
     let (w, inputs) = crate::workflow_inputs::resolve(&template, &overrides)?;
+    let random_fields = crate::random_values::fields(&template, &inputs)?;
     if single_step.is_some() {
         crate::canvas::validate_test(&w)?;
     } else {
@@ -130,6 +130,7 @@ async fn start_locked(
         }
     }
     let r = Run {
+        random_samples: Default::default(),
         random_fields,
         node: single_step.clone().unwrap_or_else(|| w.entry.clone()),
         single_step,

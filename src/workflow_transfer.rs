@@ -105,7 +105,7 @@ fn has_inputs(content: &Content) -> bool {
                     node.config.as_object().is_some_and(|config| {
                         config
                             .values()
-                            .any(|value| crate::workflow_inputs::reference(value).is_some())
+                            .any(|value| !crate::workflow_inputs::references(value).is_empty())
                     })
                 })
         })

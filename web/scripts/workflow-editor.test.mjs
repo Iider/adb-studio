@@ -427,3 +427,64 @@ test("随机区间检查上下限，次数上限按最大值计算，摘要保�
   value.nodes[0].config.count = { random: { min: 6, max: 2 } };
   assert.ok(checkGraph(value).some((issue) => /最小值/.test(issue.message)));
 });
+
+test("随机区间变量参与引用、覆盖输入、范围检查与节点摘要", async () => {
+  const { inputIssues, resolveNodes, randomError } =
+    await import("../src/lib/workflow-inputs.ts");
+  const { referencedInputs, summary } =
+    await import("../src/lib/workflow-editor.ts");
+  const low = "00000000-0000-4000-8000-000000000011";
+  const high = "00000000-0000-4000-8000-000000000012";
+  const inputs = [
+    { id: low, name: "低次数", alias: "最少", type: "integer", default: 2 },
+    { id: high, name: "高次数", type: "integer", default: 5 },
+  ];
+  const value = {
+    random: { min: { input: low }, max: { input: high }, mode: "run" },
+  };
+  const step = node(
+    "tap",
+    "tap",
+    { next: "end" },
+    { ...defaults("tap"), count: value },
+  );
+  assert.deepEqual(referencedInputs([step], inputs), inputs);
+  assert.deepEqual(inputIssues(inputs, [step]), []);
+  assert.equal(resolveNodes([step], inputs, { [high]: 7 })[0].config.count, 7);
+  assert.ok(
+    inputIssues(inputs, [step], { [low]: 8 }).some((issue) =>
+      /最小值/.test(issue.message),
+    ),
+  );
+  assert.ok(
+    inputIssues([inputs[0]], [step]).some((issue) =>
+      /不存在/.test(issue.message),
+    ),
+  );
+  assert.ok(
+    randomError("tap", "count", value, [
+      { ...inputs[0], type: "number" },
+      inputs[1],
+    ]),
+  );
+  assert.ok(
+    randomError("tap", "count", {
+      random: { min: 1, max: 2, mode: "invalid" },
+    }),
+  );
+  assert.match(
+    summary({
+      kind: "tap",
+      label: "点击",
+      targets: {},
+      config: step.config,
+      inputNames: { [low]: "最少", [high]: "高次数" },
+    }),
+    /最少～高次数/,
+  );
+  const graph = draft([step, node("end", "end", {}, { result: "succeeded" })]);
+  graph.inputs = inputs;
+  assert.deepEqual(checkGraph(graph), []);
+  assert.equal(actionLimit(graph), 5);
+  assert.deepEqual(graph.nodes[0].config.count, value);
+});

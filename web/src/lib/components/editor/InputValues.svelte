@@ -5,6 +5,9 @@
     inputError,
     inputLabel,
     isReference,
+    isRandom,
+    inputReferences,
+    randomError,
     type InputDefinition,
   } from "$lib/workflow-inputs";
   import type { DraftNode } from "$lib/workflow-editor";
@@ -26,7 +29,26 @@
     if (invalid) return invalid;
     for (const node of nodes)
       for (const [key, reference] of Object.entries(node.config)) {
-        if (!isReference(reference) || reference.input !== input.id) continue;
+        if (!inputReferences(reference).includes(input.id)) continue;
+        if (isRandom(reference)) {
+          const problem = randomError(
+            node.kind,
+            key,
+            reference,
+            inputs,
+            Object.fromEntries(
+              inputs.map((item) => [
+                item.id,
+                values[item.id]?.trim()
+                  ? Number(values[item.id])
+                  : (item.default ?? NaN),
+              ]),
+            ),
+          );
+          if (problem) return `${node.label}：${problem}`;
+          continue;
+        }
+        if (!isReference(reference)) continue;
         const problem = !compatible(input, key)
           ? "类型不匹配"
           : fieldError(node.kind, key, value!);

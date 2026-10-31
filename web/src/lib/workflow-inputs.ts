@@ -11,8 +11,9 @@ export type InputDefinition = {
   description?: string;
 };
 export type InputReference = { input: string };
+export type RandomBound = number | null | InputReference;
 export type RandomValue = {
-  random: { min: number | null; max: number | null };
+  random: { min: RandomBound; max: RandomBound; mode?: "visit" | "run" };
 };
 export type NumericValue = number | InputReference | RandomValue;
 export function isRandom(value: unknown): value is RandomValue {
@@ -22,8 +23,22 @@ export function randomError(
   kind: string,
   key: string,
   value: RandomValue,
+  inputs: InputDefinition[] = [],
+  overrides: Record<string, number> = {},
 ): string {
-  const { min, max } = value.random;
+  if (
+    value.random.mode != null &&
+    !["visit", "run"].includes(value.random.mode)
+  )
+    return "随机取值方式无效";
+  for (const bound of [value.random.min, value.random.max]) {
+    if (!isReference(bound)) continue;
+    const input = inputs.find((item) => item.id === bound.input);
+    if (!input) return "随机区间引用的变量已不存在";
+    if (!compatible(input, key)) return "随机区间变量类型不匹配";
+  }
+  const min = boundValue(value.random.min, inputs, overrides);
+  const max = boundValue(value.random.max, inputs, overrides);
   if (
     min == null ||
     max == null ||
@@ -44,6 +59,17 @@ export function randomError(
     ? "区间内没有有效数值，时间精度为 0.001 秒"
     : "";
 }
+export function boundValue(
+  bound: RandomBound,
+  inputs: InputDefinition[],
+  overrides: Record<string, number> = {},
+): number {
+  return isReference(bound)
+    ? (overrides[bound.input] ??
+        inputs.find((input) => input.id === bound.input)?.default ??
+        NaN)
+    : (bound ?? NaN);
+}
 export function inputLabel(input: InputDefinition) {
   return input.alias?.trim() || input.name.trim() || "未命名变量";
 }
@@ -60,6 +86,14 @@ export function isReference(value: unknown): value is InputReference {
     "input" in value &&
     typeof value.input === "string"
   );
+}
+export function inputReferences(value: unknown): string[] {
+  if (isReference(value)) return [value.input];
+  return isRandom(value)
+    ? [value.random.min, value.random.max]
+        .filter(isReference)
+        .map((bound) => bound.input)
+    : [];
 }
 export function normalizeInputs(inputs: InputDefinition[]): InputDefinition[] {
   // 旧浏览器恢复副本可能带 unit，丢弃旧字段但不换算数值。
@@ -139,7 +173,7 @@ export function inputIssues(
       if (isRandom(value)) {
         const error = !inputFields(node.kind).includes(key)
           ? "此字段不支持随机值"
-          : randomError(node.kind, key, value);
+          : randomError(node.kind, key, value, inputs, overrides);
         if (error)
           issues.push({ node: node.id, message: `${node.label}：${error}` });
         continue;
@@ -175,9 +209,7 @@ export function resolveNodes(
       Object.entries(node.config).map(([key, value]) => [
         key,
         isRandom(value)
-          ? value.random.max == null
-            ? NaN
-            : value.random.max
+          ? boundValue(value.random.max, inputs, overrides)
           : isReference(value)
             ? (overrides[value.input] ??
               inputs.find((input) => input.id === value.input)?.default ??

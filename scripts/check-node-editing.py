@@ -210,7 +210,45 @@ def main():
                 assert sum(e["node"] == "wait" for e in samples) == rounds
                 print("通过：随机次数按区间执行，重复进入重新取值，循环轮数保持稳定，反向区间拒绝操作", flush=True)
 
-                paused = test(draft([node("random-wait", "wait", {"seconds": random_value(2, 2.2)})], ""), "random-wait")
+                lower, upper = str(uuid.uuid4()), str(uuid.uuid4())
+                bound_inputs = [{"id": lower, "name": "下限", "type": "integer", "default": 2},
+                                {"id": upper, "name": "上限", "type": "integer", "default": 4}]
+                fixed_count = {"random": {"min": {"input": lower}, "max": {"input": upper}, "mode": "run"}}
+                mixed = draft([
+                    node("mixed-loop", "loop", {"count": 3, "interval": 0}, {"body": "mixed-tap", "done": "mixed-end"}),
+                    node("mixed-tap", "tap", {"profiles": [profile], "count": fixed_count,
+                        "interval": {"random": {"min": .001, "max": .003, "mode": "visit"}}}, {"next": "mixed-next"}),
+                    node("mixed-next", "continue", {"loop": "mixed-loop"}),
+                    node("mixed-end", "end", {"result": "succeeded"})], "mixed-loop", bound_inputs)
+                _, mixed_workflow = save(mixed)
+                assert {item["id"] for item in mixed_workflow["inputs"]} == {lower, upper}
+                before = taps()
+                r = finish(call("/runs", "POST", {"workflow_id": mixed_workflow["id"], "device_id": "mock-phone"})["id"])
+                chosen = r["random_samples"]["mixed-tap"]["count"]
+                assert r["state"] == "succeeded" and 2 <= chosen <= 4 and taps() == before + 3 * chosen, r
+                assert "interval" not in r["random_samples"]["mixed-tap"]
+                events = call("/runs/" + r["id"] + "/events")
+                samples = [e["message"] for e in events if e["node"] == "mixed-tap" and e["message"].startswith("随机取值：")]
+                assert len(samples) == 3 and sum("沿用本次任务" in text for text in samples) == 2, samples
+                assert all("每次进入重抽" in text for text in samples)
+                before = taps()
+                r = finish(call("/runs", "POST", {"workflow_id": mixed_workflow["id"], "device_id": "mock-phone", "inputs": {lower: 5, upper: 5}})["id"])
+                assert r["state"] == "succeeded" and r["random_samples"]["mixed-tap"]["count"] == 5 and taps() == before + 15, r
+                before = taps()
+                call("/runs", "POST", {"workflow_id": mixed_workflow["id"], "device_id": "mock-phone", "inputs": {lower: 6, upper: 5}}, expected=400)
+                assert taps() == before
+                isolated = draft([node("bound-tap", "tap", {"profiles": [profile], "count": fixed_count, "interval": 0})], "", [{**item, "default": None} for item in bound_inputs])
+                test(isolated, "bound-tap", expected=400)
+                r = finish(test(isolated, "bound-tap", {lower: 2, upper: 2})["id"])
+                assert r["state"] == "succeeded" and taps() == before + 2 and r["random_samples"]["bound-tap"]["count"] == 2, r
+                transferred = call("/workflows/" + mixed_workflow["id"] + "/export")
+                copied_workflow = call("/workflow-import", "POST", {"operation_id": str(uuid.uuid4()), "file": transferred})
+                copied_draft = call("/workflow-drafts/" + copied_workflow["draft_id"])
+                assert next(n for n in copied_draft["nodes"] if n["id"] == "mixed-tap")["config"]["count"] == fixed_count
+                assert {item["id"] for item in copied_draft["inputs"]} == {lower, upper}
+                print("通过：变量区间保留引用、运行覆盖与单步缺值校验；任务固定值跨三轮沿用、间隔每轮重抽，新任务不共享缓存，导入导出保留模式", flush=True)
+
+                paused = test(draft([node("random-wait", "wait", {"seconds": {"random": {"min": 2, "max": 2.2, "mode": "run"}}})], ""), "random-wait")
                 helpers["wait"](lambda: record(paused["id"])["checkpoint"].get("wait_elapsed", 0) > .05)
                 call("/runs/" + paused["id"] + "/pause", "POST")
                 paused = helpers["wait"](lambda: next((r for r in [record(paused["id"])] if r["state"] == "paused"), None))
@@ -224,7 +262,8 @@ def main():
                 assert next(n["step"]["config"]["seconds"] for n in r["workflow"]["nodes"] if n["id"] == "random-wait") == selected
                 assert sum(e["message"].startswith("随机取值：") for e in call("/runs/" + r["id"] + "/events")) == 1
                 assert r["state"] == "succeeded"
-                print("通过：暂停、服务重启与继续保留同一次随机结果，不重复抽取", flush=True)
+                assert r["random_samples"]["random-wait"]["seconds"] == selected
+                print("通过：暂停、服务重启与继续保留同一次随机结果及任务固定缓存，不重复抽取", flush=True)
 
                 exported = call("/workflows/" + workflow["id"] + "/export")
                 assert any(asset["id"] == capture + ".png" for asset in exported["assets"])

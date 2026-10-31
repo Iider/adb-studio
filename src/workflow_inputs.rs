@@ -33,6 +33,16 @@ pub fn reference(value: &Value) -> Option<&str> {
     object.get("input")?.as_str()
 }
 
+pub fn references(value: &Value) -> Vec<&str> {
+    if let Some(id) = reference(value) {
+        return vec![id];
+    }
+    ["min", "max"]
+        .iter()
+        .filter_map(|bound| reference(&value["random"][*bound]))
+        .collect()
+}
+
 pub fn field_allowed(kind: &str, key: &str) -> bool {
     match kind {
         "loop" => matches!(key, "count" | "interval"),
@@ -143,7 +153,9 @@ pub fn resolve(workflow: &Workflow, overrides: &Values) -> Result<(Workflow, Val
         };
         let config = step.config.as_object_mut().context("步骤设置无效")?;
         for (key, value) in config.iter_mut() {
-            if let Some(range) = crate::random_values::parse(value, &step.kind, key)? {
+            if let Some(range) =
+                crate::random_values::resolve(value, &step.kind, key, &workflow.inputs, &values)?
+            {
                 *value = serde_json::json!(range.upper(&step.kind, key)?);
                 continue;
             }
@@ -203,6 +215,27 @@ mod tests {
             ]
         })).unwrap()
     }
+    #[test]
+    fn bounds_only_references_survive_compile_and_use_run_overrides() {
+        let mut draft = draft();
+        let id = draft.inputs[0].id.clone();
+        draft.nodes[0].config =
+            json!({"seconds":{"random":{"min":{"input":id},"max":5,"mode":"run"}}});
+        let workflow = canvas::compile(&draft).unwrap();
+        assert_eq!(workflow.inputs.len(), 1);
+        let (resolved, values) = resolve(&workflow, &Values::from([(id.clone(), 3.)])).unwrap();
+        let Action::Canvas { step } = &resolved.nodes[0].action else {
+            panic!()
+        };
+        assert_eq!(step.config["seconds"], json!(5.));
+        let ranges = crate::random_values::fields(&workflow, &values).unwrap();
+        assert_eq!(ranges["wait"]["seconds"].min, 3.);
+        assert!(resolve(&workflow, &Values::from([(id.clone(), 6.)])).is_err());
+        draft.nodes[0].config = json!({"seconds":{"random":{"min":1,"max":{"input":id}}}});
+        let workflow = canvas::compile(&draft).unwrap();
+        assert!(resolve(&workflow, &Values::from([(id, 0.)])).is_err());
+    }
+
     #[test]
     fn aliases_are_optional_preserved_and_do_not_change_references() {
         let mut draft = draft();

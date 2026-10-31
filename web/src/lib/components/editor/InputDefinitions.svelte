@@ -5,7 +5,7 @@
   import {
     inputError,
     inputLabel,
-    isReference,
+    inputReferences,
     type InputDefinition,
   } from "$lib/workflow-inputs";
   import type { CanvasNode } from "$lib/workflow-editor";
@@ -31,8 +31,8 @@
   function references(id: string) {
     return nodes
       .filter((node) =>
-        Object.values(node.data.config).some(
-          (value) => isReference(value) && value.input === id,
+        Object.values(node.data.config).some((value) =>
+          inputReferences(value).includes(id),
         ),
       )
       .map((node) => node.data.label);
