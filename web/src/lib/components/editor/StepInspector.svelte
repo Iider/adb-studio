@@ -9,7 +9,7 @@
   } from "$lib/workflow-inputs";
   import ConditionSamples from "./ConditionSamples.svelte";
   import Dropdown from "$lib/components/ui/dropdown/dropdown.svelte";
-  import { Plus, Trash2, Play } from "@lucide/svelte";
+  import { Plus, Pencil, Trash2, Play } from "@lucide/svelte";
   import {
     newCondition,
     type CanvasNode,
@@ -221,22 +221,33 @@
       >在手机截图上标注{kind === "tap" ? "位置" : "路线"}</button
     >
     {#each c.profiles ?? [] as profile, index}
+      {@const deviceName = deviceNames[profile.device_id] ?? profile.device_id}
       <div class="profile-card">
         <p>
-          {deviceNames[profile.device_id] ?? profile.device_id}<br />屏幕 {profile.width}
+          {deviceName}<br />屏幕 {profile.width}
           × {profile.height}
         </p>
-        <button class="inspector-button" onclick={() => onMark(profile)}
-          >编辑此标注</button
-        >
-        <button
-          class="inspector-button danger"
-          onclick={() =>
-            onConfig({
-              ...c,
-              profiles: c.profiles?.filter((_, i) => i !== index),
-            })}>移除此标注</button
-        >
+        <div class="profile-actions">
+          <button
+            type="button"
+            class="profile-action"
+            title="编辑此标注"
+            aria-label={`编辑${deviceName}的标注`}
+            onclick={() => onMark(profile)}
+            ><Pencil size={16} aria-hidden="true" /></button
+          >
+          <button
+            type="button"
+            class="profile-action danger"
+            title="移除此标注"
+            aria-label={`移除${deviceName}的标注`}
+            onclick={() =>
+              onConfig({
+                ...c,
+                profiles: c.profiles?.filter((_, i) => i !== index),
+              })}><Trash2 size={16} aria-hidden="true" /></button
+          >
+        </div>
       </div>
     {/each}
     {#if !c.profiles?.length}<p class="inspector-hint">
@@ -622,16 +633,52 @@
     color: var(--red);
   }
   .profile-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     border: 1px solid var(--line);
     border-radius: 8px;
     padding: 10px;
     margin: 12px 0;
   }
   .profile-card p {
+    flex: 1;
+    min-width: 0;
     font-size: 12px;
     line-height: 1.7;
     overflow-wrap: anywhere;
-    margin-bottom: 8px;
+    margin: 0;
+  }
+  .profile-actions {
+    display: flex;
+    flex: none;
+    gap: 8px;
+  }
+  .profile-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--dim);
+  }
+  .profile-action:hover {
+    color: var(--accent2);
+    background: var(--accentsoft);
+  }
+  .profile-action.danger,
+  .profile-action.danger:hover {
+    color: var(--red);
+  }
+  @media (pointer: coarse) {
+    .profile-action {
+      width: 44px;
+      height: 44px;
+    }
   }
   .remove-step {
     margin-top: 20px;
