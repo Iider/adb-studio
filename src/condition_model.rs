@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
     io::Cursor,
+    time::Instant,
 };
 
 #[derive(Deserialize)]
@@ -20,6 +21,25 @@ struct Decision {
     choice: String,
     reason: String,
     confidence: f64,
+}
+
+impl Answer {
+    fn diagnostics(&self) -> Value {
+        json!({
+            "result_count": self.results.len(),
+            "results": self.results.iter().take(16).map(|result| json!({
+                "index": result.index,
+                "choice": match result.choice.as_str() {
+                    "yes" | "no" | "unknown" => result.choice.as_str(),
+                    _ => "invalid",
+                },
+                "confidence": result.confidence,
+                "reason_bytes": result.reason.len(),
+                "reason_chars": result.reason.chars().count(),
+                "reason_blank": result.reason.trim().is_empty(),
+            })).collect::<Vec<_>>(),
+        })
+    }
 }
 
 pub struct Observation {
@@ -86,21 +106,28 @@ fn inputs(
     Ok((images, rules))
 }
 
-fn decisions(answer: Answer, expected: &HashSet<usize>) -> Result<(Observation, Vec<String>)> {
+fn decisions(answer: &Answer, expected: &HashSet<usize>) -> Result<(Observation, Vec<String>)> {
     ensure!(
         answer.results.len() == expected.len(),
         "模型返回的条件数量不完整"
     );
     let mut values = HashMap::new();
     let mut messages = Vec::new();
-    for result in answer.results {
+    for result in &answer.results {
         ensure!(
             expected.contains(&result.index) && !values.contains_key(&result.index),
             "模型返回了重复或未声明的条件"
         );
         ensure!(
-            !result.reason.trim().is_empty() && result.reason.len() <= 2000,
-            "模型缺少简短的判断依据"
+            !result.reason.trim().is_empty(),
+            "模型判断依据为空（条件 {}）",
+            result.index + 1
+        );
+        ensure!(
+            result.reason.len() <= 2000,
+            "模型判断依据过长（条件 {}，{} 字节，上限 2000 字节）",
+            result.index + 1,
+            result.reason.len()
         );
         ensure!(
             result.confidence.is_finite() && (0.0..=1.).contains(&result.confidence),
@@ -163,8 +190,28 @@ pub async fn observe(
     app.event(run, &format!("模型判断：第 {} 次调用", run.model_calls))
         .await?;
     let images: Vec<&[u8]> = images.iter().map(Vec::as_slice).collect();
-    let answer = recognition::request_json(app, &settings, &images, &prompt, 4096).await?;
-    let (observation, messages) = decisions(answer, &expected)?;
+    let started = Instant::now();
+    let log_failure = |stage: &str, error: &anyhow::Error, answer: Option<&Answer>| {
+        let diagnostics = answer.map(Answer::diagnostics).unwrap_or(Value::Null);
+        tracing::warn!(
+            run_id = %run.id,
+            workflow_id = %run.workflow.id,
+            node_id = %step.id,
+            device_id = %run.device_id,
+            model_call = run.model_calls,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            stage,
+            error = %error,
+            expected_count = expected.len(),
+            %diagnostics,
+            "模型条件判断失败"
+        );
+    };
+    let answer: Answer = recognition::request_json(app, &settings, &images, &prompt, 4096)
+        .await
+        .inspect_err(|error| log_failure("request", error, None))?;
+    let (observation, messages) = decisions(&answer, &expected)
+        .inspect_err(|error| log_failure("validation", error, Some(&answer)))?;
     for message in messages {
         app.event(run, &message).await?;
     }
@@ -179,15 +226,15 @@ mod tests {
     fn refuses_missing_repeated_and_foreign_results() {
         let answer = |value| serde_json::from_value::<Answer>(value).unwrap();
         let decision = json!({"index":0,"choice":"yes","reason":"区域中可见奖励","confidence":1.0});
-        assert!(decisions(answer(json!({"results":[]})), &HashSet::from([0])).is_err());
+        assert!(decisions(&answer(json!({"results":[]})), &HashSet::from([0])).is_err());
         assert!(
             decisions(
-                answer(json!({"results":[decision.clone(),decision.clone()]})),
+                &answer(json!({"results":[decision.clone(),decision.clone()]})),
                 &HashSet::from([0, 1])
             )
             .is_err()
         );
-        assert!(decisions(answer(json!({"results":[decision]})), &HashSet::from([1])).is_err());
+        assert!(decisions(&answer(json!({"results":[decision]})), &HashSet::from([1])).is_err());
         assert!(
             serde_json::from_value::<Answer>(json!({"results":[{"index":0,"choice":"no"}]}))
                 .is_err()
@@ -207,13 +254,61 @@ mod tests {
             ("unknown", 0.5, Some(false)),
         ] {
             let answer: Answer = serde_json::from_value(json!({"results":[{"index":0,"choice":choice,"reason":"截图依据","confidence":confidence}]})).unwrap();
-            let (result, messages) = decisions(answer, &HashSet::from([0])).unwrap();
+            let (result, messages) = decisions(&answer, &HashSet::from([0])).unwrap();
             assert_eq!(result.values[&0], expected);
             assert_eq!(
                 messages[0].contains("未可靠确认"),
                 choice == "unknown" || confidence < 0.85
             );
         }
+    }
+
+    #[test]
+    fn reason_errors_distinguish_blank_and_byte_limit() {
+        for (reason, error) in [
+            (String::new(), Some("依据为空")),
+            (" \n\t".into(), Some("依据为空")),
+            ("a".repeat(2000), None),
+            ("a".repeat(2001), Some("2001 字节")),
+            ("中".repeat(667), Some("2001 字节")),
+        ] {
+            let answer = Answer {
+                results: vec![Decision {
+                    index: 0,
+                    choice: "yes".into(),
+                    reason,
+                    confidence: 1.,
+                }],
+            };
+            let result = decisions(&answer, &HashSet::from([0]));
+            if let Some(error) = error {
+                assert!(result.err().unwrap().to_string().contains(error));
+            } else {
+                assert!(result.is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn diagnostics_bound_results_and_exclude_model_text() {
+        let answer = Answer {
+            results: (0..20)
+                .map(|index| Decision {
+                    index,
+                    choice: "private-choice\nforged-log".into(),
+                    reason: "private-reason".into(),
+                    confidence: 0.9,
+                })
+                .collect(),
+        };
+        let diagnostic = answer.diagnostics();
+        assert_eq!(diagnostic["result_count"], 20);
+        assert_eq!(diagnostic["results"].as_array().unwrap().len(), 16);
+        assert_eq!(diagnostic["results"][0]["choice"], "invalid");
+        assert_eq!(diagnostic["results"][0]["reason_bytes"], 14);
+        assert_eq!(diagnostic["results"][0]["reason_blank"], false);
+        assert!(!diagnostic.to_string().contains("private"));
+        assert!(!diagnostic.to_string().contains("forged-log"));
     }
 
     #[test]

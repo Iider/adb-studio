@@ -52,6 +52,15 @@ class Model(http.server.BaseHTTPRequestHandler):
                     "reason": "局部截图无法确认" if mode == "unknown" else "模拟选区判断", "confidence": 0.3 if mode in ["low", "low_no"] else 1} for rule in rules]
         if mode == "missing":
             results = []
+        for result in results:
+            if mode == "blank_reason":
+                result["reason"] = " \n\t"
+            elif mode == "long_reason":
+                result["reason"] = "private-model-reason" + "中" * 667
+            elif mode == "invalid_choice":
+                result["choice"] = "private-model-choice\nforged-log"
+            elif mode == "missing_reason":
+                del result["reason"]
         raw = "not-json" if mode == "malformed" else json.dumps({"results": results})
         data = {"status": "incomplete" if mode == "truncated" else "completed", "output": [{"content": [{"text": raw}]}]} if "input" in body else {"choices": [{"finish_reason": "stop", "message": {"content": raw}}]}
         try:
@@ -196,6 +205,34 @@ print(json.dumps([{"text":"奖励","x":100,"y":100,"confidence":1}]))
                 Model.mode = mode
                 r = run(flow())
                 assert r["state"] == "needs_help" and r["node"] == "c" and r["model_calls"] == 1 and reason in r["reason"], r
+                failure = next(line for line in (data / "server.log").read_text(encoding="utf-8").splitlines()
+                               if r["id"] in line and "模型条件判断失败" in line)
+                assert ('stage="validation"' if mode == "missing" else 'stage="request"') in failure, failure
+            for api in ["responses", "chat_completions"]:
+                settings(api)
+                for mode, reason in [("blank_reason", "依据为空"), ("long_reason", "依据过长"),
+                                     ("invalid_choice", "未声明的判断结果"), ("missing_reason", "格式错误")]:
+                    Model.mode = mode
+                    count = len(Model.calls)
+                    r = run(flow())
+                    assert r["state"] == "needs_help" and r["node"] == "c" and r["model_calls"] == 1 and reason in r["reason"], r
+                    assert len(Model.calls) == count + 1
+                    failure = next(line for line in (data / "server.log").read_text(encoding="utf-8").splitlines()
+                                   if r["id"] in line and "模型条件判断失败" in line)
+                    for field in [r["workflow"]["id"], "node_id=c", "device_id=mock-phone", "model_call=1", "elapsed_ms="]:
+                        assert field in failure, failure
+                    if mode != "missing_reason":
+                        assert '"reason_bytes":' in failure and '"confidence":1.0' in failure, failure
+                    if mode == "blank_reason":
+                        assert '"reason_blank":true' in failure, failure
+                    if mode == "long_reason":
+                        assert "2021 字节" in failure and '"reason_chars":687' in failure, failure
+                    if mode == "invalid_choice":
+                        assert '"choice":"invalid"' in failure, failure
+            logs = (data / "server.log").read_text(encoding="utf-8")
+            assert not any(text in logs for text in ["private-model-reason", "private-model-choice", "forged-log", "test-only", "data:image"])
+            settings()
+            print("通过：两种接口的空依据、超长依据及格式错误均停止并记录诊断，不自动重试；日志不含模型原文或密钥", flush=True)
             assert ocr_calls() == before_ocr
             print("通过：两种接口的否定、未知与低可信均走不符合，包含与不包含均不反转结果；鉴权、格式与截断失败仍请求处理", flush=True)
             Model.mode = "unknown"
