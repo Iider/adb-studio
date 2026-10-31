@@ -487,48 +487,19 @@ export function edgesFor(
   selected = "",
 ): Edge[] {
   const ids = new Set(nodes.map((node) => node.id));
-  const connected = new Set([
-    entry,
-    ...nodes
-      .filter((node) => Object.keys(node.data.targets).length)
-      .flatMap((node) => [node.id, ...Object.values(node.data.targets)]),
-  ]);
   return nodes.flatMap((node) => {
     const targets = node.id === "__entry" ? { next: entry } : node.data.targets;
-    const links = Object.entries(targets).map(([port, target]) => ({
-      port,
-      target,
-      association: false,
-    }));
-    if (
-      ["break", "continue"].includes(node.data.kind) &&
-      connected.has(node.id) &&
-      node.data.config.loop
-    ) {
-      const loop = nodes.find(
-        (item) =>
-          item.id === node.data.config.loop && item.data.kind === "loop",
-      );
-      const target =
-        node.data.kind === "continue" ? loop?.id : loop?.data.targets.done;
-      if (target) links.push({ port: "control", target, association: true });
-    }
-    return links
-      .filter((link) => link.target && ids.has(link.target))
-      .map((link) => ({
-        id: `${node.id}:${link.port}`,
+    return Object.entries(targets)
+      .filter(([, target]) => target && ids.has(target))
+      .map(([port, target]) => ({
+        id: `${node.id}:${port}`,
         source: node.id,
-        target: link.target,
-        sourceHandle: link.port,
-        selected: selected === `${node.id}:${link.port}`,
-        label: link.association
-          ? node.data.kind === "continue"
-            ? "下一轮"
-            : "退出循环"
-          : ports(node.data.kind).find((port) => port.id === link.port)?.label,
+        target,
+        sourceHandle: port,
+        selected: selected === `${node.id}:${port}`,
+        label: ports(node.data.kind).find((item) => item.id === port)?.label,
         type: "smoothstep",
-        deletable: !link.association,
-        style: link.association ? "stroke-dasharray: 5 4" : undefined,
+        deletable: true,
         markerEnd: { type: "arrowclosed" as const },
       }));
   });

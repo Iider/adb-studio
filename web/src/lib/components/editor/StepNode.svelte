@@ -97,14 +97,6 @@
         />
       {/each}
     </div>
-  {:else if data.kind === "break" || data.kind === "continue"}
-    <Handle
-      type="source"
-      id="control"
-      position={Position.Bottom}
-      isConnectable={false}
-      aria-label="所属循环控制的去向"
-    />
   {/if}
 </div>
 

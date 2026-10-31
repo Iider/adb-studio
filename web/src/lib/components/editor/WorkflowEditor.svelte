@@ -1324,12 +1324,9 @@
             <p class="settings-hint">
               {edges.find((edge) => edge.id === selectedEdge)?.label}
             </p>
-            {#if edges.find((edge) => edge.id === selectedEdge)?.deletable}<button
-                class="editor-button danger"
-                onclick={removeEdge}><Trash2 size={16} />删除这条连线</button
-              >{:else}<p class="settings-hint">
-                此连线由所属循环决定，可在步骤设置中修改所属循环。
-              </p>{/if}
+            <button class="editor-button danger" onclick={removeEdge}
+              ><Trash2 size={16} />删除这条连线</button
+            >
           {:else}
             <label
               >工作流说明<textarea
