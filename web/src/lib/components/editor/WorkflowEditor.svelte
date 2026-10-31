@@ -1434,7 +1434,6 @@
     draft={snapshot()}
     node={testNode}
     {devices}
-    initialDevice={deviceId}
     onclose={() => {
       testNode = null;
       showProgress("");

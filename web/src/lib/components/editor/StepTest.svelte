@@ -20,14 +20,12 @@
     draft,
     node,
     devices,
-    initialDevice,
     onclose,
     onstate,
   }: {
     draft: Draft;
     node: DraftNode;
     devices: Device[];
-    initialDevice: string;
     onclose: () => void;
     onstate: (id: string) => void;
   } = $props();
@@ -40,6 +38,10 @@
   let events = $state<Event[]>([]);
   let working = $state(false);
   let error = $state("");
+  const deviceStorageKey = "adb-studio-step-test-device";
+  const deviceAvailable = $derived(
+    devices.some((item) => item.id === device && item.online),
+  );
   const problems = $derived(
     inputIssues(inputs, [node], parseInputValues(inputs, values)),
   );
@@ -59,6 +61,7 @@
     working = true;
     error = "";
     try {
+      if (!deviceAvailable) throw new Error("请选择在线手机");
       if (problems.length) throw new Error(problems[0].message);
       run = await api<Run>("/editor/test-step", "POST", {
         draft,
@@ -82,18 +85,29 @@
       error = e instanceof Error ? e.message : "停止失败";
     }
   }
+  function rememberDevice(value: string) {
+    try {
+      localStorage.setItem(deviceStorageKey, value);
+    } catch {
+      // 浏览器禁用存储时，仍允许手动选择手机。
+    }
+  }
+  function previousDevice() {
+    try {
+      const previous = localStorage.getItem(deviceStorageKey);
+      return devices.find((item) => item.id === previous && item.online)?.id ?? "";
+    } catch {
+      return "";
+    }
+  }
+  function prepareAgain() {
+    run = null;
+    events = [];
+    error = "";
+  }
   onMount(() => {
-    const profiles = node.config.profiles;
-    device =
-      initialDevice ||
-      devices.find(
-        (item) =>
-          item.online &&
-          (!profiles?.length || profiles.some((p) => p.device_id === item.id)),
-      )?.id ||
-      "";
+    device = previousDevice();
     dialog.showModal();
-    if (!missing.length && device && !problems.length) void execute();
     const timer = setInterval(() => {
       if (run && busy(run) && !working)
         void refresh().catch((e) => (error = e.message));
@@ -117,7 +131,10 @@
     <label
       >目标手机<Dropdown
         label="单步测试目标手机"
+        placeholder="请选择目标手机"
+        disabled={working}
         bind:value={device}
+        onchange={rememberDevice}
         items={devices.map((item) => ({
           value: item.id,
           label: item.name,
@@ -137,14 +154,14 @@
       </p>{/if}
     <button
       class="primary"
-      disabled={working || !device || !!problems.length}
+      disabled={working || !deviceAvailable || !!problems.length}
       onclick={execute}>{working ? "正在执行…" : "确认执行"}</button
     >
   {:else}
     <p class="status">{runLabel(run)} · {run.reason}</p>
     {#if busy(run)}<button onclick={stop}>停止测试</button>{:else}<button
         disabled={working}
-        onclick={execute}>再次执行此步骤</button
+        onclick={prepareAgain}>再次执行此步骤</button
       >{/if}
     <ol>
       {#each events as event}<li>{event.message}</li>{/each}
